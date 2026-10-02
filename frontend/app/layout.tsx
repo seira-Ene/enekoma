@@ -17,10 +17,14 @@ export const metadata: Metadata = {
   description: "大学生のためのスマホ対応PWA時間割アプリ。教室番号から建物の場所や詳細メモを即座に表示！",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
     <html
-      lang="en"
+      lang="ja"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>

@@ -4,7 +4,6 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# フロントエンド(Next.js)からのアクセスを許可する設定(CORS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -22,7 +21,6 @@ class TimetableItem(BaseModel):
     room_number: str
 
 def parse_room_detail(room: str) -> str:
-    """教室番号（例: 3505）から詳しい場所メモを生成するロジック"""
     if len(room) == 4 and room.isdigit():
         building = room[0]
         floor = room[1]
@@ -44,3 +42,4 @@ def parse_timetable(item: TimetableItem):
         "location_detail": location_detail,
         "full_display": f"{item.subject} （{item.room_number}：{location_detail}）"
     }
+

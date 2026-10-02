@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# フロントエンド(Next.js)からのアクセスを許可する設定(CORS)
+# CORS設定
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -44,3 +44,4 @@ def parse_timetable(item: TimetableItem):
         "location_detail": location_detail,
         "full_display": f"{item.subject} （{item.room_number}：{location_detail}）"
     }
+

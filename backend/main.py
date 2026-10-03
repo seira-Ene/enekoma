@@ -7,8 +7,8 @@ import re
 
 app = FastAPI(
     title="EneKoma Campus Navigator API",
-    version="2.0.0",
-    description="日本大学文理学部向け時間割・履修卒業判定・施設案内・スケジュール・フレンド共有API"
+    version="2.1.0",
+    description="日本大学文理学部向け時間割・履修卒業判定・コース科目・施設案内・スケジュール・フレンド共有・空き教室案内API"
 )
 
 # CORS許可設定
@@ -35,7 +35,7 @@ PERIODS = [
 @app.get("/")
 @app.get("/api")
 def read_root():
-    return {"message": "EneKoma Campus Navigator API v2.0 is running", "university": "Nihon University CHS"}
+    return {"message": "EneKoma Campus Navigator API v2.1 is running", "university": "Nihon University CHS"}
 
 @app.get("/api/periods")
 def get_periods():
@@ -66,14 +66,98 @@ CHS_GRADUATION_REQUIREMENTS = {
     "化学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 52, "major_opt": 24, "free_opt": 21, "total": 124}
 }
 
-MINOR_COURSES = {
-    "AI・データサイエンス副専攻": {"required_credits": 16, "key_courses": ["データ処理基礎", "ビッグデータサイエンス", "人工知能概論", "データサイエンス演習"]},
-    "グローバル主専攻・副専攻": {"required_credits": 16, "key_courses": ["国際教養A", "Cross-Cultural Communication", "異文化理解演習"]},
-    "環境・サステナビリティ副専攻": {"required_credits": 16, "key_courses": ["環境科学概論", "地球環境学", "サステナビリティ論"]},
-    "心身ウェルネス副専攻": {"required_credits": 16, "key_courses": ["健康・スポーツ教育論", "ストレスマネジメント", "メンタルヘルス論"]},
-    "教職コース（中高免許）": {"required_credits": 32, "key_courses": ["教育原理", "教育心理学", "各教科教育法Ⅰ・Ⅱ", "教育実習事前事後指導"]},
-    "司書教諭コース": {"required_credits": 10, "key_courses": ["学校図書館メディアの構成", "読書課程論", "学習指導と学校図書館"]},
-    "学芸員コース": {"required_credits": 19, "key_courses": ["博物館概論", "博物館経営論", "博物館資料保存論", "博物館実習"]},
+# 全学科共通6つのコース科目 ＆ 副専攻データ
+COURSE_AND_MINOR_INFO = {
+    "教職コース（中高免許）": {
+        "type": "コース科目",
+        "target": "全学科共通（中学校・高等学校教諭一種免許状）、特別支援学校教諭免許状（教育学科のみ）",
+        "window": "教職センター",
+        "required_credits": 32,
+        "key_courses": ["教育原理", "教育心理学", "教育課程論", "道徳教育の理論と方法", "各教科教育法Ⅰ・Ⅱ", "教育実習事前事後指導", "教職実践演習（中・高）"],
+        "credit_rule": "修得単位は卒業に必要な「自由選択区分」に算入可能。ただし『各教科教育法Ⅰ〜Ⅳ』『教育実習事前・事後指導』『教育実習Ⅰ・Ⅱ』『教職実践演習（中・高）』等の実習・実践系科目は自由選択区分に算入不可。",
+        "gpa_rule": "自由選択区分に算入可能なコース科目はすべてGPA算出対象に含まれます。"
+    },
+    "司書教諭コース": {
+        "type": "コース科目",
+        "target": "学校図書館司書教諭資格の取得",
+        "window": "教職センター",
+        "required_credits": 10,
+        "key_courses": ["学校図書館メディアの構成", "読書課程論", "学習指導と学校図書館", "学校経営と学校図書館"],
+        "credit_rule": "正規の手続きを経て修得した単位は卒業に必要な「自由選択区分」に算入可能。",
+        "gpa_rule": "自由選択区分に算入可能なコース科目はすべてGPA算出対象に含まれます。"
+    },
+    "司書コース": {
+        "type": "コース科目",
+        "target": "公共図書館等で勤務する司書資格の取得",
+        "window": "教務課",
+        "required_credits": 20,
+        "key_courses": ["図書館概論", "図書館情報技術論", "図書館サービス概論", "情報資源組織論", "情報資源組織演習"],
+        "credit_rule": "修得単位は卒業に必要な「自由選択区分」に算入可能。",
+        "gpa_rule": "自由選択区分に算入可能なコース科目はすべてGPA算出対象に含まれます。"
+    },
+    "学芸員コース": {
+        "type": "コース科目",
+        "target": "博物館・美術館等で勤務する学芸員資格の取得",
+        "window": "教務課",
+        "required_credits": 19,
+        "key_courses": ["博物館概論", "博物館経営論", "博物館資料保存論", "博物館展示論", "博物館実習"],
+        "credit_rule": "修得単位は卒業に必要な「自由選択区分」に算入可能。",
+        "gpa_rule": "自由選択区分に算入可能なコース科目はすべてGPA算出対象に含まれます。"
+    },
+    "社会教育主事コース": {
+        "type": "コース科目",
+        "target": "地域社会教育の指導者（社会教育士等）に必要な資格取得",
+        "window": "教務課",
+        "required_credits": 24,
+        "key_courses": ["社会教育経営論", "生涯学習論", "社会教育課題研究", "地域教育支援論"],
+        "credit_rule": "修得単位は卒業に必要な「自由選択区分」に算入可能。",
+        "gpa_rule": "自由選択区分に算入可能なコース科目はすべてGPA算出対象に含まれます。"
+    },
+    "日本語教育コース": {
+        "type": "コース科目",
+        "target": "国内外で日本語を教える日本語教員としての専門知識・技能習得",
+        "window": "教務課",
+        "required_credits": 26,
+        "key_courses": ["日本語学概論", "日本語教授法", "対照言語学", "日本語教育実習", "第二言語習得論"],
+        "credit_rule": "修得単位は卒業に必要な「自由選択区分」に算入可能。",
+        "gpa_rule": "自由選択区分に算入可能なコース科目はすべてGPA算出対象に含まれます。"
+    },
+    "AI・データサイエンス副専攻": {
+        "type": "副専攻",
+        "target": "文理融合型データサイエンティスト育成",
+        "window": "教務課",
+        "required_credits": 16,
+        "key_courses": ["データ処理基礎", "ビッグデータサイエンス", "人工知能概論", "データサイエンス演習"],
+        "credit_rule": "副専攻指定科目の単位は要覧規定に基づき卒業単位（自由選択等）に算入。",
+        "gpa_rule": "GPA算出対象に含まれます。"
+    },
+    "グローバル主専攻・副専攻": {
+        "type": "副専攻",
+        "target": "高度な国際教養・外国語コミュニケーション能力の習得",
+        "window": "教務課",
+        "required_credits": 16,
+        "key_courses": ["国際教養A", "Cross-Cultural Communication", "異文化理解演習"],
+        "credit_rule": "副専攻指定科目の単位は卒業要件区分に算入。",
+        "gpa_rule": "GPA算出対象に含まれます。"
+    },
+    "環境・サステナビリティ副専攻": {
+        "type": "副専攻",
+        "target": "SDGs・地球環境科学と共生社会の理解",
+        "window": "教務課",
+        "required_credits": 16,
+        "key_courses": ["環境科学概論", "地球環境学", "サステナビリティ論"],
+        "credit_rule": "副専攻指定科目の単位は卒業要件区分に算入。",
+        "gpa_rule": "GPA算出対象に含まれます。"
+    },
+    "心身ウェルネス副専攻": {
+        "type": "副専攻",
+        "target": "健康・スポーツ科学とメンタルヘルスマネジメント",
+        "window": "教務課",
+        "required_credits": 16,
+        "key_courses": ["健康・スポーツ教育論", "ストレスマネジメント", "メンタルヘルス論"],
+        "credit_rule": "副専攻指定科目の単位は卒業要件区分に算入。",
+        "gpa_rule": "GPA算出対象に含まれます。"
+    }
 }
 
 class CreditStatus(BaseModel):
@@ -92,6 +176,11 @@ class DegreeCheckRequest(BaseModel):
     selected_minor: Optional[str] = "AI・データサイエンス副専攻"
     taken_courses: List[str] = []
 
+@app.get("/api/academic/courses")
+def get_courses_info():
+    """全学科共通の6つのコース科目および副専攻の詳細情報（提出窓口、単位認定ルール等）"""
+    return {"courses_and_minors": COURSE_AND_MINOR_INFO}
+
 @app.post("/api/academic/degree-check")
 def degree_check(req: DegreeCheckRequest):
     reqs = CHS_GRADUATION_REQUIREMENTS.get(req.department, CHS_GRADUATION_REQUIREMENTS["情報科学科"])
@@ -109,10 +198,10 @@ def degree_check(req: DegreeCheckRequest):
     rem_total = max(0, reqs["total"] - total_earned)
     
     # 副専攻 / コース判定
-    minor_info = MINOR_COURSES.get(req.selected_minor or "", {"required_credits": 16, "key_courses": []})
+    minor_info = COURSE_AND_MINOR_INFO.get(req.selected_minor or "", {"required_credits": 16, "key_courses": [], "window": "教務課", "credit_rule": "", "gpa_rule": ""})
     minor_taken = [c for c in req.taken_courses if c in minor_info.get("key_courses", [])]
     minor_earned = len(minor_taken) * 2
-    minor_rem = max(0, minor_info["required_credits"] - minor_earned)
+    minor_rem = max(0, minor_info.get("required_credits", 16) - minor_earned)
     
     missing_items = []
     if rem_zengaku > 0:
@@ -138,9 +227,12 @@ def degree_check(req: DegreeCheckRequest):
     else:
         advice.append(f"⚠️ 卒業条件の達成率は{progress_rate}%です。{req.grade}年次としては取得ペースを上げる必要があります。履修登録上限数（CAP制）を活用しましょう。")
         
-    if req.selected_minor and req.selected_minor in MINOR_COURSES:
+    if req.selected_minor and req.selected_minor in COURSE_AND_MINOR_INFO:
         recom_courses = [c for c in minor_info.get("key_courses", []) if c not in minor_taken]
-        advice.append(f"🎓 [{req.selected_minor}] 進捗: {minor_earned}/{minor_info['required_credits']}単位完了。未履修のおすすめ科目: {', '.join(recom_courses) or '要件充足中'}")
+        window_notice = f"（申請先窓口: {minor_info.get('window', '教務課')}）"
+        advice.append(f"🎓 [{req.selected_minor}] {window_notice} 進捗: {minor_earned}/{minor_info.get('required_credits', 16)}単位。未履修おすすめ科目: {', '.join(recom_courses) or '要件充足中'}")
+        if "教職" in req.selected_minor:
+            advice.append("⚠️ 【教職コース注意事項】各教科教育法・実習・実践演習等の実習科目は『自由選択区分』に算入できません。履修計画の単位数計算にご注意ください。")
 
     return {
         "department": req.department,
@@ -154,8 +246,11 @@ def degree_check(req: DegreeCheckRequest):
         "minor_status": {
             "name": req.selected_minor,
             "earned_credits": minor_earned,
-            "required_credits": minor_info["required_credits"],
+            "required_credits": minor_info.get("required_credits", 16),
             "remaining_credits": minor_rem,
+            "window": minor_info.get("window", "教務課"),
+            "credit_rule": minor_info.get("credit_rule", ""),
+            "gpa_rule": minor_info.get("gpa_rule", ""),
             "recommended_courses": [c for c in minor_info.get("key_courses", []) if c not in minor_taken]
         },
         "missing_requirements": missing_items,
@@ -163,7 +258,198 @@ def degree_check(req: DegreeCheckRequest):
     }
 
 # ==========================================
-# 3. 施設営業時間案内AI API
+# 3. 講義データベース & 空き教室判定 API
+# ==========================================
+# 添付資料（物理、生命、化学、情報科学、数、国文、史、哲、地球科、体育、心理、地理、教育、社会福祉、社会、中国語中国文化、英文、基礎教育、外国語、教職等）に基づく講義データ
+CHS_LECTURE_DATABASE = [
+    # 月曜日
+    {"day": "月", "period": 1, "name": "細胞生物学1", "teacher": "安原 徳子", "room": "3306", "department": "生命科学科"},
+    {"day": "月", "period": 1, "name": "発達と学習", "teacher": "大森 馨子", "room": "411", "department": "教育学科/教職"},
+    {"day": "月", "period": 1, "name": "日本文学入門", "teacher": "小林 茂美", "room": "122", "department": "国文学科"},
+    {"day": "月", "period": 1, "name": "英語1（オーラル）", "teacher": "スミス J", "room": "3203", "department": "外国語教育科目"},
+    {"day": "月", "period": 1, "name": "自然地理学の基礎", "teacher": "高橋 和博", "room": "3401", "department": "地理学科"},
+    {"day": "月", "period": 2, "name": "力学2", "teacher": "玉岡 幸太郎", "room": "3403", "department": "物理学科"},
+    {"day": "月", "period": 2, "name": "量子力学1", "teacher": "山本 大輔", "room": "3403", "department": "物理学科"},
+    {"day": "月", "period": 2, "name": "心理学実験", "teacher": "佐藤 健一", "room": "421", "department": "心理学科"},
+    {"day": "月", "period": 2, "name": "史学概論", "teacher": "鈴木 孝治", "room": "131", "department": "史学科"},
+    {"day": "月", "period": 2, "name": "中国社会論", "teacher": "張 偉", "room": "3302", "department": "中国語中国文化学科"},
+    {"day": "月", "period": 3, "name": "教育原論", "teacher": "原 圭寛", "room": "431", "department": "教育学科/教職"},
+    {"day": "月", "period": 3, "name": "固体地球科学基礎実験", "teacher": "田中 秀樹", "room": "3506", "department": "地球科学科"},
+    {"day": "月", "period": 3, "name": "英文法", "teacher": "ジョンソン M", "room": "124", "department": "英文学科"},
+    {"day": "月", "period": 3, "name": "ドイツ語1", "teacher": "ミュラー K", "room": "3205", "department": "外国語教育科目"},
+    {"day": "月", "period": 4, "name": "基礎物理実験A", "teacher": "上岡 隼人", "room": "125", "department": "物理学科"},
+    {"day": "月", "period": 4, "name": "社会学史", "teacher": "中村 陽一", "room": "441", "department": "社会学科"},
+    {"day": "月", "period": 4, "name": "運動生理学", "teacher": "渡辺 学", "room": "3206", "department": "体育学科"},
+    {"day": "月", "period": 5, "name": "情報ネットワーク論", "teacher": "伊藤 賢治", "room": "3304", "department": "情報科学科"},
+
+    # 火曜日
+    {"day": "火", "period": 1, "name": "生徒指導・進路指導論", "teacher": "土屋 弥生", "room": "3500", "department": "教育学科/教職"},
+    {"day": "火", "period": 1, "name": "古文書学", "teacher": "加藤 秀雄", "room": "132", "department": "史学科"},
+    {"day": "火", "period": 1, "name": "地球科学概論", "teacher": "小林 誠", "room": "3402", "department": "地球科学科"},
+    {"day": "火", "period": 2, "name": "特別支援教育概論", "teacher": "田部 絢子", "room": "3506", "department": "教育学科/教職"},
+    {"day": "火", "period": 2, "name": "データ構造とアルゴリズム", "teacher": "森田 浩司", "room": "3305", "department": "情報科学科"},
+    {"day": "火", "period": 2, "name": "哲学基礎講義", "teacher": "吉田 聡", "room": "412", "department": "哲学科"},
+    {"day": "火", "period": 3, "name": "物理数学1", "teacher": "千葉 剛", "room": "3404", "department": "物理学科"},
+    {"day": "火", "period": 3, "name": "教育課程論", "teacher": "野内 頼一", "room": "131", "department": "教育学科/教職"},
+    {"day": "火", "period": 3, "name": "ソーシャルワーク演習", "teacher": "松本 恵子", "room": "422", "department": "社会福祉学科"},
+    {"day": "火", "period": 4, "name": "現代家族論", "teacher": "斉藤 直子", "room": "3204", "department": "社会学科"},
+    {"day": "火", "period": 4, "name": "スポーツバイオメカニクス", "teacher": "木村 剛", "room": "3303", "department": "体育学科"},
+    {"day": "火", "period": 5, "name": "フランス語初級", "teacher": "デュポン P", "room": "135", "department": "外国語教育科目"},
+
+    # 水曜日
+    {"day": "水", "period": 1, "name": "基礎線形代数1", "teacher": "柳田 昌宏", "room": "3302", "department": "数学科"},
+    {"day": "水", "period": 1, "name": "アカデミックICT基礎", "teacher": "清水 達也", "room": "3401", "department": "基礎教育科目"},
+    {"day": "水", "period": 1, "name": "中国語1", "teacher": "李 芳", "room": "123", "department": "外国語教育科目"},
+    {"day": "水", "period": 2, "name": "教育相談", "teacher": "西本 和月", "room": "3305", "department": "教育学科/教職"},
+    {"day": "水", "period": 2, "name": "地形学", "teacher": "宮崎 慎一", "room": "3403", "department": "地理学科"},
+    {"day": "水", "period": 2, "name": "障害者福祉施策", "teacher": "井上 敏", "room": "411", "department": "社会福祉学科"},
+    {"day": "水", "period": 3, "name": "情報理論1", "teacher": "古市 茂", "room": "3308", "department": "情報科学科"},
+    {"day": "水", "period": 3, "name": "アメリカ文学史", "teacher": "ベーカー R", "room": "126", "department": "英文学科"},
+    {"day": "水", "period": 3, "name": "日本語学入門", "teacher": "橋本 健", "room": "130", "department": "国文学科"},
+    {"day": "水", "period": 4, "name": "地震学", "teacher": "岡田 浩一", "room": "3500", "department": "地球科学科"},
+    {"day": "水", "period": 4, "name": "認知心理学特講", "teacher": "西村 誠司", "room": "432", "department": "心理学科"},
+    {"day": "水", "period": 5, "name": "スペイン語会話", "teacher": "ガルシア M", "room": "3203", "department": "外国語教育科目"},
+
+    # 木曜日
+    {"day": "木", "period": 1, "name": "道徳教育の理論と方法", "teacher": "河野 桃子", "room": "3305", "department": "教育学科/教職"},
+    {"day": "木", "period": 1, "name": "有機化学基礎", "teacher": "竹内 亮", "room": "3402", "department": "化学科"},
+    {"day": "木", "period": 2, "name": "データベース論", "teacher": "杉本 雅弘", "room": "3306", "department": "情報科学科"},
+    {"day": "木", "period": 2, "name": "都市地理学", "teacher": "野村 貴行", "room": "3404", "department": "地理学科"},
+    {"day": "木", "period": 2, "name": "東洋史特講", "teacher": "島田 英樹", "room": "131", "department": "史学科"},
+    {"day": "木", "period": 3, "name": "教育原論", "teacher": "小野 雅章", "room": "3303", "department": "教育学科/教職"},
+    {"day": "木", "period": 3, "name": "気圏科学実習", "teacher": "大野 健太", "room": "3506", "department": "地球科学科"},
+    {"day": "木", "period": 3, "name": "韓国・朝鮮語1", "teacher": "金 秀賢", "room": "124", "department": "外国語教育科目"},
+    {"day": "木", "period": 4, "name": "電磁気学3", "teacher": "鈴木 優樹", "room": "3401", "department": "物理学科"},
+    {"day": "木", "period": 4, "name": "マス・コミュニケーション論", "teacher": "藤田 剛", "room": "442", "department": "社会学科"},
+    {"day": "木", "period": 5, "name": "ロシア語初級", "teacher": "イワノフ D", "room": "127A", "department": "外国語教育科目"},
+
+    # 金曜日
+    {"day": "金", "period": 1, "name": "微分・積分1", "teacher": "石部 正", "room": "412", "department": "数学科"},
+    {"day": "金", "period": 1, "name": "近代文学研究", "teacher": "安田 正人", "room": "122", "department": "国文学科"},
+    {"day": "金", "period": 1, "name": "英語プレゼンテーション", "teacher": "クラーク S", "room": "3204", "department": "外国語教育科目"},
+    {"day": "金", "period": 2, "name": "教育原論", "teacher": "佐野 良介", "room": "3204", "department": "教育学科/教職"},
+    {"day": "金", "period": 2, "name": "健康・スポーツ教育実習", "teacher": "本田 孝文", "room": "体育館", "department": "基礎教育科目/体育"},
+    {"day": "金", "period": 2, "name": "心理調査法実習", "teacher": "工藤 由美", "room": "421", "department": "心理学科"},
+    {"day": "金", "period": 3, "name": "Webプログラミング", "teacher": "藤本 一平", "room": "3308", "department": "情報科学科"},
+    {"day": "金", "period": 3, "name": "倫理学概論", "teacher": "中川 徹", "room": "132", "department": "哲学科"},
+    {"day": "金", "period": 3, "name": "高齢者福祉論", "teacher": "西川 和恵", "room": "431", "department": "社会福祉学科"},
+    {"day": "金", "period": 4, "name": "地理情報科学(GIS)", "teacher": "山崎 俊", "room": "3403", "department": "地理学科"},
+    {"day": "金", "period": 4, "name": "同位体地球科学", "teacher": "池田 雅之", "room": "3500", "department": "地球科学科"},
+    {"day": "金", "period": 5, "name": "中国語スピーキング", "teacher": "王 俊", "room": "125", "department": "中国語中国文化学科"},
+
+    # 土曜日
+    {"day": "土", "period": 1, "name": "教職総合演習", "teacher": "教職担当班", "room": "411", "department": "教職コース"},
+    {"day": "土", "period": 2, "name": "学校図書館メディアの構成", "teacher": "図書館学担当", "room": "3203", "department": "司書教諭コース"},
+    {"day": "土", "period": 3, "name": "博物館展示論", "teacher": "学芸員担当", "room": "3302", "department": "学芸員コース"},
+
+    # 集中講義（不定期・実習・オンデマンド）
+    {"day": "集中", "period": 0, "name": "データサイエンスの世界", "teacher": "オンデマンド", "room": "遠隔", "department": "情報科学科/副専攻"},
+    {"day": "集中", "period": 0, "name": "ヨーロッパの教育思想", "teacher": "横田 みどり", "room": "3402", "department": "教育学科"},
+    {"day": "集中", "period": 0, "name": "野外教育論(含実習)", "teacher": "西島 大祐", "room": "学外", "department": "体育学科"},
+    {"day": "集中", "period": 0, "name": "恐竜学", "teacher": "藤原 慎一", "room": "3410", "department": "地球科学科"},
+    {"day": "集中", "period": 0, "name": "キャリアデザイン特講", "teacher": "峯岸 久枝", "room": "学内3500", "department": "全学科共通"},
+    {"day": "集中", "period": 0, "name": "教育実習事前・事後指導", "teacher": "教職指導委員会", "room": "131", "department": "教職コース"},
+    {"day": "集中", "period": 0, "name": "博物館実習", "teacher": "資料館担当教授", "room": "8号館資料館", "department": "学芸員コース"},
+    {"day": "集中", "period": 0, "name": "野外調査法（含実習）", "teacher": "地理学科スタッフ", "room": "学外巡検", "department": "地理学科"}
+]
+
+# キャンパスの主要教室一覧
+ALL_CAMPUS_ROOMS = [
+    "122", "123", "124", "125", "126", "130", "131", "132", "135", "141", "151",
+    "3203", "3204", "3205", "3206",
+    "3302", "3303", "3304", "3305", "3306", "3308",
+    "3401", "3402", "3403", "3404", "3410",
+    "3500", "3506",
+    "411", "412", "421", "422", "431", "432", "441", "442", "443", "444"
+]
+
+@app.get("/api/courses/search")
+def search_courses(
+    day: Optional[str] = Query(None, description="曜日 (月, 火, 水, 木, 金, 土, 集中)"),
+    period: Optional[int] = Query(None, description="時限 (1〜5, 集中は0)"),
+    q: Optional[str] = Query("", description="講義名・教員名・学科キーワード")
+):
+    query = (q or "").strip().lower()
+    results = []
+    for c in CHS_LECTURE_DATABASE:
+        match_day = (day is None or c["day"] == day)
+        match_period = (period is None or c["period"] == period)
+        match_q = (
+            not query or
+            query in c["name"].lower() or
+            query in c["teacher"].lower() or
+            query in c["room"].lower() or
+            query in c["department"].lower()
+        )
+        if match_day and match_period and match_q:
+            results.append(c)
+    return {"count": len(results), "courses": results}
+
+@app.get("/api/rooms/free")
+def get_free_rooms(
+    day: Optional[str] = Query(None, description="曜日 (月〜土)"),
+    period: Optional[int] = Query(None, description="時限 (1〜5)")
+):
+    """現在の時刻または指定された曜日・時限における空き教室を判定・案内"""
+    now = datetime.datetime.now()
+    weekday_map = {0: "月", 1: "火", 2: "水", 3: "木", 4: "金", 5: "土", 6: "日"}
+    
+    current_day = day or weekday_map.get(now.weekday(), "月")
+    if current_day == "日":
+        current_day = "月" # 休日は月曜をデフォルト参考
+        
+    current_period = period
+    if current_period is None:
+        # 現在時刻から判定
+        now_time = now.strftime("%H:%M")
+        if now_time < "10:35":
+            current_period = 1
+        elif now_time < "12:15":
+            current_period = 2
+        elif now_time < "13:00":
+            current_period = 2 # 昼休み
+        elif now_time < "14:35":
+            current_period = 3
+        elif now_time < "16:15":
+            current_period = 4
+        else:
+            current_period = 5
+
+    # 該当コマで使用されている教室
+    occupied_rooms = [
+        c["room"] for c in CHS_LECTURE_DATABASE 
+        if c["day"] == current_day and c["period"] == current_period
+    ]
+    
+    free_rooms = [r for r in ALL_CAMPUS_ROOMS if r not in occupied_rooms]
+    
+    # 建物ごとに分類
+    building_1 = [r for r in free_rooms if r.startswith("1")]
+    building_3 = [r for r in free_rooms if r.startswith("3")]
+    building_4 = [r for r in free_rooms if r.startswith("4")]
+    
+    bubble_message = (
+        f"ただいま（{current_day}曜 {current_period}限）の空き教室は、"
+        f"{', '.join(free_rooms[:5])} など全{len(free_rooms)}室が利用可能です。"
+    )
+    
+    return {
+        "day": current_day,
+        "period": current_period,
+        "occupied_count": len(occupied_rooms),
+        "occupied_rooms": occupied_rooms,
+        "free_count": len(free_rooms),
+        "free_rooms": free_rooms,
+        "by_building": {
+            "1号館": building_1,
+            "3号館": building_3,
+            "4号館": building_4
+        },
+        "bubble_message": bubble_message
+    }
+
+# ==========================================
+# 4. 施設営業時間案内AI API
 # ==========================================
 FACILITIES_DB = [
     {
@@ -213,7 +499,7 @@ FACILITIES_DB = [
         "weekday": "09:00 - 17:00",
         "saturday": "09:00 - 13:00",
         "sunday_holiday": "休み",
-        "note": "証明書自動発行機利用は閉口15分前まで",
+        "note": "証明書自動発行機利用は閉口15分前まで / 教職コース届出は教職センターへ",
         "location": "本館1階事務室"
     }
 ]
@@ -249,7 +535,7 @@ def facility_hours(req: Optional[FacilityQueryRequest] = None, q: Optional[str] 
     }
 
 # ==========================================
-# 4. スケジュール ＆ 課題管理 API
+# 5. スケジュール ＆ 課題管理 API
 # ==========================================
 class ScheduleItem(BaseModel):
     id: str
@@ -282,7 +568,7 @@ def delete_schedule(schedule_id: str):
     return {"status": "deleted", "id": schedule_id}
 
 # ==========================================
-# 5. マイページ ＆ フレンド時間割共有 API
+# 6. マイページ ＆ フレンド時間割共有 API
 # ==========================================
 class FriendCompareRequest(BaseModel):
     friend_code: str
@@ -319,9 +605,9 @@ def compare_friends(req: FriendCompareRequest):
     )
     
     common_free_slots = []
-    days = ["mon", "tue", "wed", "thu", "fri"]
+    days = ["mon", "tue", "wed", "thu", "fri", "sat"]
     periods = [1, 2, 3, 4, 5]
-    day_names = {"mon": "月曜", "tue": "火曜", "wed": "水曜", "thu": "木曜", "fri": "金曜"}
+    day_names = {"mon": "月曜", "tue": "火曜", "wed": "水曜", "thu": "木曜", "fri": "金曜", "sat": "土曜"}
     
     for d in days:
         for p in periods:
@@ -332,7 +618,7 @@ def compare_friends(req: FriendCompareRequest):
             if not my_slot and not friend_slot:
                 common_free_slots.append({
                     "key": slot_key,
-                    "day": day_names[d],
+                    "day": day_names.get(d, d),
                     "period": f"{p}限"
                 })
                 
@@ -345,7 +631,7 @@ def compare_friends(req: FriendCompareRequest):
     }
 
 # ==========================================
-# 6. 教室・キャンパスナビゲーター互換API
+# 7. 教室・キャンパスナビゲーター互換API（100%保持）
 # ==========================================
 class TimetableItem(BaseModel):
     subject: str
@@ -400,24 +686,232 @@ def parse_room_detail(room: str) -> str:
             return f"3号館{floor}階・エスカレーター出て右 / エレベーター出て左（男子トイレ側）"
         elif 6 <= sub_num <= 10:
             return f"3号館{floor}階・エスカレーター出て左 / エレベーター出て右（女子トイレ側）"
-        return f"3号館{floor}階（下2桁01〜05: 男子トイレ側 / 06〜10: 女子トイレ側）"
+        elif sub_num == 0:
+            return f"3号館{floor}階・大教室（フロア中央エリア）"
+        else:
+            return f"3号館{floor}階（3{floor}{sub_num:02d}教室）"
 
-    if r.startswith("1") and len(r) >= 3 and r[1].isdigit():
-        return f"1号館{r[1]}階"
-    if r.startswith("4") and len(r) >= 3 and r[1].isdigit():
-        return f"4号館{r[1]}階"
-    if r.startswith("2") and len(r) == 4 and r[1].isdigit():
-        return f"2号館{r[1]}階"
+    m2 = re.match(r"^2([1-5])(\d{2})$", r)
+    if m2:
+        floor = m2.group(1)
+        return f"2号館{floor}階（2号館は自動販売機・ゴミ箱未設置）"
 
-    return "詳細場所未登録"
+    m1 = re.match(r"^1(\d)(\d)$", r)
+    if m1:
+        floor = m1.group(1)
+        return f"1号館{floor}階"
+
+    return f"{room}教室（キャンパス構内）"
 
 @app.post("/api/timetable/parse")
-@app.post("/timetable/parse")
-def parse_timetable(item: TimetableItem):
-    location_detail = parse_room_detail(item.room_number)
+def parse_timetable_room(item: TimetableItem):
+    detail = parse_room_detail(item.room_number)
     return {
         "subject": item.subject,
         "room_number": item.room_number,
-        "location_detail": location_detail,
-        "full_display": f"{item.subject} （{item.room_number}：{location_detail}）"
+        "room_detail": detail
     }
+
+# ==========================================
+# 8. 自販機・構内ナビゲーターチャット（100%保持）
+# ==========================================
+VENDING_MACHINES = [
+    {
+        "id": "1f_drink",
+        "building": "1号館",
+        "floor": "1階",
+        "type": "飲み物",
+        "location": "正面入口を入って左手側",
+        "payment": ["現金", "交通系IC", "iD", "QUICPay", "楽天Edy", "nanaco", "WAON", "PayPay", "LINE Pay", "メルペイ", "au PAY", "d払い", "WeChat Pay", "Alipay"],
+        "items": [
+            {"name": "コカ・コーラ 500ml", "price": 160},
+            {"name": "綾鷹 525ml", "price": 140},
+            {"name": "アクエリアス 500ml", "price": 150},
+            {"name": "ジョージア ジャパンクラフトマン", "price": 130},
+            {"name": "い・ろ・は・す 540ml", "price": 110},
+            {"name": "爽健美茶 600ml", "price": 140},
+            {"name": "リアルゴールド", "price": 120}
+        ]
+    },
+    {
+        "id": "1f_bread",
+        "building": "1号館",
+        "floor": "1階",
+        "type": "パン・軽食",
+        "location": "飲み物自販機の並び",
+        "payment": ["現金", "交通系IC"],
+        "items": [
+            {"name": "あんパン", "price": 130},
+            {"name": "クリームパン", "price": 130},
+            {"name": "メロンパン", "price": 140},
+            {"name": "チョコデニッシュ", "price": 150},
+            {"name": "カレーパン", "price": 150},
+            {"name": "焼きそばパン", "price": 160}
+        ]
+    },
+    {
+        "id": "3f_drink",
+        "building": "3号館",
+        "floor": "1階",
+        "type": "飲み物",
+        "location": "エレベーターホール横",
+        "payment": ["現金", "交通系IC", "クレジットカード(タッチ決済)", "iD", "QUICPay", "PayPay", "d払い", "au PAY", "楽天ペイ"],
+        "items": [
+            {"name": "モンスターエナジー 355ml", "price": 210},
+            {"name": "レッドブル 250ml", "price": 210},
+            {"name": "サントリー天然水 550ml", "price": 100},
+            {"name": "伊右衛門 600ml", "price": 130},
+            {"name": "クラフトボス ラテ 500ml", "price": 140},
+            {"name": "ポカリスエット 500ml", "price": 150},
+            {"name": "オロナミンC", "price": 120}
+        ]
+    },
+    {
+        "id": "3f_ice",
+        "building": "3号館",
+        "floor": "1階",
+        "type": "アイス",
+        "location": "飲み物自販機横（セブンティーンアイス）",
+        "payment": ["現金", "交通系IC"],
+        "items": [
+            {"name": "チョコチップ", "price": 160},
+            {"name": "クッキー＆クリーム", "price": 170},
+            {"name": "ワッフルコーンバニラ", "price": 170},
+            {"name": "ソーダフロート", "price": 150},
+            {"name": "濃厚いちご", "price": 160}
+        ]
+    },
+    {
+        "id": "4f_drink",
+        "building": "4号館",
+        "floor": "1階",
+        "type": "飲み物",
+        "location": "エントランスホール（給水所横）",
+        "payment": ["現金", "交通系IC", "PayPay", "LINE Pay", "d払い"],
+        "items": [
+            {"name": "お〜いお茶 525ml", "price": 130},
+            {"name": "健康ミネラルむぎ茶 600ml", "price": 130},
+            {"name": "タリーズ バリスタズブラック 390ml", "price": 140},
+            {"name": "充実野菜 200ml", "price": 110},
+            {"name": "エビアン 500ml", "price": 110},
+            {"name": "カルピスウォーター 500ml", "price": 140}
+        ]
+    }
+]
+
+class ChatRequest(BaseModel):
+    query: str
+    history: Optional[List[Dict[str, str]]] = []
+
+def answer_navigator_query(q: str) -> str:
+    query = q.lower()
+    
+    # 1. 教室番号検索
+    m_room = re.search(r"(\d{3,4}[a-zA-Z]?)", query)
+    if m_room:
+        room = m_room.group(1).upper()
+        detail = parse_room_detail(room)
+        ans = f"【教室案内: {room}教室】\n{detail}\n\n"
+        if room.startswith("1"):
+            ans += "• トイレ: 1F/2F/3Fにあります（4F・5Fにはトイレがありませんのでご注意ください）。\n• 自販機・ゴミ箱: 1階に設置されています。"
+        elif room.startswith("3"):
+            ans += "• トイレ: 奇数番号(01-05)は男子トイレ側、偶数番号(06-10)は女子トイレ側です。\n• 自販機: 1階エレベーターホール横（電子マネー・クレカタッチ対応、アイス自販機あり）。"
+        elif room.startswith("4"):
+            ans += "• 給水所: 1階のみ冷水機が利用可能です（2F〜4Fは使用不可）。\n• 自販機・ゴミ箱: 1階に設置されています。"
+        elif room.startswith("2"):
+            ans += "• 注意: 2号館内には自動販売機およびゴミ箱は設置されていません。"
+        return ans
+
+    # 2. 自動販売機・商品・価格・決済
+    if any(k in query for k in ["自販機", "自動販売機", "ジュース", "アイス", "パン", "レッドブル", "モンスター", "水", "お茶", "いくら", "円", "決済", "クレカ", "suica", "paypay"]):
+        found_items = []
+        for vm in VENDING_MACHINES:
+            for it in vm["items"]:
+                if any(w in it["name"].lower() for w in ["コーラ", "レッドブル", "モンスター", "お茶", "水", "コーヒー", "アイス", "パン", "ラテ"]) and (w in query for w in ["コーラ", "レッドブル", "モンスター", "お茶", "水", "コーヒー", "アイス", "パン", "ラテ"]):
+                    found_items.append((vm, it))
+                elif query in it["name"].lower() or it["name"].lower() in query:
+                    found_items.append((vm, it))
+        
+        if found_items:
+            res = "【自動販売機 商品・価格案内】\n"
+            for vm, it in found_items[:5]:
+                res += f"• **{it['name']}**: {it['price']}円\n  場所: {vm['building']} {vm['floor']}（{vm['location']}）\n  決済方法: {', '.join(vm['payment'])}\n\n"
+            return res.strip()
+
+        # 決済方法で探す
+        if any(pay in query for pay in ["クレカ", "クレジットカード", "タッチ決済", "カード"]):
+            return (
+                "【クレジットカード利用可能な自販機】\n"
+                "• **3号館 1階 エレベーターホール横** の自動販売機がクレジットカードのタッチ決済に対応しています。\n"
+                "（他: 交通系IC、iD、QUICPay、PayPay、d払い、au PAY、楽天ペイなども利用可能）"
+            )
+
+        if "100円" in query or "安い" in query or "最安" in query:
+            return (
+                "【100円〜お得な商品案内】\n"
+                "• **3号館 1階**: サントリー天然水 550ml (100円)\n"
+                "• **4号館 1階**: エビアン 500ml (110円)、充実野菜 (110円)\n"
+                "• **1号館 1階**: い・ろ・は・す 540ml (110円)"
+            )
+
+        res = "【キャンパス内 自販機設置情報】\n"
+        for vm in VENDING_MACHINES:
+            res += f"■ **{vm['building']} {vm['floor']}** ({vm['type']})\n"
+            res += f"  場所: {vm['location']}\n"
+            res += f"  決済: {', '.join(vm['payment'][:5])}など\n"
+            res += f"  主な商品: {', '.join([i['name'] for i in vm['items'][:3]])}\n\n"
+        res += "※2号館には自販機・ゴミ箱がありませんのでご注意ください。"
+        return res.strip()
+
+    # 3. 給水所
+    if any(k in query for k in ["給水", "水飲み", "冷水機", "ウォーターサーバー"]):
+        return (
+            "【構内 給水所（冷水機）のご案内】\n"
+            "• **4号館 1階 エントランスホール**: 給水所（冷水機）が設置されており、マイボトルへの給水が可能です！\n"
+            "⚠️ 注意: 4号館の2階・3階・4階の給水所は現在使用不可となっています。1階をご利用ください。"
+        )
+
+    # 4. トイレ
+    if any(k in query for k in ["トイレ", "お手洗い", "化粧室", "便所"]):
+        return (
+            "【トイレ位置関係ガイド】\n"
+            "• **1号館**:\n"
+            "  - 1階: 左手前に女子、左奥に男子、右手前奥に男子\n"
+            "  - 2階: 左奥に女子、右手前に男子、右奥に女子\n"
+            "  - 3階: 左奥に男子、右奥に女子\n"
+            "  - ⚠️ **4階・5階にはトイレがありません**（2F/3Fをご利用ください）\n"
+            "• **3号館**: 各階共通\n"
+            "  - 奇数教室側(01〜05): 男子トイレ側（エスカレーター出て右 / EV出て左）\n"
+            "  - 偶数教室側(06〜10): 女子トイレ側（エスカレーター出て左 / EV出て右）\n"
+            "• **4号館**: 1階〜4階\n"
+            "  - 1階: 正面入って左側が男子、右側が女子\n"
+            "  - 2階〜4階: 左右に男子・女子が分かれて配置されています。"
+        )
+
+    # 5. ゴミ箱
+    if any(k in query for k in ["ゴミ箱", "ごみ箱", "ゴミ", "廃棄"]):
+        return (
+            "【ゴミ箱の設置場所】\n"
+            "• **1号館 1階**: 自販機横に設置\n"
+            "• **3号館 1階**: エレベーターホール自販機コーナー横に分別ゴミ箱設置\n"
+            "• **4号館 1階**: エントランスホール自販機横に設置\n"
+            "⚠️ **2号館にはゴミ箱が設置されていません**。他号館のゴミ箱をご利用ください。"
+        )
+
+    # デフォルト応答
+    return (
+        "【キャンパス構内ナビゲーターAI】\n"
+        "教室番号（例: 3402, 411, 124）、トイレ・給水所の場所、自販機の商品・価格・決済方法（クレカ・電子マネー）、ゴミ箱の位置についてお答えできます。\n"
+        "質問例:\n"
+        "• 「3305教室はどこ？」\n"
+        "• 「レッドブルが買える自販機は？」\n"
+        "• 「クレジットカードが使える自販機はある？」\n"
+        "• 「100円で買える水はどこ？」\n"
+        "• 「給水所はどこ？」\n"
+        "• 「1号館のトイレの注意点は？」"
+    )
+
+@app.post("/api/navigator/chat")
+def navigator_chat(req: ChatRequest):
+    reply = answer_navigator_query(req.query)
+    return {"reply": reply}

@@ -1,8 +1,11 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useMemo } from 'react';
 
-// 時限定義（修正後）
+// ==========================================
+// 1. 定義 ＆ マスターデータ
+// ==========================================
+
 const PERIODS_CONFIG = [
   { id: 1, name: '1限', time: '09:00 - 10:30' },
   { id: 2, name: '2限', time: '10:40 - 12:10' },
@@ -13,11 +16,12 @@ const PERIODS_CONFIG = [
 ];
 
 const DAYS = [
-  { key: 'mon', label: '月曜' },
-  { key: 'tue', label: '火曜' },
-  { key: 'wed', label: '水曜' },
-  { key: 'thu', label: '木曜' },
-  { key: 'fri', label: '金曜' },
+  { key: 'mon', label: '月曜', short: '月' },
+  { key: 'tue', label: '火曜', short: '火' },
+  { key: 'wed', label: '水曜', short: '水' },
+  { key: 'thu', label: '木曜', short: '木' },
+  { key: 'fri', label: '金曜', short: '金' },
+  { key: 'sat', label: '土曜', short: '土' },
 ];
 
 const CHS_DEPARTMENTS = [
@@ -27,225 +31,608 @@ const CHS_DEPARTMENTS = [
 ];
 
 const CHS_MINORS = [
-  'AI・データサイエンス副専攻', 'グローバル主専攻・副専攻', '環境・サステナビリティ副専攻',
-  '心身ウェルネス副専攻', '教職コース（中高免許）', '司書教諭コース', '学芸員コース'
+  'AI・データサイエンス副専攻',
+  'グローバル主専攻・副専攻',
+  '環境・サステナビリティ副専攻',
+  '心身ウェルネス副専攻',
+  '教職コース（中高免許）',
+  '司書教諭コース',
+  '司書コース',
+  '学芸員コース',
+  '社会教育主事コース',
+  '日本語教育コース'
 ];
 
-interface FacilityItem {
-  id: string;
+// 全学科共通6つのコース科目ガイドデータ
+const SIX_COURSES_GUIDE = [
+  {
+    name: '教職コース',
+    target: '中学校・高等学校教諭一種免許状（全学科共通）、特別支援学校教諭免許状（教育学科のみ）',
+    window: '教職センター',
+    windowColor: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+    description: '各教科の専門指導法や教育実習を履修し、教員免許取得を目指すコース。',
+    creditsRule: '修得単位は卒業に必要な「自由選択区分」に算入可能。※ただし「各教科教育法Ⅰ〜Ⅳ」「教育実習事前・事後指導」「教育実習Ⅰ・Ⅱ」「教職実践演習（中・高）」などの実習・実践系科目は、自由選択区分に算入できません。',
+    gpaRule: '自由選択区分に算入可能なコース科目はすべてGPA算出対象に含まれます。',
+    caution: '各学期始めに教職センターへ所定のコース履修届を提出して許可を得る必要があります。'
+  },
+  {
+    name: '司書教諭コース',
+    target: '学校図書館司書教諭資格の取得',
+    window: '教職センター',
+    windowColor: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+    description: '小・中・高校等の学校図書館において読書指導や情報メディア活用を担う教諭資格。',
+    creditsRule: '正規の手続きを経て修得したコース科目の単位は、卒業に必要な「自由選択区分」の単位として算入可能。',
+    gpaRule: 'GPAの算出対象に含まれます。',
+    caution: '教員免許状の取得が前提となります。教職センターへ申請届を提出してください。'
+  },
+  {
+    name: '司書コース',
+    target: '公共図書館等で勤務する司書資格の取得',
+    window: '教務課',
+    windowColor: 'bg-blue-100 text-blue-800 border-blue-300',
+    description: '公共図書館や専門機関で図書・資料の収集・分類・情報サービスを提供する専門職員。',
+    creditsRule: '修得単位は卒業に必要な「自由選択区分」に算入可能。',
+    gpaRule: 'GPAの算出対象に含まれます。',
+    caution: '申請先は教務課窓口です。受講にあたり配当年次・選考条件がある場合があります。'
+  },
+  {
+    name: '学芸員コース',
+    target: '博物館・美術館・資料館などで勤務する学芸員資格の取得',
+    window: '教務課',
+    windowColor: 'bg-blue-100 text-blue-800 border-blue-300',
+    description: '文化遺産・学術資料の収集・保管・展示・調査研究を行う専門資格。文理学部資料館実習等あり。',
+    creditsRule: '修得単位は卒業に必要な「自由選択区分」に算入可能。',
+    gpaRule: 'GPAの算出対象に含まれます。',
+    caution: '申請窓口は教務課です。3・4年次に文理学部資料館等での実習が課されます。'
+  },
+  {
+    name: '社会教育主事コース',
+    target: '地域社会教育の指導者（社会教育士等）に必要な資格取得',
+    window: '教務課',
+    windowColor: 'bg-blue-100 text-blue-800 border-blue-300',
+    description: '公民館や生涯学習施設で市民の学習活動支援や地域コミュニティ形成をリードする専門職。',
+    creditsRule: '修得単位は卒業に必要な「自由選択区分」に算入可能。',
+    gpaRule: 'GPAの算出対象に含まれます。',
+    caution: '各学期始めに教務課へコース履修届を提出してください。'
+  },
+  {
+    name: '日本語教育コース',
+    target: '国内外で日本語を教える日本語教員としての専門知識・技能の習得',
+    window: '教務課',
+    windowColor: 'bg-blue-100 text-blue-800 border-blue-300',
+    description: '外国人留学生や海外での日本語教育に対応する理論・教授法・教育実習を体系的に学びます。',
+    creditsRule: '修得単位は卒業に必要な「自由選択区分」に算入可能。',
+    gpaRule: 'GPAの算出対象に含まれます。',
+    caution: '申請窓口は教務課です。日本語学や異文化間教育の指定単位修得が必要です。'
+  }
+];
+
+// 日本大学文理学部 講義データベース（検索・ワンタップ登録用）
+interface LectureCourse {
+  day: string; // "月", "火", "水", "木", "金", "土", "集中"
+  period: number; // 1〜5, 集中は0
   name: string;
-  category: string;
-  weekday: string;
-  saturday: string;
-  sunday_holiday: string;
-  note: string;
-  location: string;
+  teacher: string;
+  room: string;
+  department: string;
 }
 
-const DEFAULT_FACILITIES: FacilityItem[] = [
-  {
-    id: 'library',
-    name: '日本大学文理学部図書館',
-    category: '図書・資料',
-    weekday: '09:00 - 20:00',
-    saturday: '09:00 - 19:00',
-    sunday_holiday: '休館（授業なし日）',
-    note: '地下書庫・貸出手続きは閉館30分前まで',
-    location: '図書館棟'
-  },
-  {
-    id: 'comp_center',
-    name: 'コンピュータセンター（受付）',
-    category: 'ICT・端末',
-    weekday: '09:00 - 18:00',
-    saturday: '09:00 - 13:00',
-    sunday_holiday: '休業',
-    note: 'アカウント・学内Wi-Fi問い合わせ対応',
-    location: '3号館'
-  },
-  {
-    id: 'museum',
-    name: '日本大学文理学部資料館',
-    category: '展示・文化',
-    weekday: '10:00 - 17:00',
-    saturday: '10:00 - 13:00',
-    sunday_holiday: '休館',
-    note: '入館無料 / 企画展示開催中',
-    location: '8号館'
-  },
-  {
-    id: 'learning_commons',
-    name: 'ラーニング・コモンズ',
-    category: '学習スペース',
-    weekday: '08:00 - 18:00 (サポートデスク 10:00 - 18:00)',
-    saturday: '08:00 - 17:00 (サポートデスク 09:00 - 13:00)',
-    sunday_holiday: '休館',
-    note: 'グループ学習・PC貸出・アカデミックコモンズ併設',
-    location: '本館1階'
-  },
-  {
-    id: 'academic_affairs',
-    name: '事務窓口・教務課等',
-    category: '各種手続き',
-    weekday: '09:00 - 17:00',
-    saturday: '09:00 - 13:00',
-    sunday_holiday: '休み',
-    note: '証明書自動発行機利用は閉口15分前まで',
-    location: '本館1階事務室'
-  }
+const LECTURE_DATABASE: LectureCourse[] = [
+  // 月曜日
+  { day: '月', period: 1, name: '細胞生物学1', teacher: '安原 徳子', room: '3306', department: '生命科学科' },
+  { day: '月', period: 1, name: '発達と学習', teacher: '大森 馨子', room: '411', department: '教育学科/教職' },
+  { day: '月', period: 1, name: '日本文学入門', teacher: '小林 茂美', room: '122', department: '国文学科' },
+  { day: '月', period: 1, name: '英語1（オーラル）', teacher: 'スミス J', room: '3203', department: '外国語教育科目' },
+  { day: '月', period: 1, name: '自然地理学の基礎', teacher: '高橋 和博', room: '3401', department: '地理学科' },
+  { day: '月', period: 2, name: '力学2', teacher: '玉岡 幸太郎', room: '3403', department: '物理学科' },
+  { day: '月', period: 2, name: '量子力学1', teacher: '山本 大輔', room: '3403', department: '物理学科' },
+  { day: '月', period: 2, name: '心理学実験', teacher: '佐藤 健一', room: '421', department: '心理学科' },
+  { day: '月', period: 2, name: '史学概論', teacher: '鈴木 孝治', room: '131', department: '史学科' },
+  { day: '月', period: 2, name: '中国社会論', teacher: '張 偉', room: '3302', department: '中国語中国文化学科' },
+  { day: '月', period: 3, name: '教育原論', teacher: '原 圭寛', room: '431', department: '教育学科/教職' },
+  { day: '月', period: 3, name: '固体地球科学基礎実験', teacher: '田中 秀樹', room: '3506', department: '地球科学科' },
+  { day: '月', period: 3, name: '英文法', teacher: 'ジョンソン M', room: '124', department: '英文学科' },
+  { day: '月', period: 3, name: 'ドイツ語1', teacher: 'ミュラー K', room: '3205', department: '外国語教育科目' },
+  { day: '月', period: 4, name: '基礎物理実験A', teacher: '上岡 隼人', room: '125', department: '物理学科' },
+  { day: '月', period: 4, name: '社会学史', teacher: '中村 陽一', room: '441', department: '社会学科' },
+  { day: '月', period: 4, name: '運動生理学', teacher: '渡辺 学', room: '3206', department: '体育学科' },
+  { day: '月', period: 5, name: '情報ネットワーク論', teacher: '伊藤 賢治', room: '3304', department: '情報科学科' },
+
+  // 火曜日
+  { day: '火', period: 1, name: '生徒指導・進路指導論', teacher: '土屋 弥生', room: '3500', department: '教育学科/教職' },
+  { day: '火', period: 1, name: '古文書学', teacher: '加藤 秀雄', room: '132', department: '史学科' },
+  { day: '火', period: 1, name: '地球科学概論', teacher: '小林 誠', room: '3402', department: '地球科学科' },
+  { day: '火', period: 2, name: '特別支援教育概論', teacher: '田部 絢子', room: '3506', department: '教育学科/教職' },
+  { day: '火', period: 2, name: 'データ構造とアルゴリズム', teacher: '森田 浩司', room: '3305', department: '情報科学科' },
+  { day: '火', period: 2, name: '哲学基礎講義', teacher: '吉田 聡', room: '412', department: '哲学科' },
+  { day: '火', period: 3, name: '物理数学1', teacher: '千葉 剛', room: '3404', department: '物理学科' },
+  { day: '火', period: 3, name: '教育課程論', teacher: '野内 頼一', room: '131', department: '教育学科/教職' },
+  { day: '火', period: 3, name: 'ソーシャルワーク演習', teacher: '松本 恵子', room: '422', department: '社会福祉学科' },
+  { day: '火', period: 4, name: '現代家族論', teacher: '斉藤 直子', room: '3204', department: '社会学科' },
+  { day: '火', period: 4, name: 'スポーツバイオメカニクス', teacher: '木村 剛', room: '3303', department: '体育学科' },
+  { day: '火', period: 5, name: 'フランス語初級', teacher: 'デュポン P', room: '135', department: '外国語教育科目' },
+
+  // 水曜日
+  { day: '水', period: 1, name: '基礎線形代数1', teacher: '柳田 昌宏', room: '3302', department: '数学科' },
+  { day: '水', period: 1, name: 'アカデミックICT基礎', teacher: '清水 達也', room: '3401', department: '基礎教育科目' },
+  { day: '水', period: 1, name: '中国語1', teacher: '李 芳', room: '123', department: '外国語教育科目' },
+  { day: '水', period: 2, name: '教育相談', teacher: '西本 和月', room: '3305', department: '教育学科/教職' },
+  { day: '水', period: 2, name: '地形学', teacher: '宮崎 慎一', room: '3403', department: '地理学科' },
+  { day: '水', period: 2, name: '障害者福祉施策', teacher: '井上 敏', room: '411', department: '社会福祉学科' },
+  { day: '水', period: 3, name: '情報理論1', teacher: '古市 茂', room: '3308', department: '情報科学科' },
+  { day: '水', period: 3, name: 'アメリカ文学史', teacher: 'ベーカー R', room: '126', department: '英文学科' },
+  { day: '水', period: 3, name: '日本語学入門', teacher: '橋本 健', room: '130', department: '国文学科' },
+  { day: '水', period: 4, name: '地震学', teacher: '岡田 浩一', room: '3500', department: '地球科学科' },
+  { day: '水', period: 4, name: '認知心理学特講', teacher: '西村 誠司', room: '432', department: '心理学科' },
+  { day: '水', period: 5, name: 'スペイン語会話', teacher: 'ガルシア M', room: '3203', department: '外国語教育科目' },
+
+  // 木曜日
+  { day: '木', period: 1, name: '道徳教育の理論と方法', teacher: '河野 桃子', room: '3305', department: '教育学科/教職' },
+  { day: '木', period: 1, name: '有機化学基礎', teacher: '竹内 亮', room: '3402', department: '化学科' },
+  { day: '木', period: 2, name: 'データベース論', teacher: '杉本 雅弘', room: '3306', department: '情報科学科' },
+  { day: '木', period: 2, name: '都市地理学', teacher: '野村 貴行', room: '3404', department: '地理学科' },
+  { day: '木', period: 2, name: '東洋史特講', teacher: '島田 英樹', room: '131', department: '史学科' },
+  { day: '木', period: 3, name: '教育原論', teacher: '小野 雅章', room: '3303', department: '教育学科/教職' },
+  { day: '木', period: 3, name: '気圏科学実習', teacher: '大野 健太', room: '3506', department: '地球科学科' },
+  { day: '木', period: 3, name: '韓国・朝鮮語1', teacher: '金 秀賢', room: '124', department: '外国語教育科目' },
+  { day: '木', period: 4, name: '電磁気学3', teacher: '鈴木 優樹', room: '3401', department: '物理学科' },
+  { day: '木', period: 4, name: 'マス・コミュニケーション論', teacher: '藤田 剛', room: '442', department: '社会学科' },
+  { day: '木', period: 5, name: 'ロシア語初級', teacher: 'イワノフ D', room: '127A', department: '外国語教育科目' },
+
+  // 金曜日
+  { day: '金', period: 1, name: '微分・積分1', teacher: '石部 正', room: '412', department: '数学科' },
+  { day: '金', period: 1, name: '近代文学研究', teacher: '安田 正人', room: '122', department: '国文学科' },
+  { day: '金', period: 1, name: '英語プレゼンテーション', teacher: 'クラーク S', room: '3204', department: '外国語教育科目' },
+  { day: '金', period: 2, name: '教育原論', teacher: '佐野 良介', room: '3204', department: '教育学科/教職' },
+  { day: '金', period: 2, name: '健康・スポーツ教育実習', teacher: '本田 孝文', room: '体育館', department: '基礎教育科目/体育' },
+  { day: '金', period: 2, name: '心理調査法実習', teacher: '工藤 由美', room: '421', department: '心理学科' },
+  { day: '金', period: 3, name: 'Webプログラミング', teacher: '藤本 一平', room: '3308', department: '情報科学科' },
+  { day: '金', period: 3, name: '倫理学概論', teacher: '中川 徹', room: '132', department: '哲学科' },
+  { day: '金', period: 3, name: '高齢者福祉論', teacher: '西川 和恵', room: '431', department: '社会福祉学科' },
+  { day: '金', period: 4, name: '地理情報科学(GIS)', teacher: '山崎 俊', room: '3403', department: '地理学科' },
+  { day: '金', period: 4, name: '同位体地球科学', teacher: '池田 雅之', room: '3500', department: '地球科学科' },
+  { day: '金', period: 5, name: '中国語スピーキング', teacher: '王 俊', room: '125', department: '中国語中国文化学科' },
+
+  // 土曜日
+  { day: '土', period: 1, name: '教職総合演習', teacher: '教職担当班', room: '411', department: '教職コース' },
+  { day: '土', period: 2, name: '学校図書館メディアの構成', teacher: '図書館学担当', room: '3203', department: '司書教諭コース' },
+  { day: '土', period: 3, name: '博物館展示論', teacher: '学芸員担当', room: '3302', department: '学芸員コース' },
+
+  // 集中講義（不定期・実習・オンデマンド）
+  { day: '集中', period: 0, name: 'データサイエンスの世界', teacher: 'オンデマンド', room: '遠隔', department: '情報科学科/副専攻' },
+  { day: '集中', period: 0, name: 'ヨーロッパの教育思想', teacher: '横田 みどり', room: '3402', department: '教育学科' },
+  { day: '集中', period: 0, name: '野外教育論(含実習)', teacher: '西島 大祐', room: '学外', department: '体育学科' },
+  { day: '集中', period: 0, name: '恐竜学', teacher: '藤原 慎一', room: '3410', department: '地球科学科' },
+  { day: '集中', period: 0, name: 'キャリアデザイン特講', teacher: '峯岸 久枝', room: '学内3500', department: '全学科共通' },
+  { day: '集中', period: 0, name: '教育実習事前・事後指導', teacher: '教職指導委員会', room: '131', department: '教職コース' },
+  { day: '集中', period: 0, name: '博物館実習', teacher: '資料館担当教授', room: '8号館資料館', department: '学芸員コース' },
+  { day: '集中', period: 0, name: '野外調査法（含実習）', teacher: '地理学科スタッフ', room: '学外巡検', department: '地理学科' },
 ];
 
-// APIベースURLを動的に判定
-const getApiBaseUrl = () => {
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
-  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
-    return '';
-  }
-  return 'http://localhost:8000';
-};
+const ALL_CAMPUS_ROOMS = [
+  '122', '123', '124', '125', '126', '130', '131', '132', '135',
+  '3203', '3204', '3205', '3206',
+  '3302', '3303', '3304', '3305', '3306', '3308',
+  '3401', '3402', '3403', '3404', '3410',
+  '3500', '3506',
+  '411', '412', '421', '422', '431', '432', '441', '442', '443', '444'
+];
 
-interface DegreeCheckResult {
+// 施設デフォルトデータ
+const DEFAULT_FACILITIES = [
+  { id: 'library', name: '日本大学文理学部図書館', category: '図書・資料', weekday: '09:00 - 20:00', saturday: '09:00 - 19:00', sunday_holiday: '休館（授業なし日）', note: '地下書庫・貸出手続きは閉館30分前まで', location: '図書館棟' },
+  { id: 'comp_center', name: 'コンピュータセンター（受付）', category: 'ICT・端末', weekday: '09:00 - 18:00', saturday: '09:00 - 13:00', sunday_holiday: '休業', note: 'アカウント・学内Wi-Fi問い合わせ対応', location: '3号館' },
+  { id: 'museum', name: '日本大学文理学部資料館', category: '展示・文化', weekday: '10:00 - 17:00', saturday: '10:00 - 13:00', sunday_holiday: '休館', note: '入館無料 / 企画展示開催中', location: '8号館' },
+  { id: 'learning_commons', name: 'ラーニング・コモンズ', category: '学習スペース', weekday: '08:00 - 18:00 (サポートデスク 10:00 - 18:00)', saturday: '08:00 - 17:00 (サポートデスク 09:00 - 13:00)', sunday_holiday: '休館', note: 'グループ学習・PC貸出・アカデミックコモンズ併設', location: '本館1階' },
+  { id: 'academic_affairs', name: '事務窓口・教務課等', category: '各種手続き', weekday: '09:00 - 17:00', saturday: '09:00 - 13:00', sunday_holiday: '休み', note: '証明書自動発行機利用は閉口15分前まで / 教職コース届出は教職センターへ', location: '本館1階事務室' }
+];
+
+// 教室番号から詳細場所を瞬時に解析（構内ナビ互換）
+function parseRoomDetail(room: string): string {
+  const r = (room || '').trim().toUpperCase();
+  if (!r) return '';
+  if (['122', '123', '124'].includes(r)) return '1号館2F・階段登って左（左奥:女子トイレ）';
+  if (['125', '126', '127A', '127B'].includes(r)) return '1号館2F・階段登って右（右手前:男子、右奥:女子）';
+  if (r === '130') return '1号館3F・正面（左奥:男子、右奥:女子）';
+  if (['131', '132', '133', '134'].includes(r)) return '1号館3F・階段登って左（左奥:男子トイレ）';
+  if (['135', '136', '137A', '137B'].includes(r)) return '1号館3F・階段登って右（右奥:女子トイレ）';
+  if (r === '411') return '4号館1F・正面入って左側（男子側 / 給水所あり）';
+  if (r === '412') return '4号館1F・正面入って右側（女子側 / 給水所あり）';
+  if (r === '421') return '4号館2F・左側（男子側）';
+  if (r === '422') return '4号館2F・右側（女子側）';
+  if (r === '431') return '4号館3F・右側（男子側）';
+  if (r === '432') return '4号館3F・左側（女子側）';
+  if (r.startsWith('3') && r.length === 4) {
+    const floor = r[1];
+    const sub = parseInt(r.slice(2), 10);
+    if (sub >= 1 && sub <= 5) return `3号館${floor}F・エスカレーター右 (男子トイレ側)`;
+    if (sub >= 6 && sub <= 10) return `3号館${floor}F・エスカレーター左 (女子トイレ側)`;
+    return `3号館${floor}F`;
+  }
+  return '';
+}
+
+// 時間割コマデータ型
+interface TimetableCell {
+  subject: string;
+  teacher?: string;
+  room?: string;
+}
+
+// 集中講義型
+interface IntensiveCourse {
+  id: string;
+  name: string;
+  teacher: string;
+  room: string;
+  department?: string;
+}
+
+let globalIdCounter = 1000;
+function getNextId(prefix: string = 'id'): string {
+  globalIdCounter += 1;
+  return `${prefix}_${globalIdCounter}`;
+}
+
+interface DegreeResult {
   department: string;
   total_earned: number;
   total_required: number;
   progress_rate: number;
   remaining_credits: {
-    zengaku: number;
-    sogo: number;
-    gaikokugo: number;
-    kisho: number;
-    major_req: number;
-    major_opt: number;
     total: number;
+    major_req?: number;
+    zengaku?: number;
+    sogo?: number;
+    gaikokugo?: number;
+    kisho?: number;
+    major_opt?: number;
+    [key: string]: number | undefined;
   };
-  minor_status: {
+  minor_status?: {
     name: string;
     earned_credits: number;
     required_credits: number;
     remaining_credits: number;
-    recommended_courses: string[];
+    window?: string;
+    credit_rule?: string;
+    gpa_rule?: string;
   };
   missing_requirements: string[];
   ai_advice: string;
 }
 
-interface FriendComparisonResult {
-  friend_name: string;
-  friend_code: string;
-  friend_timetable: Record<string, string>;
-  common_free_slots: Array<{ key: string; day: string; period: string }>;
-  common_free_count: number;
+interface FriendFreeSlot {
+  day: string;
+  period: string;
+  key?: string;
 }
 
+interface FriendComparison {
+  friend_name: string;
+  friend_code?: string;
+  common_free_count: number;
+  common_free_slots: FriendFreeSlot[];
+}
+
+type ActiveTabType = 'timetable' | 'navigator' | 'academic' | 'facilities' | 'schedules' | 'mypage';
+type ThemeColor = 'emerald' | 'blue' | 'purple' | 'amber';
+
 export default function CampusNavigatorPage() {
-  // ① 年度・学期切り替えステート
+  // タブ管理
+  const [activeTab, setActiveTab] = useState<ActiveTabType>('timetable');
+
+  // ① 年度・学期切り替え
   const [selectedYear, setSelectedYear] = useState('2026年度');
   const [selectedSemester, setSelectedSemester] = useState('前期');
 
-  // タブ管理
-  const [activeTab, setActiveTab] = useState<'timetable' | 'academic' | 'facilities' | 'schedules' | 'mypage'>('timetable');
-
-  // ② 時間割ステート（年度・学期ごとに独立管理、遅延初期化でlocalStorageから読込）
-  const [timetable, setTimetable] = useState<Record<string, string>>(() => {
-    if (typeof window === 'undefined') {
-      return {
-        mon_1: '情報科学概論', wed_3: '情報科学演習', thu_2: 'データベース論', fri_2: '健康・スポーツ教育実習'
-      };
-    }
-    const saved = localStorage.getItem('enekoma_tt_2026年度_前期');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        // fallback
+  // ② 時間割ステート（年度・学期ごとに独立管理）
+  const [timetable, setTimetable] = useState<Record<string, TimetableCell>>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('enekoma_tt_2026年度_前期');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          // 旧文字列形式との後方互換対応
+          const converted: Record<string, TimetableCell> = {};
+          Object.keys(parsed).forEach((k) => {
+            if (typeof parsed[k] === 'string') {
+              converted[k] = { subject: parsed[k] };
+            } else {
+              converted[k] = parsed[k];
+            }
+          });
+          return converted;
+        } catch {
+          // ignore
+        }
       }
     }
     return {
-      mon_1: '情報科学概論', wed_3: '情報科学演習', thu_2: 'データベース論', fri_2: '健康・スポーツ教育実習'
+      mon_1: { subject: '細胞生物学1', teacher: '安原 徳子', room: '3306' },
+      wed_3: { subject: '情報理論1', teacher: '古市 茂', room: '3308' },
+      thu_2: { subject: 'データベース論', teacher: '杉本 雅弘', room: '3306' },
+      fri_2: { subject: '健康・スポーツ教育実習', teacher: '本田 孝文', room: '体育館' },
     };
   });
-  const [editingSlot, setEditingSlot] = useState<string | null>(null);
-  const [editingText, setEditingText] = useState('');
 
-  // 年度・学期の切替ハンドラ
-  const handleYearChange = (newYear: string) => {
-    setSelectedYear(newYear);
+  // 集中講義ステート
+  const [intensiveList, setIntensiveList] = useState<IntensiveCourse[]>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(`enekoma_tt_${newYear}_${selectedSemester}`);
+      const saved = localStorage.getItem('enekoma_intensive_2026年度_前期');
       if (saved) {
-        try {
-          setTimetable(JSON.parse(saved));
-          return;
-        } catch {}
+        try { return JSON.parse(saved); } catch { /* ignore */ }
       }
-      setTimetable({
-        mon_1: '情報科学概論', wed_3: '情報科学演習', thu_2: 'データベース論', fri_2: '健康・スポーツ教育実習'
-      });
     }
-  };
+    return [
+      { id: '1', name: 'データサイエンスの世界', teacher: 'オンデマンド', room: '遠隔', department: '情報科学科/副専攻' },
+      { id: '2', name: '恐竜学', teacher: '藤原 慎一', room: '3410', department: '地球科学科' }
+    ];
+  });
 
-  const handleSemesterChange = (newSemester: string) => {
-    setSelectedSemester(newSemester);
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(`enekoma_tt_${selectedYear}_${newSemester}`);
-      if (saved) {
-        try {
-          setTimetable(JSON.parse(saved));
-          return;
-        } catch {}
-      }
-      setTimetable({
-        mon_1: '情報科学概論', wed_3: '情報科学演習', thu_2: 'データベース論', fri_2: '健康・スポーツ教育実習'
-      });
+  // コマ登録／検索モーダルステート
+  const [modalTarget, setModalTarget] = useState<{ day: string; dayLabel: string; period: number | 'lunch' | '集中' } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [manualSubject, setManualSubject] = useState('');
+  const [manualTeacher, setManualTeacher] = useState('');
+  const [manualRoom, setManualRoom] = useState('');
+  const [colorTheme, setColorTheme] = useState<ThemeColor>('emerald');
+
+  // ③ リアルタイム空き教室案内 ステート & 計算
+  const [freeRoomDay, setFreeRoomDay] = useState<string>(() => {
+    if (typeof window === 'undefined') return '月';
+    const now = new Date();
+    const dayMap = ['日', '月', '火', '水', '木', '金', '土'];
+    const currentD = dayMap[now.getDay()];
+    return currentD !== '日' ? currentD : '月';
+  });
+
+  const [freeRoomPeriod, setFreeRoomPeriod] = useState<number>(() => {
+    if (typeof window === 'undefined') return 2;
+    const now = new Date();
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    const timeVal = hours * 60 + minutes;
+    if (timeVal < 10 * 60 + 30) return 1;
+    if (timeVal < 12 * 60 + 10) return 2;
+    if (timeVal < 14 * 60 + 30) return 3;
+    if (timeVal < 16 * 60 + 10) return 4;
+    return 5;
+  });
+
+  const [bubbleExpanded, setBubbleExpanded] = useState<boolean>(false);
+  const [isBubbleDismissed, setIsBubbleDismissed] = useState<boolean>(false);
+
+  // 選択されたコマでの空き教室を算出
+  const freeRooms = useMemo(() => {
+    const occupied = LECTURE_DATABASE
+      .filter((c) => c.day === freeRoomDay && c.period === freeRoomPeriod)
+      .map((c) => c.room);
+    return ALL_CAMPUS_ROOMS.filter((r) => !occupied.includes(r));
+  }, [freeRoomDay, freeRoomPeriod]);
+
+  // ④ 構内ナビAI ステート
+  const [navQuery, setNavQuery] = useState('');
+  const [navMessages, setNavMessages] = useState<Array<{ sender: 'user' | 'ai'; text: string }>>([
+    {
+      sender: 'ai',
+      text: '🤖 こんにちは！日本大学文理学部 構内ナビゲーターAIです。\n教室の場所（例: 3402, 411, 124）、トイレや給水所の位置、自販機の商品（レッドブル、モンスター等）や価格・クレカ決済方法などを質問してください！'
     }
-  };
+  ]);
 
-  // ③ 履修・卒業ナビ ステート
+  // ⑤ 履修・卒業ナビ ステート
   const [department, setDepartment] = useState('情報科学科');
   const [grade, setGrade] = useState(2);
   const [selectedMinor, setSelectedMinor] = useState('AI・データサイエンス副専攻');
   const [earnedCredits, setEarnedCredits] = useState({
     zengaku: 2, sogo: 8, gaikokugo: 8, kisho: 5, major_req: 18, major_opt: 12, free_opt: 8
   });
-  const [degreeResult, setDegreeResult] = useState<DegreeCheckResult | null>(null);
+  const [degreeResult, setDegreeResult] = useState<DegreeResult | null>(null);
 
-  // ④ 施設営業時間 AI ステート
+  // ⑥ 施設営業時間 ステート
   const [facilityQuery, setFacilityQuery] = useState('');
-  const [facilityData, setFacilityData] = useState<FacilityItem[]>(DEFAULT_FACILITIES);
+  const [facilityData, setFacilityData] = useState<typeof DEFAULT_FACILITIES>(DEFAULT_FACILITIES);
   const [facilityAiAnswer, setFacilityAiAnswer] = useState('');
 
-  // ⑤ スケジュール ＆ 通知 ステート
+  // ⑦ スケジュール ＆ 通知 ステート
   const [pushEnabled, setPushEnabled] = useState(false);
   const [tasks, setTasks] = useState([
-    { id: '1', title: '情報科学演習 レポート提出', date: '2026-10-09', period: '3限', course_name: '情報科学演習', type: 'task', completed: false },
-    { id: '2', title: 'データ構造 中間テスト', date: '2026-10-15', period: '2限', course_name: 'データ構造', type: 'exam', completed: false }
+    { id: '1', title: '情報科学演習 レポート提出', date: '2026-10-09', period: '3限', course_name: '情報科学演習', type: 'task' },
+    { id: '2', title: 'データ構造 中間テスト', date: '2026-10-15', period: '2限', course_name: 'データ構造', type: 'exam' }
   ]);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDate, setNewTaskDate] = useState('');
   const [newTaskType, setNewTaskType] = useState('task');
 
-  // ⑥ マイページ ＆ フレンド共有 ステート
+  // ⑧ マイページ ＆ フレンド共有 ステート
   const [userName, setUserName] = useState('文理 太郎');
   const [myShareCode] = useState('ENE-7829-CHS');
   const [friendCodeInput, setFriendCodeInput] = useState('');
-  const [friendComparison, setFriendComparison] = useState<FriendComparisonResult | null>(null);
+  const [friendComparison, setFriendComparison] = useState<FriendComparison | null>(null);
 
-  // 時間割保存
-  const saveTimetableSlot = () => {
-    if (!editingSlot) return;
-    const updated = { ...timetable, [editingSlot]: editingText };
-    setTimetable(updated);
-    const storageKey = `enekoma_tt_${selectedYear}_${selectedSemester}`;
-    localStorage.setItem(storageKey, JSON.stringify(updated));
-    setEditingSlot(null);
-    setEditingText('');
+  // 年度・学期変更ハンドラ
+  const handleTermChange = (newYear: string, newSemester: string) => {
+    setSelectedYear(newYear);
+    setSelectedSemester(newSemester);
+    if (typeof window !== 'undefined') {
+      const storageKey = `enekoma_tt_${newYear}_${newSemester}`;
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          const converted: Record<string, TimetableCell> = {};
+          Object.keys(parsed).forEach((k) => {
+            if (typeof parsed[k] === 'string') converted[k] = { subject: parsed[k] };
+            else converted[k] = parsed[k];
+          });
+          setTimetable(converted);
+        } catch {
+          setTimetable({});
+        }
+      } else {
+        setTimetable({});
+      }
+
+      const intensiveKey = `enekoma_intensive_${newYear}_${newSemester}`;
+      const savedIntensive = localStorage.getItem(intensiveKey);
+      if (savedIntensive) {
+        try { setIntensiveList(JSON.parse(savedIntensive)); } catch { setIntensiveList([]); }
+      } else {
+        setIntensiveList([]);
+      }
+    }
   };
 
-  // 卒業AI判定実行
-  const runDegreeCheck = async () => {
-    const apiBase = getApiBaseUrl();
+  // ワンタップ登録モーダルを開く
+  const openClassModal = (day: string, dayLabel: string, period: number | 'lunch' | '集中') => {
+    setModalTarget({ day, dayLabel, period });
+    setSearchQuery('');
+    setManualSubject('');
+    setManualTeacher('');
+    setManualRoom('');
+  };
+
+  // ワンタップ講義登録（サジェストから選択）
+  const handleSelectLecture = (lecture: LectureCourse) => {
+    if (!modalTarget) return;
+
+    if (modalTarget.period === '集中') {
+      const newIntensive: IntensiveCourse = {
+        id: getNextId('int'),
+        name: lecture.name,
+        teacher: lecture.teacher,
+        room: lecture.room,
+        department: lecture.department
+      };
+      const updated = [...intensiveList, newIntensive];
+      setIntensiveList(updated);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(`enekoma_intensive_${selectedYear}_${selectedSemester}`, JSON.stringify(updated));
+      }
+    } else {
+      const slotKey = `${modalTarget.day}_${modalTarget.period}`;
+      const updated = {
+        ...timetable,
+        [slotKey]: {
+          subject: lecture.name,
+          teacher: lecture.teacher,
+          room: lecture.room
+        }
+      };
+      setTimetable(updated);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(`enekoma_tt_${selectedYear}_${selectedSemester}`, JSON.stringify(updated));
+      }
+    }
+    setModalTarget(null);
+  };
+
+  // 手動入力登録
+  const handleManualSave = () => {
+    if (!modalTarget || !manualSubject.trim()) return;
+
+    if (modalTarget.period === '集中') {
+      const newIntensive: IntensiveCourse = {
+        id: getNextId('int'),
+        name: manualSubject.trim(),
+        teacher: manualTeacher.trim(),
+        room: manualRoom.trim()
+      };
+      const updated = [...intensiveList, newIntensive];
+      setIntensiveList(updated);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(`enekoma_intensive_${selectedYear}_${selectedSemester}`, JSON.stringify(updated));
+      }
+    } else {
+      const slotKey = `${modalTarget.day}_${modalTarget.period}`;
+      const updated = {
+        ...timetable,
+        [slotKey]: {
+          subject: manualSubject.trim(),
+          teacher: manualTeacher.trim(),
+          room: manualRoom.trim()
+        }
+      };
+      setTimetable(updated);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(`enekoma_tt_${selectedYear}_${selectedSemester}`, JSON.stringify(updated));
+      }
+    }
+    setModalTarget(null);
+  };
+
+  // コマ削除
+  const handleRemoveSlot = (slotKey: string) => {
+    const updated = { ...timetable };
+    delete updated[slotKey];
+    setTimetable(updated);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`enekoma_tt_${selectedYear}_${selectedSemester}`, JSON.stringify(updated));
+    }
+  };
+
+  // 集中講義削除
+  const handleRemoveIntensive = (id: string) => {
+    const updated = intensiveList.filter((x) => x.id !== id);
+    setIntensiveList(updated);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`enekoma_intensive_${selectedYear}_${selectedSemester}`, JSON.stringify(updated));
+    }
+  };
+
+  // モーダル検索でのフィルタリング講義一覧
+  const filteredLectures = useMemo(() => {
+    if (!modalTarget) return [];
+    const q = searchQuery.toLowerCase().trim();
+    return LECTURE_DATABASE.filter((c) => {
+      const matchPeriod = modalTarget.period === '集中' ? c.day === '集中' : (c.day === modalTarget.dayLabel.replace('曜', '') && c.period === modalTarget.period);
+      const matchQ = !q || c.name.toLowerCase().includes(q) || c.teacher.toLowerCase().includes(q) || c.room.toLowerCase().includes(q) || (c.department && c.department.toLowerCase().includes(q));
+      return matchPeriod && matchQ;
+    });
+  }, [modalTarget, searchQuery]);
+
+  // 構内ナビ チャット送信
+  const handleSendNav = async (overrideQ?: string) => {
+    const query = overrideQ || navQuery;
+    if (!query.trim()) return;
+
+    const newMessages = [...navMessages, { sender: 'user' as const, text: query }];
+    setNavMessages(newMessages);
+    if (!overrideQ) setNavQuery('');
+
     try {
-      const res = await fetch(`${apiBase}/api/academic/degree-check`, {
+      const res = await fetch('/api/navigator/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNavMessages([...newMessages, { sender: 'ai', text: data.reply }]);
+        return;
+      }
+    } catch {
+      // ignore
+    }
+
+    // フォールバック応答
+    let reply = '【キャンパス構内ナビ】\n';
+    if (query.includes('3505') || query.includes('3402')) {
+      reply += '3号館は偶数番号が女子トイレ側、奇数番号が男子トイレ側です。1階に自販機とゴミ箱があります。';
+    } else if (query.includes('レッドブル') || query.includes('自販機')) {
+      reply += '3号館1階および4号館1階の自販機でレッドブル（170円）を購入できます。3号館赤自販機はクレカタッチ対応です。';
+    } else if (query.includes('給水')) {
+      reply += '給水所（冷水機）は4号館1階エントランスのみ使用可能です（2〜4階は使用不可）。';
+    } else {
+      reply += '教室（例: 3402, 411）、トイレ、自販機（レッドブル、クレカ決済、100円商品）、ゴミ箱などをご案内できます。';
+    }
+    setNavMessages([...newMessages, { sender: 'ai', text: reply }]);
+  };
+
+  // 卒業AI判定
+  const runDegreeCheck = async () => {
+    try {
+      const res = await fetch('/api/academic/degree-check', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -253,165 +640,136 @@ export default function CampusNavigatorPage() {
           grade: Number(grade),
           earned_credits: earnedCredits,
           selected_minor: selectedMinor,
-          taken_courses: ['データ処理基礎', 'ビッグデータサイエンス']
+          taken_courses: ['データ処理基礎', 'ビッグデータサイエンス', '教育原理']
         })
       });
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-      const data = await res.json();
-      setDegreeResult(data);
-    } catch (err) {
-      console.warn('API fallback for degree check:', err);
-      const totalEarned = Object.values(earnedCredits).reduce((a, b) => a + b, 0);
-      const totalRequired = 124;
-      const progress = Math.min(100, Math.round((totalEarned / totalRequired) * 100));
-      setDegreeResult({
-        department,
-        total_earned: totalEarned,
-        total_required: totalRequired,
-        progress_rate: progress,
-        remaining_credits: {
-          zengaku: Math.max(0, 2 - earnedCredits.zengaku),
-          sogo: Math.max(0, 12 - earnedCredits.sogo),
-          gaikokugo: Math.max(0, 8 - earnedCredits.gaikokugo),
-          kisho: Math.max(0, 5 - earnedCredits.kisho),
-          major_req: Math.max(0, 38 - earnedCredits.major_req),
-          major_opt: Math.max(0, 22 - earnedCredits.major_opt),
-          total: Math.max(0, totalRequired - totalEarned)
-        },
-        minor_status: {
-          name: selectedMinor,
-          earned_credits: 4,
-          required_credits: 16,
-          remaining_credits: 12,
-          recommended_courses: ['人工知能概論', 'データサイエンス演習']
-        },
-        missing_requirements: [
-          '総合教育科目: 残り要件あり',
-          '学科専門必修: 残り要件あり'
-        ],
-        ai_advice: `卒業条件達成率は ${progress}% です。次学期は学科専門必修科目を優先して登録してください。`
-      });
+      if (res.ok) {
+        const data = await res.json();
+        setDegreeResult(data);
+        return;
+      }
+    } catch {
+      // ignore
     }
+
+    // クライアント側フォールバック
+    const totalEarned = Object.values(earnedCredits).reduce((a, b) => a + Number(b), 0);
+    const progressRate = Math.min(100, Math.round((totalEarned / 124) * 100));
+    setDegreeResult({
+      department,
+      total_earned: totalEarned,
+      total_required: 124,
+      progress_rate: progressRate,
+      remaining_credits: { total: Math.max(0, 124 - totalEarned), major_req: Math.max(0, 38 - earnedCredits.major_req) },
+      minor_status: { name: selectedMinor, earned_credits: 4, required_credits: 16, remaining_credits: 12 },
+      missing_requirements: totalEarned < 124 ? [`全学共通または専門必修科目の残りがあります`] : [],
+      ai_advice: `達成率は${progressRate}%です。${grade}年次として卒業論文・専門必修科目を優先して履修登録しましょう。`
+    });
   };
 
-  // 施設営業時間AI検索実行
-  const searchFacilities = useCallback(async (qText?: string) => {
-    const query = qText !== undefined ? qText : facilityQuery;
-    const apiBase = getApiBaseUrl();
+  // 施設営業時間検索
+  const searchFacilities = async (qText?: string) => {
+    const q = qText !== undefined ? qText : facilityQuery;
     try {
-      const res = await fetch(`${apiBase}/api/facilities/hours?q=${encodeURIComponent(query)}`);
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-      const data = await res.json();
-      setFacilityData(data.facilities);
-      setFacilityAiAnswer(data.ai_response);
-    } catch (err) {
-      console.warn('Facility API offline fallback:', err);
-      const filtered = query
-        ? DEFAULT_FACILITIES.filter(
-            (f) =>
-              f.name.includes(query) ||
-              f.category.includes(query) ||
-              f.location.includes(query)
-          )
-        : DEFAULT_FACILITIES;
-      setFacilityData(filtered);
-      setFacilityAiAnswer(
-        `【文理学部 施設営業時間案内AI】\n検索条件: 「${query || '全施設'}」の回答結果です。`
-      );
+      const res = await fetch(`/api/facilities/hours?q=${encodeURIComponent(q)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setFacilityData(data.facilities || DEFAULT_FACILITIES);
+        setFacilityAiAnswer(data.ai_response || '');
+        return;
+      }
+    } catch {
+      // ignore
     }
-  }, [facilityQuery]);
 
-  // Web Push/ブラウザ通知トグル
-  const toggleNotification = () => {
-    if (!('Notification' in window)) {
-      alert('お使いのブラウザは通知機能に対応していません。');
-      return;
-    }
-    if (Notification.permission === 'granted') {
-      setPushEnabled(!pushEnabled);
-    } else if (Notification.permission !== 'denied') {
-      Notification.requestPermission().then((permission) => {
-        if (permission === 'granted') {
-          setPushEnabled(true);
-          new Notification('EneKoma Campus Navigator', { body: 'リマインダー通知が有効化されました。' });
-        }
-      });
-    }
+    const filtered = DEFAULT_FACILITIES.filter((f) => !q || f.name.includes(q) || f.category.includes(q) || f.location.includes(q));
+    setFacilityData(filtered.length ? filtered : DEFAULT_FACILITIES);
+    setFacilityAiAnswer(`検索条件「${q || '全施設'}」の施設案内です。図書館は平日20:00まで、ラーニングコモンズは8:00〜18:00開館しています。`);
   };
 
-  // フレンド時間割比較実行
+  // フレンド時間割比較
   const compareFriend = async () => {
     if (!friendCodeInput) return;
-    const apiBase = getApiBaseUrl();
     try {
-      const res = await fetch(`${apiBase}/api/friends/compare`, {
+      const res = await fetch('/api/friends/compare', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          friend_code: friendCodeInput,
-          my_timetable: timetable
-        })
+        body: JSON.stringify({ friend_code: friendCodeInput, my_timetable: timetable })
       });
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-      const data = await res.json();
-      setFriendComparison(data);
-    } catch (err) {
-      console.warn('Friends API fallback:', err);
-      const dummySlots = [
-        { key: 'mon_2', day: '月曜', period: '2限' },
-        { key: 'tue_3', day: '火曜', period: '3限' },
-        { key: 'wed_2', day: '水曜', period: '2限' },
-        { key: 'thu_4', day: '木曜', period: '4限' },
-      ];
-      setFriendComparison({
-        friend_name: `フレンド (${friendCodeInput.toUpperCase()})`,
-        friend_code: friendCodeInput.toUpperCase(),
-        friend_timetable: { mon_1: '総合教養', tue_2: '専門演習' },
-        common_free_slots: dummySlots,
-        common_free_count: dummySlots.length
-      });
+      if (res.ok) {
+        const data = await res.json();
+        setFriendComparison(data);
+        return;
+      }
+    } catch {
+      // ignore
     }
+
+    setFriendComparison({
+      friend_name: `サクラ (${friendCodeInput})`,
+      common_free_count: 3,
+      common_free_slots: [
+        { day: '火曜', period: '1限' },
+        { day: '木曜', period: '3限' },
+        { day: '金曜', period: '4限' }
+      ]
+    });
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800">
-      {/* 画面上部ヘッダー & 年度/学期セレクター */}
+    <div className="min-h-screen bg-slate-50 text-slate-800 pb-24">
+      {/* 画面上部ヘッダー */}
       <header className="bg-emerald-700 text-white shadow-md">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex flex-wrap justify-between items-center gap-4">
+        <div className="max-w-7xl mx-auto px-4 py-3.5 flex flex-wrap justify-between items-center gap-3">
           <div className="flex items-center gap-3">
-            <span className="text-2xl font-black tracking-tight">EneKoma</span>
-            <span className="text-xs bg-emerald-800 px-2.5 py-1 rounded-full border border-emerald-600">日本大学文理学部公式対応</span>
+            <span className="text-2xl font-black tracking-tight flex items-center gap-1.5">
+              <span>⚡</span> EneKoma
+            </span>
+            <span className="text-xs bg-emerald-800/90 text-emerald-200 px-2.5 py-1 rounded-full border border-emerald-600 font-medium">
+              日本大学文理学部 (CHS) 完全対応
+            </span>
           </div>
 
-          {/* ③ 年度・学期切り替えドロップダウン */}
-          <div className="flex items-center gap-3 bg-emerald-800/80 p-1.5 rounded-lg border border-emerald-600">
-            <label className="text-xs font-semibold text-emerald-100 pl-2">表示対象:</label>
-            <select
-              value={selectedYear}
-              onChange={(e) => handleYearChange(e.target.value)}
-              className="bg-white text-slate-800 text-sm font-bold py-1 px-3 rounded shadow-sm focus:outline-none"
+          <div className="flex items-center gap-3">
+            {/* 構内ナビAI クイック起動ボタン */}
+            <button
+              onClick={() => setActiveTab('navigator')}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-1.5 px-3 rounded-lg shadow-sm flex items-center gap-1.5 transition-colors border border-emerald-400"
             >
-              <option value="2026年度">2026年度</option>
-              <option value="2025年度">2025年度</option>
-              <option value="2024年度">2024年度</option>
-            </select>
-            <select
-              value={selectedSemester}
-              onChange={(e) => handleSemesterChange(e.target.value)}
-              className="bg-white text-slate-800 text-sm font-bold py-1 px-3 rounded shadow-sm focus:outline-none"
-            >
-              <option value="前期">前期</option>
-              <option value="後期">後期</option>
-            </select>
+              <span>🧭</span>
+              <span>校舎構内ナビ</span>
+            </button>
+
+            {/* 年度・学期セレクター */}
+            <div className="flex items-center gap-2 bg-emerald-800/80 p-1 rounded-lg border border-emerald-600">
+              <select
+                value={selectedYear}
+                onChange={(e) => handleTermChange(e.target.value, selectedSemester)}
+                className="bg-white text-slate-800 text-xs font-bold py-1 px-2.5 rounded shadow-sm focus:outline-none"
+              >
+                <option value="2026年度">2026年度</option>
+                <option value="2025年度">2025年度</option>
+                <option value="2024年度">2024年度</option>
+              </select>
+              <select
+                value={selectedSemester}
+                onChange={(e) => handleTermChange(selectedYear, e.target.value)}
+                className="bg-white text-slate-800 text-xs font-bold py-1 px-2.5 rounded shadow-sm focus:outline-none"
+              >
+                <option value="前期">前期</option>
+                <option value="後期">後期</option>
+              </select>
+            </div>
           </div>
         </div>
       </header>
 
       {/* タブナビゲーション */}
-      <nav className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 flex overflow-x-auto gap-2">
+      <nav className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 flex overflow-x-auto gap-1">
           {[
             { id: 'timetable', label: '📅 時間割' },
+            { id: 'navigator', label: '🧭 構内ナビ' },
             { id: 'academic', label: '🎓 履修・卒業ナビ' },
             { id: 'facilities', label: '🏛 施設営業時間' },
             { id: 'schedules', label: '⏰ スケジュール' },
@@ -419,11 +777,11 @@ export default function CampusNavigatorPage() {
           ].map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as 'timetable' | 'academic' | 'facilities' | 'schedules' | 'mypage')}
-              className={`py-3.5 px-4 font-bold text-sm border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
+              onClick={() => setActiveTab(tab.id as ActiveTabType)}
+              className={`py-3 px-3.5 font-bold text-xs sm:text-sm border-b-2 whitespace-nowrap transition-colors flex items-center gap-1.5 ${
                 activeTab === tab.id
-                  ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50'
-                  : 'border-transparent text-slate-600 hover:text-emerald-600'
+                  ? 'border-emerald-600 text-emerald-700 bg-emerald-50/60'
+                  : 'border-transparent text-slate-600 hover:text-emerald-600 hover:bg-slate-50'
               }`}
             >
               {tab.label}
@@ -432,32 +790,54 @@ export default function CampusNavigatorPage() {
         </div>
       </nav>
 
-      {/* メインコンテンツエリア */}
+      {/* メインコンテンツ */}
       <main className="max-w-7xl mx-auto px-4 py-6">
 
         {/* -------------------------------------------------------------
-            TAB 1: 📅 時間割（更新後の時限時刻・年度学期保存対応）
+            TAB 1: 📅 時間割（新時限時間・＋ワンタップ検索登録・集中講義）
         ------------------------------------------------------------- */}
         {activeTab === 'timetable' && (
-          <div className="space-y-4">
-            <div className="flex justify-between items-center bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+          <div className="space-y-6">
+            {/* 上部ステータスバー */}
+            <div className="flex flex-wrap justify-between items-center bg-white border border-slate-200 rounded-xl p-4 shadow-sm gap-3">
               <div>
-                <h2 className="text-lg font-bold text-emerald-900">時間割ビュー（{selectedYear} {selectedSemester}）</h2>
-                <p className="text-xs text-emerald-700">コマをクリックして授業名を入力・保存できます。</p>
+                <h2 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <span>📅 時間割表</span>
+                  <span className="text-emerald-700 font-extrabold text-sm">（{selectedYear} {selectedSemester}）</span>
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  コマの「＋」を押すと講義名や先生の名前からワンタップで簡単登録できます。
+                </p>
               </div>
-              <span className="text-xs font-bold bg-emerald-600 text-white px-3 py-1.5 rounded-full">
-                5時限制＋昼休み構成
-              </span>
+
+              {/* テーマカラー選択 */}
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-500 font-semibold">カラー:</span>
+                {[
+                  { id: 'emerald', bg: 'bg-emerald-600' },
+                  { id: 'blue', bg: 'bg-sky-600' },
+                  { id: 'purple', bg: 'bg-purple-600' },
+                  { id: 'amber', bg: 'bg-amber-600' }
+                ].map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setColorTheme(c.id as ThemeColor)}
+                    className={`w-5 h-5 rounded-full ${c.bg} transition-transform ${colorTheme === c.id ? 'ring-2 ring-offset-2 ring-slate-400 scale-110' : 'opacity-70 hover:opacity-100'}`}
+                  />
+                ))}
+              </div>
             </div>
 
-            {/* 時間割グリッド */}
+            {/* 時間割グリッド（月〜土 / 1〜5限 + 昼休み） */}
             <div className="overflow-x-auto bg-white rounded-xl shadow border border-slate-200">
-              <table className="w-full min-w-[640px] border-collapse">
+              <table className="w-full min-w-[760px] border-collapse">
                 <thead>
-                  <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 text-sm">
-                    <th className="py-3 px-3 w-28 text-center font-bold">時限 / 時間</th>
+                  <tr className="bg-slate-100/90 border-b border-slate-200 text-slate-700 text-xs sm:text-sm">
+                    <th className="py-3 px-2 w-28 text-center font-bold">時限 / 時間</th>
                     {DAYS.map((d) => (
-                      <th key={d.key} className="py-3 px-3 text-center font-bold border-l border-slate-200">{d.label}</th>
+                      <th key={d.key} className="py-3 px-2 text-center font-bold border-l border-slate-200">
+                        {d.label}
+                      </th>
                     ))}
                   </tr>
                 </thead>
@@ -465,40 +845,87 @@ export default function CampusNavigatorPage() {
                   {PERIODS_CONFIG.map((p) => {
                     if (p.isLunch) {
                       return (
-                        <tr key="lunch" className="bg-amber-50/60 border-b border-amber-200/60 text-amber-900 text-xs">
-                          <td className="py-2 px-3 text-center font-bold bg-amber-100/50">
-                            {p.name}<br /><span className="font-normal text-[10px]">{p.time}</span>
+                        <tr key="lunch" className="bg-amber-50/70 border-b border-amber-200/60 text-amber-900 text-xs">
+                          <td className="py-2 px-2 text-center font-bold bg-amber-100/60 border-r border-amber-200">
+                            {p.name}<br /><span className="font-normal text-[10px] text-amber-800">{p.time}</span>
                           </td>
-                          <td colSpan={5} className="py-2 text-center font-semibold tracking-widest text-amber-800">
-                            🍱 昼休み（12:10 〜 13:00）
+                          <td colSpan={6} className="py-2.5 text-center font-semibold tracking-wider text-amber-900">
+                            🍱 昼休み（12:10 〜 13:00）食堂・ラーニングコモンズ利用可
                           </td>
                         </tr>
                       );
                     }
                     return (
-                      <tr key={p.id} className="border-b border-slate-200 text-sm hover:bg-slate-50/50">
+                      <tr key={p.id} className="border-b border-slate-200 text-sm hover:bg-slate-50/30">
                         <td className="py-3 px-2 text-center font-bold bg-slate-50 text-slate-700 border-r border-slate-200">
-                          <div className="text-base text-emerald-800">{p.name}</div>
-                          <div className="text-[11px] text-slate-500 font-normal">{p.time}</div>
+                          <div className="text-base text-emerald-800 font-black">{p.name}</div>
+                          <div className="text-[10px] text-slate-500 font-normal">{p.time}</div>
                         </td>
                         {DAYS.map((d) => {
                           const slotKey = `${d.key}_${p.id}`;
-                          const course = timetable[slotKey] || '';
+                          const cell = timetable[slotKey];
+                          const roomDetail = cell?.room ? parseRoomDetail(cell.room) : '';
+
                           return (
                             <td
                               key={slotKey}
-                              onClick={() => {
-                                setEditingSlot(slotKey);
-                                setEditingText(course);
-                              }}
-                              className="py-3 px-3 border-r border-slate-200 text-center cursor-pointer hover:bg-emerald-50/60 transition-colors h-20 align-top"
+                              className="py-2 px-2 border-r border-slate-200 text-center align-top h-24 relative group"
                             >
-                              {course ? (
-                                <div className="bg-emerald-100/80 text-emerald-900 p-2 rounded-lg font-bold text-xs shadow-sm border border-emerald-300">
-                                  {course}
+                              {cell && cell.subject ? (
+                                <div className={`h-full rounded-lg p-2 flex flex-col justify-between text-left shadow-sm border transition-all ${
+                                  colorTheme === 'blue' ? 'bg-sky-50 border-sky-300 text-sky-950' :
+                                  colorTheme === 'purple' ? 'bg-purple-50 border-purple-300 text-purple-950' :
+                                  colorTheme === 'amber' ? 'bg-amber-50 border-amber-300 text-amber-950' :
+                                  'bg-emerald-50 border-emerald-300 text-emerald-950'
+                                }`}>
+                                  <div>
+                                    <div className="flex justify-between items-start gap-1">
+                                      <h4 className="font-bold text-xs leading-snug line-clamp-2">{cell.subject}</h4>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleRemoveSlot(slotKey);
+                                        }}
+                                        className="text-slate-400 hover:text-red-500 text-xs font-bold leading-none p-0.5"
+                                        title="コマを削除"
+                                      >
+                                        ×
+                                      </button>
+                                    </div>
+                                    {cell.teacher && (
+                                      <p className="text-[11px] text-slate-600 mt-1 line-clamp-1">👤 {cell.teacher}</p>
+                                    )}
+                                  </div>
+
+                                  {cell.room && (
+                                    <div className="mt-1.5 flex items-center justify-between">
+                                      <span
+                                        className="inline-block bg-slate-800 text-white text-[10px] font-bold px-1.5 py-0.5 rounded cursor-pointer"
+                                        title={roomDetail || `${cell.room}教室`}
+                                        onClick={() => {
+                                          setActiveTab('navigator');
+                                          handleSendNav(`${cell.room}はどこ？`);
+                                        }}
+                                      >
+                                        📍 {cell.room}
+                                      </span>
+                                      {roomDetail && (
+                                        <span className="text-[9px] text-slate-500 truncate max-w-[80px]" title={roomDetail}>
+                                          {roomDetail}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               ) : (
-                                <div className="text-slate-300 text-xs pt-4 font-light">＋ 登録</div>
+                                <button
+                                  onClick={() => openClassModal(d.key, d.label, p.id as number)}
+                                  className="w-full h-full border-2 border-dashed border-slate-200 rounded-lg flex flex-col items-center justify-center text-slate-300 hover:text-emerald-600 hover:border-emerald-400 hover:bg-emerald-50/40 transition-colors"
+                                  title="講義をワンタップ登録"
+                                >
+                                  <span className="text-xl leading-none">＋</span>
+                                  <span className="text-[10px] mt-0.5 font-medium">登録</span>
+                                </button>
                               )}
                             </td>
                           );
@@ -510,34 +937,173 @@ export default function CampusNavigatorPage() {
               </table>
             </div>
 
-            {/* 授業登録モーダル */}
-            {editingSlot && (
-              <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4">
-                  <h3 className="text-lg font-bold text-slate-900">授業・コマ情報の編集</h3>
-                  <p className="text-xs text-slate-500">選択スロット: {editingSlot}</p>
-                  <input
-                    type="text"
-                    value={editingText}
-                    onChange={(e) => setEditingText(e.target.value)}
-                    placeholder="講義名（例: 情報科学演習）"
-                    autoFocus
-                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                  <div className="flex justify-end gap-2 pt-2">
+            {/* 集中講義・実習セクション */}
+            <div className="bg-white rounded-xl shadow border border-slate-200 p-5 space-y-4">
+              <div className="flex flex-wrap justify-between items-center gap-3 border-b pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">☀️</span>
+                  <div>
+                    <h3 className="font-bold text-base text-slate-900">集中講義・野外実習・オンデマンド科目</h3>
+                    <p className="text-xs text-slate-500">不定期開講の集中講義や資格実習・オンデマンド授業を管理できます。</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => openClassModal('集中', '集中', '集中')}
+                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow-sm flex items-center gap-1.5 transition-colors"
+                >
+                  <span>＋</span>
+                  <span>集中講義を追加</span>
+                </button>
+              </div>
+
+              {intensiveList.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {intensiveList.map((item) => (
+                    <div key={item.id} className="bg-emerald-50/70 border border-emerald-200 rounded-lg p-3 relative flex flex-col justify-between">
+                      <button
+                        onClick={() => handleRemoveIntensive(item.id)}
+                        className="absolute top-2 right-2 text-slate-400 hover:text-red-500 text-xs font-bold leading-none"
+                      >
+                        ×
+                      </button>
+                      <div>
+                        <span className="text-[10px] font-bold bg-emerald-200 text-emerald-800 px-1.5 py-0.5 rounded">
+                          集中講義
+                        </span>
+                        <h4 className="font-bold text-sm text-slate-900 mt-1 leading-snug">{item.name}</h4>
+                        {item.teacher && (
+                          <p className="text-xs text-slate-600 mt-1">👤 担当: {item.teacher}</p>
+                        )}
+                      </div>
+                      <div className="mt-2 pt-2 border-t border-emerald-200/60 flex justify-between items-center text-xs">
+                        <span className="text-[11px] text-emerald-800 font-semibold">📍 {item.room || '学内/遠隔'}</span>
+                        {item.department && (
+                          <span className="text-[10px] text-slate-500">{item.department}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-6 text-slate-400 text-xs">
+                  登録された集中講義はありません。「＋ 集中講義を追加」から登録してください。
+                </div>
+              )}
+            </div>
+
+            {/* クイック検索・ワンタップ登録モーダル */}
+            {modalTarget && (
+              <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
+                <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl max-h-[85vh] flex flex-col space-y-4">
+                  <div className="flex justify-between items-center border-b pb-3">
+                    <div>
+                      <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
+                        <span>🔍 講義を選択してワンタップ登録</span>
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        対象: <strong className="text-emerald-700">{modalTarget.period === '集中' ? '集中講義' : `${modalTarget.dayLabel} ${modalTarget.period}限`}</strong>
+                      </p>
+                    </div>
                     <button
-                      type="button"
-                      onClick={() => setEditingSlot(null)}
-                      className="px-4 py-2 bg-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-300 cursor-pointer"
+                      onClick={() => setModalTarget(null)}
+                      className="text-slate-400 hover:text-slate-700 text-xl font-bold leading-none p-1"
                     >
-                      キャンセル
+                      ×
+                    </button>
+                  </div>
+
+                  {/* インクリメンタル検索入力 */}
+                  <div>
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="講義名、教授名、教室番号（例: 物理、安原、3306）を入力..."
+                      className="w-full border border-slate-300 rounded-xl p-3 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none shadow-sm"
+                      autoFocus
+                    />
+                  </div>
+
+                  {/* 講義サジェスト一覧 */}
+                  <div className="overflow-y-auto flex-1 max-h-60 space-y-2 pr-1">
+                    <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                      開講科目候補（タップして即座に登録）:
+                    </p>
+                    {filteredLectures.length > 0 ? (
+                      filteredLectures.map((lec, idx) => (
+                        <div
+                          key={idx}
+                          onClick={() => handleSelectLecture(lec)}
+                          className="bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-400 rounded-xl p-3 cursor-pointer transition-all flex justify-between items-center group"
+                        >
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm text-slate-900 group-hover:text-emerald-800">
+                                {lec.name}
+                              </span>
+                              <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded">
+                                {lec.department}
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-500 mt-1 flex items-center gap-3">
+                              <span>👤 {lec.teacher}</span>
+                              <span className="font-semibold text-emerald-700">📍 教室: {lec.room}</span>
+                            </div>
+                          </div>
+                          <span className="text-xs font-bold text-emerald-600 bg-white border border-emerald-200 px-3 py-1.5 rounded-lg shadow-2xs group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                            登録
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-6 text-slate-400 text-xs bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                        該当する講義が見つかりません。下の手動フォームから直接入力も可能です。
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 手動入力アコーディオン */}
+                  <div className="border-t pt-3 space-y-2">
+                    <p className="text-[11px] font-bold text-slate-500">または手動で入力して登録:</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <input
+                        type="text"
+                        placeholder="科目名"
+                        value={manualSubject}
+                        onChange={(e) => setManualSubject(e.target.value)}
+                        className="border border-slate-300 rounded-lg p-2 text-xs focus:ring-1 focus:ring-emerald-500"
+                      />
+                      <input
+                        type="text"
+                        placeholder="教員名"
+                        value={manualTeacher}
+                        onChange={(e) => setManualTeacher(e.target.value)}
+                        className="border border-slate-300 rounded-lg p-2 text-xs focus:ring-1 focus:ring-emerald-500"
+                      />
+                      <input
+                        type="text"
+                        placeholder="教室 (例: 3402)"
+                        value={manualRoom}
+                        onChange={(e) => setManualRoom(e.target.value)}
+                        className="border border-slate-300 rounded-lg p-2 text-xs focus:ring-1 focus:ring-emerald-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* ボタン */}
+                  <div className="flex justify-end gap-2 pt-2 border-t">
+                    <button
+                      onClick={() => setModalTarget(null)}
+                      className="px-4 py-2 bg-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-300"
+                    >
+                      閉じる
                     </button>
                     <button
-                      type="button"
-                      onClick={saveTimetableSlot}
-                      className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 shadow cursor-pointer"
+                      onClick={handleManualSave}
+                      disabled={!manualSubject.trim()}
+                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-xs font-bold rounded-lg shadow transition-colors"
                     >
-                      保存する
+                      手動入力で登録
                     </button>
                   </div>
                 </div>
@@ -547,157 +1113,295 @@ export default function CampusNavigatorPage() {
         )}
 
         {/* -------------------------------------------------------------
-            TAB 2: 🎓 履修・卒業ナビAI（文理学部要覧基準 & 副専攻判定）
+            TAB 2: 🧭 構内ナビ（教室番号解析・自販機・トイレ・ゴミ箱・給水）
         ------------------------------------------------------------- */}
-        {activeTab === 'academic' && (
+        {activeTab === 'navigator' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* 左側: ステータス設定フォーム */}
-            <div className="bg-white rounded-xl shadow border border-slate-200 p-5 space-y-4">
-              <h2 className="text-lg font-bold text-slate-900 border-b pb-2">履修ステータス設定</h2>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">所属学科</label>
-                <select
-                  value={department}
-                  onChange={(e) => setDepartment(e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg p-2 text-sm font-semibold"
-                >
-                  {CHS_DEPARTMENTS.map((d) => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </select>
+            {/* 左側: チャット画面 */}
+            <div className="lg:col-span-2 bg-white rounded-xl shadow border border-slate-200 flex flex-col h-[600px]">
+              <div className="p-4 border-b border-slate-200 bg-emerald-700 text-white rounded-t-xl flex justify-between items-center">
+                <div>
+                  <h3 className="font-bold text-base flex items-center gap-2">
+                    <span>🧭</span> キャンパス構内ナビゲーターAI
+                  </h3>
+                  <p className="text-xs text-emerald-100">文理学部（1〜4号館）の教室、自販機、トイレ、給水所を案内します。</p>
+                </div>
+                <span className="text-[10px] bg-emerald-800 text-emerald-200 px-2.5 py-1 rounded-full border border-emerald-600">
+                  オンライン
+                </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">学年</label>
-                  <select
-                    value={grade}
-                    onChange={(e) => setGrade(Number(e.target.value))}
-                    className="w-full border border-slate-300 rounded-lg p-2 text-sm font-semibold"
+              {/* チャット履歴 */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {navMessages.map((m, idx) => (
+                  <div
+                    key={idx}
+                    className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
-                    {[1, 2, 3, 4].map((g) => (
-                      <option key={g} value={g}>{g}年次</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">副専攻/コース</label>
-                  <select
-                    value={selectedMinor}
-                    onChange={(e) => setSelectedMinor(e.target.value)}
-                    className="w-full border border-slate-300 rounded-lg p-2 text-sm font-semibold"
-                  >
-                    {CHS_MINORS.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-2">
-                <h3 className="text-xs font-bold text-slate-600">区分別 取得単位数</h3>
-                {[
-                  { key: 'zengaku' as const, label: '全学共通 (必修2)' },
-                  { key: 'sogo' as const, label: '総合教育 (必修12)' },
-                  { key: 'gaikokugo' as const, label: '外国語教育 (必修8~18)' },
-                  { key: 'kisho' as const, label: '基礎教育 (必修5)' },
-                  { key: 'major_req' as const, label: '学科専門必修' },
-                  { key: 'major_opt' as const, label: '学科専門選択' },
-                  { key: 'free_opt' as const, label: '自由選択区分' },
-                ].map((item) => (
-                  <div key={item.key} className="flex justify-between items-center text-xs">
-                    <span className="text-slate-600">{item.label}</span>
-                    <input
-                      type="number"
-                      value={earnedCredits[item.key]}
-                      onChange={(e) => setEarnedCredits({ ...earnedCredits, [item.key]: Number(e.target.value) })}
-                      className="w-16 border border-slate-300 rounded p-1 text-right font-bold"
-                    />
+                    <div
+                      className={`max-w-[85%] rounded-2xl p-3.5 text-xs sm:text-sm whitespace-pre-line leading-relaxed shadow-sm ${
+                        m.sender === 'user'
+                          ? 'bg-emerald-600 text-white rounded-br-none'
+                          : 'bg-slate-100 text-slate-800 rounded-bl-none border border-slate-200'
+                      }`}
+                    >
+                      {m.text}
+                    </div>
                   </div>
                 ))}
               </div>
 
-              <button
-                type="button"
-                onClick={runDegreeCheck}
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-lg shadow transition-colors cursor-pointer"
-              >
-                🎓 卒業・副専攻AI判定を実行
-              </button>
+              {/* 質問サジェストチップ */}
+              <div className="px-4 py-2 border-t border-slate-100 flex flex-wrap gap-1.5 bg-slate-50">
+                {[
+                  '3505教室はどこ？',
+                  '411教室',
+                  'レッドブルが買える自販機',
+                  'クレカが使える自販機',
+                  '給水所の場所',
+                  '1号館のトイレ注意点',
+                  'ゴミ箱の設置場所'
+                ].map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => handleSendNav(s)}
+                    className="text-[11px] bg-white hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 px-2.5 py-1 rounded-full border border-slate-200 transition-colors shadow-2xs"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+
+              {/* 入力フォーム */}
+              <div className="p-3 border-t border-slate-200 flex gap-2">
+                <input
+                  type="text"
+                  value={navQuery}
+                  onChange={(e) => setNavQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSendNav();
+                  }}
+                  placeholder="質問を入力（例: 3402教室、100円の飲み物、クレカ使える自販機）..."
+                  className="flex-1 border border-slate-300 rounded-xl p-2.5 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+                <button
+                  onClick={() => handleSendNav()}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm rounded-xl shadow transition-colors"
+                >
+                  送信
+                </button>
+              </div>
             </div>
 
-            {/* 右側: AI判定結果 ＆ 進捗バー */}
-            <div className="lg:col-span-2 space-y-6">
-              {degreeResult ? (
-                <div className="space-y-6">
-                  {/* 全体達成度カード */}
-                  <div className="bg-white rounded-xl shadow border border-slate-200 p-6 space-y-4">
-                    <div className="flex justify-between items-center">
-                      <h3 className="text-lg font-bold text-slate-900">卒業要件達成度 ({degreeResult.department})</h3>
-                      <span className="text-2xl font-black text-emerald-600">{degreeResult.progress_rate}%</span>
-                    </div>
+            {/* 右側: キャンパス重要情報カード */}
+            <div className="space-y-4">
+              <div className="bg-white rounded-xl shadow border border-slate-200 p-5 space-y-3">
+                <h4 className="font-bold text-sm text-slate-900 flex items-center gap-1.5">
+                  <span>🏢</span> 校舎番号の規則性
+                </h4>
+                <ul className="text-xs space-y-2 text-slate-600">
+                  <li className="p-2 bg-slate-50 rounded-lg">
+                    <strong className="text-slate-800">1号館 (3桁: 1〇〇)</strong>: 1桁目=1号館、2桁目=階数、3桁目=教室番号（※4F/5Fトイレなし）
+                  </li>
+                  <li className="p-2 bg-slate-50 rounded-lg">
+                    <strong className="text-slate-800">3号館 (4桁: 3〇〇〇)</strong>: 1桁目=3号館、2桁目=階数。<br />
+                    • 下2桁 <code className="bg-blue-100 text-blue-800 px-1 rounded">01〜05</code>: 男子トイレ側<br />
+                    • 下2桁 <code className="bg-rose-100 text-rose-800 px-1 rounded">06〜10</code>: 女子トイレ側
+                  </li>
+                  <li className="p-2 bg-slate-50 rounded-lg">
+                    <strong className="text-slate-800">4号館 (3桁: 4〇〇)</strong>: 1桁目=4号館、2桁目=階数。<br />
+                    • <strong className="text-emerald-700">給水所は1階のみ利用可能</strong>
+                  </li>
+                </ul>
+              </div>
 
-                    {/* 進捗バー */}
-                    <div className="w-full bg-slate-200 rounded-full h-4 overflow-hidden">
-                      <div
-                        className="bg-emerald-500 h-full rounded-full transition-all duration-500"
-                        style={{ width: `${degreeResult.progress_rate}%` }}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4 text-center pt-2">
-                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                        <span className="text-xs text-slate-500">取得済総単位</span>
-                        <div className="text-xl font-bold text-slate-800">{degreeResult.total_earned} / 124 単位</div>
-                      </div>
-                      <div className="bg-amber-50 p-3 rounded-lg border border-amber-200">
-                        <span className="text-xs text-amber-700">残り必要単位数</span>
-                        <div className="text-xl font-bold text-amber-800">{degreeResult.remaining_credits.total} 単位</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* AIアドバイスカード */}
-                  <div className="bg-emerald-900 text-white rounded-xl p-6 shadow-md space-y-3">
-                    <h4 className="font-bold text-emerald-200 text-sm flex items-center gap-2">🤖 AI履修アドバイザーの診断コメント</h4>
-                    <p className="text-sm whitespace-pre-line leading-relaxed text-emerald-50">{degreeResult.ai_advice}</p>
-                  </div>
-
-                  {/* 未充足要件リスト */}
-                  <div className="bg-white rounded-xl shadow border border-slate-200 p-6 space-y-3">
-                    <h4 className="font-bold text-slate-900 text-sm">⚠️ 残り履修が必要な要件</h4>
-                    {degreeResult.missing_requirements.length > 0 ? (
-                      <ul className="space-y-2">
-                        {degreeResult.missing_requirements.map((item: string, idx: number) => (
-                          <li key={idx} className="text-xs bg-red-50 text-red-800 border border-red-200 p-2.5 rounded-lg flex items-center gap-2">
-                            <span>•</span> {item}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="text-xs text-emerald-600 font-bold">🎉 基本必修要件はすべて達成しています！</p>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-white rounded-xl shadow border border-slate-200 p-12 text-center space-y-3">
-                  <div className="text-4xl">🎓</div>
-                  <h3 className="font-bold text-slate-800">履修・卒業判定を開始</h3>
-                  <p className="text-xs text-slate-500 max-w-md mx-auto">
-                    左側のフォームで取得単位数を入力し、「卒業・副専攻AI判定を実行」を押すと、日本大学文理学部の要覧基準に基づき不足単位とAIアドバイスを生成します。
-                  </p>
-                </div>
-              )}
+              <div className="bg-emerald-900 text-white rounded-xl shadow p-5 space-y-2">
+                <h4 className="font-bold text-sm text-emerald-200 flex items-center gap-1.5">
+                  <span>💳</span> 自販機 ＆ 決済Tips
+                </h4>
+                <p className="text-xs text-emerald-50 leading-relaxed">
+                  • <strong>クレカタッチ決済</strong>: 3号館1階 食堂側（赤のコカ・コーラ自販機）が対応。<br />
+                  • <strong>PayPay決済</strong>: 3号館・4号館全自販機でアプリ（ジハンピ/Coke ON）連携で利用可能。<br />
+                  • <strong>最安値80円〜</strong>: 4号館・3号館の天然水やZONeが80円！
+                </p>
+              </div>
             </div>
           </div>
         )}
 
         {/* -------------------------------------------------------------
-            TAB 3: 🏛 施設営業時間案内AI
+            TAB 3: 🎓 履修・卒業ナビAI ＆ 全学科共通6コース科目詳細
+        ------------------------------------------------------------- */}
+        {activeTab === 'academic' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* 左側: ステータス設定 */}
+              <div className="bg-white rounded-xl shadow border border-slate-200 p-5 space-y-4">
+                <h2 className="text-lg font-bold text-slate-900 border-b pb-2 flex items-center gap-2">
+                  <span>🎓</span> 履修ステータス設定
+                </h2>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">所属学科（全18学科対応）</label>
+                  <select
+                    value={department}
+                    onChange={(e) => setDepartment(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-sm font-semibold"
+                  >
+                    {CHS_DEPARTMENTS.map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">学年</label>
+                    <select
+                      value={grade}
+                      onChange={(e) => setGrade(Number(e.target.value))}
+                      className="w-full border border-slate-300 rounded-lg p-2 text-sm font-semibold"
+                    >
+                      {[1, 2, 3, 4].map((g) => (
+                        <option key={g} value={g}>{g}年次</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">副専攻 / 資格コース</label>
+                    <select
+                      value={selectedMinor}
+                      onChange={(e) => setSelectedMinor(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg p-2 text-sm font-semibold"
+                    >
+                      {CHS_MINORS.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-2 pt-2 border-t">
+                  <h3 className="text-xs font-bold text-slate-600">区分別 取得単位数（手入力）</h3>
+                  {[
+                    { key: 'zengaku', label: '全学共通 (必修2)' },
+                    { key: 'sogo', label: '総合教育 (必修12)' },
+                    { key: 'gaikokugo', label: '外国語教育 (必修8〜18)' },
+                    { key: 'kisho', label: '基礎教育 (必修5)' },
+                    { key: 'major_req', label: '学科専門必修' },
+                    { key: 'major_opt', label: '学科専門選択' },
+                    { key: 'free_opt', label: '自由選択区分（コース算入可）' },
+                  ].map((item) => (
+                    <div key={item.key} className="flex justify-between items-center text-xs">
+                      <span className="text-slate-600">{item.label}</span>
+                      <input
+                        type="number"
+                        value={earnedCredits[item.key as keyof typeof earnedCredits]}
+                        onChange={(e) => setEarnedCredits({ ...earnedCredits, [item.key]: Number(e.target.value) })}
+                        className="w-16 border border-slate-300 rounded p-1 text-right font-bold"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  onClick={runDegreeCheck}
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-lg shadow transition-colors"
+                >
+                  🎓 卒業・副専攻AI判定を実行
+                </button>
+              </div>
+
+              {/* 右側: 判定結果 */}
+              <div className="lg:col-span-2 space-y-6">
+                {degreeResult ? (
+                  <div className="space-y-6">
+                    <div className="bg-white rounded-xl shadow border border-slate-200 p-6 space-y-4">
+                      <div className="flex justify-between items-center">
+                        <h3 className="text-lg font-bold text-slate-900">卒業要件達成度 ({degreeResult.department})</h3>
+                        <span className="text-2xl font-black text-emerald-600">{degreeResult.progress_rate}%</span>
+                      </div>
+
+                      <div className="w-full bg-slate-200 rounded-full h-4 overflow-hidden">
+                        <div
+                          className="bg-emerald-500 h-full rounded-full transition-all duration-500"
+                          style={{ width: `${degreeResult.progress_rate}%` }}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 text-center pt-2">
+                        <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                          <span className="text-xs text-slate-500">取得済総単位</span>
+                          <div className="text-xl font-bold text-slate-800">{degreeResult.total_earned} / 124 単位</div>
+                        </div>
+                        <div className="bg-amber-50 p-3 rounded-lg border border-amber-200">
+                          <span className="text-xs text-amber-700">残り必要単位数</span>
+                          <div className="text-xl font-bold text-amber-800">{degreeResult.remaining_credits?.total ?? 0} 単位</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-emerald-900 text-white rounded-xl p-6 shadow-md space-y-3">
+                      <h4 className="font-bold text-emerald-200 text-sm flex items-center gap-2">🤖 AIアドバイザーの診断コメント</h4>
+                      <p className="text-sm whitespace-pre-line leading-relaxed text-emerald-50">{degreeResult.ai_advice}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-xl shadow border border-slate-200 p-12 text-center space-y-3">
+                    <div className="text-4xl">🎓</div>
+                    <h3 className="font-bold text-slate-800">履修・卒業判定を開始</h3>
+                    <p className="text-xs text-slate-500 max-w-md mx-auto">
+                      左側のフォームで取得単位数を入力し、「卒業・副専攻AI判定を実行」を押すと、学部要覧基準（124単位）に基づき不足単位とAIアドバイスを生成します。
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 全学科共通 6つのコース科目ガイド（詳細資料に基づく情報） */}
+            <div className="bg-white rounded-xl shadow border border-slate-200 p-6 space-y-4">
+              <div className="border-b pb-3">
+                <span className="text-xs font-bold bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded">文理学部要覧</span>
+                <h3 className="text-lg font-bold text-slate-900 mt-2">全学科共通 6つのコース科目 ＆ 申請窓口ガイド</h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  各種資格の取得や専門領域の深化を目指す全学科共通コースです。各学期始めに所定の窓口へコース履修届を提出してください。
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {SIX_COURSES_GUIDE.map((c) => (
+                  <div key={c.name} className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 space-y-2.5 flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-start gap-2">
+                        <h4 className="font-bold text-sm text-slate-900">{c.name}</h4>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${c.windowColor}`}>
+                          窓口: {c.window}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">{c.description}</p>
+                    </div>
+
+                    <div className="space-y-1.5 text-[11px] pt-2 border-t border-slate-200">
+                      <div className="bg-white p-2 rounded border border-slate-200">
+                        <strong className="text-emerald-800">自由選択への算入:</strong>
+                        <p className="text-slate-600 mt-0.5 leading-normal">{c.creditsRule}</p>
+                      </div>
+                      <div className="bg-white p-2 rounded border border-slate-200">
+                        <strong className="text-blue-800">GPAへの反映:</strong>
+                        <p className="text-slate-600 mt-0.5">{c.gpaRule}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* -------------------------------------------------------------
+            TAB 4: 🏛 施設営業時間案内AI
         ------------------------------------------------------------- */}
         {activeTab === 'facilities' && (
           <div className="space-y-6">
-            {/* 検索入力 */}
             <div className="bg-white rounded-xl shadow border border-slate-200 p-6 space-y-4">
               <h2 className="text-lg font-bold text-slate-900">キャンパス施設 営業時間案内AI</h2>
               <div className="flex gap-2">
@@ -709,25 +1413,22 @@ export default function CampusNavigatorPage() {
                   className="flex-1 border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                 />
                 <button
-                  type="button"
                   onClick={() => searchFacilities()}
-                  className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg shadow cursor-pointer"
+                  className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg shadow"
                 >
                   検索
                 </button>
               </div>
 
-              {/* クイック検索タグ */}
               <div className="flex flex-wrap gap-2 pt-1">
                 {['図書館', 'ラーニング・コモンズ', 'コンピュータセンター', '教務課窓口', '資料館'].map((tag) => (
                   <button
                     key={tag}
-                    type="button"
                     onClick={() => {
                       setFacilityQuery(tag);
                       searchFacilities(tag);
                     }}
-                    className="text-xs bg-slate-100 hover:bg-emerald-100 text-slate-700 hover:text-emerald-800 px-3 py-1.5 rounded-full border border-slate-200 transition-colors cursor-pointer"
+                    className="text-xs bg-slate-100 hover:bg-emerald-100 text-slate-700 hover:text-emerald-800 px-3 py-1.5 rounded-full border border-slate-200 transition-colors"
                   >
                     #{tag}
                   </button>
@@ -735,14 +1436,12 @@ export default function CampusNavigatorPage() {
               </div>
             </div>
 
-            {/* AI自然言語応答 */}
             {facilityAiAnswer && (
               <div className="bg-slate-900 text-slate-100 rounded-xl p-5 shadow font-mono text-xs whitespace-pre-line leading-relaxed border-l-4 border-emerald-500">
                 {facilityAiAnswer}
               </div>
             )}
 
-            {/* 施設カードグリッド */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {facilityData.map((f) => (
                 <div key={f.id} className="bg-white rounded-xl shadow border border-slate-200 p-5 space-y-3">
@@ -779,20 +1478,33 @@ export default function CampusNavigatorPage() {
         )}
 
         {/* -------------------------------------------------------------
-            TAB 4: ⏰ スケジュール・課題管理 ＆ 通知
+            TAB 5: ⏰ スケジュール ＆ 通知
         ------------------------------------------------------------- */}
         {activeTab === 'schedules' && (
           <div className="space-y-6">
-            {/* カウントダウン・通知バナー */}
             <div className="bg-gradient-to-r from-emerald-800 to-teal-900 text-white rounded-xl p-6 shadow-md flex flex-wrap justify-between items-center gap-4">
               <div>
                 <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider">Next Class Countdown</span>
-                <h2 className="text-xl font-bold mt-1">次の授業 [3限: 情報科学演習] 開始まで あと 35分</h2>
+                <h2 className="text-xl font-bold mt-1">次の授業 [3限: 情報理論1] 開始まで あと 35分</h2>
               </div>
               <button
-                type="button"
-                onClick={toggleNotification}
-                className={`px-4 py-2.5 rounded-lg font-bold text-xs shadow transition-colors cursor-pointer ${
+                onClick={() => {
+                  if (!('Notification' in window)) {
+                    alert('お使いのブラウザは通知に対応していません。');
+                    return;
+                  }
+                  if (Notification.permission === 'granted') {
+                    setPushEnabled(!pushEnabled);
+                  } else {
+                    Notification.requestPermission().then((p) => {
+                      if (p === 'granted') {
+                        setPushEnabled(true);
+                        new Notification('EneKoma', { body: 'リマインダー通知が有効になりました。' });
+                      }
+                    });
+                  }
+                }}
+                className={`px-4 py-2.5 rounded-lg font-bold text-xs shadow transition-colors ${
                   pushEnabled ? 'bg-amber-500 text-white' : 'bg-white text-slate-800 hover:bg-slate-100'
                 }`}
               >
@@ -800,7 +1512,6 @@ export default function CampusNavigatorPage() {
               </button>
             </div>
 
-            {/* 新規課題追加 ＆ タスク一覧 */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="bg-white rounded-xl shadow border border-slate-200 p-5 space-y-4">
                 <h3 className="font-bold text-sm text-slate-900">新しい予定・課題の登録</h3>
@@ -810,7 +1521,7 @@ export default function CampusNavigatorPage() {
                     type="text"
                     value={newTaskTitle}
                     onChange={(e) => setNewTaskTitle(e.target.value)}
-                    placeholder="例: 卒業論文要旨の提出"
+                    placeholder="例: 情報理論 レポート提出"
                     className="w-full border border-slate-300 rounded p-2 text-xs"
                   />
                 </div>
@@ -836,27 +1547,24 @@ export default function CampusNavigatorPage() {
                   </select>
                 </div>
                 <button
-                  type="button"
                   onClick={() => {
                     if (!newTaskTitle) return;
                     setTasks([...tasks, {
-                      id: String(Date.now()),
+                      id: getNextId('task'),
                       title: newTaskTitle,
                       date: newTaskDate || '2026-10-20',
-                      period: 'コマ紐付けあり',
+                      period: '3限',
                       course_name: '関連科目',
-                      type: newTaskType,
-                      completed: false
+                      type: newTaskType
                     }]);
                     setNewTaskTitle('');
                   }}
-                  className="w-full py-2.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 shadow cursor-pointer"
+                  className="w-full py-2.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 shadow"
                 >
                   登録する
                 </button>
               </div>
 
-              {/* タスクカード一覧 */}
               <div className="md:col-span-2 space-y-3">
                 <h3 className="font-bold text-sm text-slate-900">登録済みスケジュール・課題一覧</h3>
                 {tasks.map((t) => (
@@ -873,9 +1581,8 @@ export default function CampusNavigatorPage() {
                       <h4 className="font-bold text-sm text-slate-800">{t.title}</h4>
                     </div>
                     <button
-                      type="button"
                       onClick={() => setTasks(tasks.filter((x) => x.id !== t.id))}
-                      className="text-xs text-red-500 hover:text-red-700 font-bold px-2 py-1 cursor-pointer"
+                      className="text-xs text-red-500 hover:text-red-700 font-bold px-2 py-1"
                     >
                       削除
                     </button>
@@ -887,11 +1594,10 @@ export default function CampusNavigatorPage() {
         )}
 
         {/* -------------------------------------------------------------
-            TAB 5: 👤 マイページ ＆ フレンド時間割共有
+            TAB 6: 👤 マイページ ＆ フレンド時間割共有
         ------------------------------------------------------------- */}
         {activeTab === 'mypage' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* プロフィール設定 */}
             <div className="bg-white rounded-xl shadow border border-slate-200 p-6 space-y-4">
               <h2 className="text-lg font-bold text-slate-900 border-b pb-2">マイプロフィール</h2>
               <div className="flex items-center gap-4">
@@ -921,7 +1627,6 @@ export default function CampusNavigatorPage() {
               </div>
             </div>
 
-            {/* フレンド時間割比較 */}
             <div className="bg-white rounded-xl shadow border border-slate-200 p-6 space-y-4">
               <h2 className="text-lg font-bold text-slate-900 border-b pb-2">フレンド時間割・空きコマ比較</h2>
               <p className="text-xs text-slate-500">友達の共有IDを入力して時間割の空き状況を比較します。</p>
@@ -935,9 +1640,8 @@ export default function CampusNavigatorPage() {
                   className="flex-1 border border-slate-300 rounded p-2 text-xs font-mono"
                 />
                 <button
-                  type="button"
                   onClick={compareFriend}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded shadow cursor-pointer"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded shadow"
                 >
                   照合・比較
                 </button>
@@ -953,7 +1657,7 @@ export default function CampusNavigatorPage() {
                   </div>
 
                   <div className="space-y-1 max-h-48 overflow-y-auto">
-                    {friendComparison.common_free_slots.map((slot, idx) => (
+                    {friendComparison.common_free_slots.map((slot: FriendFreeSlot, idx: number) => (
                       <div key={idx} className="text-xs bg-slate-50 p-2 rounded border border-slate-200 flex justify-between">
                         <span className="font-bold text-slate-700">{slot.day} {slot.period}</span>
                         <span className="text-emerald-600 font-semibold">互いに空きコマ（ラーニング・コモンズ利用可）</span>
@@ -967,6 +1671,111 @@ export default function CampusNavigatorPage() {
         )}
 
       </main>
+
+      {/* -------------------------------------------------------------
+          リアルタイム空き教室 吹き出しウィジェット（画面右下固定）
+      ------------------------------------------------------------- */}
+      {!isBubbleDismissed && (
+        <aside
+          aria-label="空き教室案内ウィジェット"
+          className="fixed bottom-5 right-5 z-40 max-w-sm w-full sm:w-auto animate-in slide-in-from-bottom duration-300"
+        >
+          <div className="bg-slate-900 text-white rounded-2xl p-4 shadow-2xl border border-slate-700/80 relative">
+            {/* ウィジェットヘッダー */}
+            <div className="flex justify-between items-center gap-2 pb-2 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <span className="text-amber-400 text-base">💡</span>
+                <span className="font-bold text-xs text-sky-400">今の時間の空き教室案内</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setBubbleExpanded(!bubbleExpanded)}
+                  className="text-slate-400 hover:text-white text-xs px-1.5 py-0.5 rounded bg-slate-800"
+                >
+                  {bubbleExpanded ? '縮小' : '詳細'}
+                </button>
+                <button
+                  onClick={() => setIsBubbleDismissed(true)}
+                  className="text-slate-400 hover:text-white text-sm leading-none p-1"
+                  title="閉じる"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            {/* 曜日・時限セレクター */}
+            <div className="flex items-center gap-1.5 pt-2 text-[11px]">
+              <span className="text-slate-400">表示時限:</span>
+              <div className="flex gap-1 overflow-x-auto">
+                {['月', '火', '水', '木', '金', '土'].map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setFreeRoomDay(d)}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${freeRoomDay === d ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
+                  >
+                    {d}
+                  </button>
+                ))}
+              </div>
+              <select
+                value={freeRoomPeriod}
+                onChange={(e) => setFreeRoomPeriod(Number(e.target.value))}
+                className="bg-slate-800 text-emerald-300 font-bold px-1.5 py-0.5 rounded text-[10px] border border-slate-700 focus:outline-none"
+              >
+                {[1, 2, 3, 4, 5].map((p) => (
+                  <option key={p} value={p}>{p}限</option>
+                ))}
+              </select>
+            </div>
+
+            {/* 空き教室の吹き出しメッセージ */}
+            <div className="pt-2 text-xs leading-relaxed text-slate-200">
+              <span>ただいま（<b>{freeRoomDay}曜 {freeRoomPeriod}限</b>）空いている教室:</span>
+              <div className="mt-1 font-bold text-amber-300 text-sm tracking-wide">
+                {freeRooms.slice(0, 6).join(', ')} など <span className="text-xs font-normal text-slate-300">（全{freeRooms.length}室）</span>
+              </div>
+            </div>
+
+            {/* 詳細展開（号館別分類） */}
+            {bubbleExpanded && (
+              <div className="mt-3 pt-3 border-t border-slate-800 text-xs space-y-2 max-h-48 overflow-y-auto">
+                <div>
+                  <span className="text-[10px] font-bold text-emerald-400">■ 3号館の空き教室:</span>
+                  <p className="text-slate-300 font-mono text-[11px] mt-0.5">
+                    {freeRooms.filter((r) => r.startsWith('3')).join(', ') || '満室'}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-sky-400">■ 4号館の空き教室:</span>
+                  <p className="text-slate-300 font-mono text-[11px] mt-0.5">
+                    {freeRooms.filter((r) => r.startsWith('4')).join(', ') || '満室'}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-purple-400">■ 1号館の空き教室:</span>
+                  <p className="text-slate-300 font-mono text-[11px] mt-0.5">
+                    {freeRooms.filter((r) => r.startsWith('1')).join(', ') || '満室'}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </aside>
+      )}
+
+      {/* 閉じたときの再表示フローティングボタン */}
+      {isBubbleDismissed && (
+        <button
+          onClick={() => setIsBubbleDismissed(false)}
+          className="fixed bottom-5 right-5 z-40 bg-slate-900 text-amber-400 border border-slate-700 p-3 rounded-full shadow-2xl hover:scale-105 transition-transform flex items-center gap-1.5 text-xs font-bold"
+          title="空き教室案内を表示"
+        >
+          <span>💡</span>
+          <span className="text-white hidden sm:inline">空き教室を見る</span>
+        </button>
+      )}
+
     </div>
   );
 }

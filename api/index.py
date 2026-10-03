@@ -1,28 +1,333 @@
-from fastapi import FastAPI
+import datetime
+from typing import List, Optional, Dict, Any
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import re
 
-app = FastAPI(title="EneKoma API & Campus Navigator")
+app = FastAPI(
+    title="EneKoma Campus Navigator API",
+    version="2.0.0",
+    description="日本大学文理学部向け時間割・履修卒業判定・施設案内・スケジュール・フレンド共有API"
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://enekoma.vercel.app",
-    ],
-    allow_origin_regex=r"^https:\/\/.*\.vercel\.app$",
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+PERIODS = [
+    {"period": 1, "name": "1限", "start": "09:00", "end": "10:30"},
+    {"period": 2, "name": "2限", "start": "10:40", "end": "12:10"},
+    {"period": "lunch", "name": "昼休み", "start": "12:10", "end": "13:00"},
+    {"period": 3, "name": "3限", "start": "13:00", "end": "14:30"},
+    {"period": 4, "name": "4限", "start": "14:40", "end": "16:10"},
+    {"period": 5, "name": "5限", "start": "16:20", "end": "17:50"},
+]
+
+@app.get("/")
+@app.get("/api")
+def read_root():
+    return {"message": "EneKoma Campus Navigator API v2.0 is running", "university": "Nihon University CHS"}
+
+@app.get("/api/periods")
+def get_periods():
+    return {"periods": PERIODS}
+
+CHS_GRADUATION_REQUIREMENTS = {
+    "情報科学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 38, "major_opt": 22, "free_opt": 37, "total": 124},
+    "国文学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 30, "major_opt": 30, "free_opt": 37, "total": 124},
+    "英文学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 16, "kisho": 5, "major_req": 48, "major_opt": 14, "free_opt": 27, "total": 124},
+    "哲学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 28, "major_opt": 40, "free_opt": 29, "total": 124},
+    "史学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 12, "major_opt": 54, "free_opt": 31, "total": 124},
+    "中国語中国文化学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 18, "kisho": 5, "major_req": 10, "major_opt": 48, "free_opt": 29, "total": 124},
+    "ドイツ文学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 16, "kisho": 5, "major_req": 20, "major_opt": 40, "free_opt": 29, "total": 124},
+    "社会学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 18, "major_opt": 52, "free_opt": 27, "total": 124},
+    "社会福祉学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 32, "major_opt": 31, "free_opt": 34, "total": 124},
+    "教育学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 20, "major_opt": 36, "free_opt": 41, "total": 124},
+    "体育学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 12, "major_opt": 52, "free_opt": 33, "total": 124},
+    "心理学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 32, "major_opt": 34, "free_opt": 31, "total": 124},
+    "地理学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 40, "major_opt": 34, "free_opt": 23, "total": 124},
+    "地球科学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 20, "major_opt": 53, "free_opt": 24, "total": 124},
+    "数学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 30, "major_opt": 35, "free_opt": 32, "total": 124},
+    "物理学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 66, "major_opt": 12, "free_opt": 19, "total": 124},
+    "生命科学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 55, "major_opt": 22, "free_opt": 20, "total": 124},
+    "化学科": {"zengaku": 2, "sogo": 12, "gaikokugo": 8, "kisho": 5, "major_req": 52, "major_opt": 24, "free_opt": 21, "total": 124}
+}
+
+MINOR_COURSES = {
+    "AI・データサイエンス副専攻": {"required_credits": 16, "key_courses": ["データ処理基礎", "ビッグデータサイエンス", "人工知能概論", "データサイエンス演習"]},
+    "グローバル主専攻・副専攻": {"required_credits": 16, "key_courses": ["国際教養A", "Cross-Cultural Communication", "異文化理解演習"]},
+    "環境・サステナビリティ副専攻": {"required_credits": 16, "key_courses": ["環境科学概論", "地球環境学", "サステナビリティ論"]},
+    "心身ウェルネス副専攻": {"required_credits": 16, "key_courses": ["健康・スポーツ教育論", "ストレスマネジメント", "メンタルヘルス論"]},
+    "教職コース（中高免許）": {"required_credits": 32, "key_courses": ["教育原理", "教育心理学", "各教科教育法Ⅰ・Ⅱ", "教育実習事前事後指導"]},
+    "司書教諭コース": {"required_credits": 10, "key_courses": ["学校図書館メディアの構成", "読書課程論", "学習指導と学校図書館"]},
+    "学芸員コース": {"required_credits": 19, "key_courses": ["博物館概論", "博物館経営論", "博物館資料保存論", "博物館実習"]},
+}
+
+class CreditStatus(BaseModel):
+    zengaku: int = 0
+    sogo: int = 0
+    gaikokugo: int = 0
+    kisho: int = 0
+    major_req: int = 0
+    major_opt: int = 0
+    free_opt: int = 0
+
+class DegreeCheckRequest(BaseModel):
+    department: str = "情報科学科"
+    grade: int = 2
+    earned_credits: CreditStatus
+    selected_minor: Optional[str] = "AI・データサイエンス副専攻"
+    taken_courses: List[str] = []
+
+@app.post("/api/academic/degree-check")
+def degree_check(req: DegreeCheckRequest):
+    reqs = CHS_GRADUATION_REQUIREMENTS.get(req.department, CHS_GRADUATION_REQUIREMENTS["情報科学科"])
+    earned = req.earned_credits
+    
+    rem_zengaku = max(0, reqs["zengaku"] - earned.zengaku)
+    rem_sogo = max(0, reqs["sogo"] - earned.sogo)
+    rem_gaikokugo = max(0, reqs["gaikokugo"] - earned.gaikokugo)
+    rem_kisho = max(0, reqs["kisho"] - earned.kisho)
+    rem_major_req = max(0, reqs["major_req"] - earned.major_req)
+    rem_major_opt = max(0, reqs["major_opt"] - earned.major_opt)
+    
+    total_earned = (earned.zengaku + earned.sogo + earned.gaikokugo + 
+                    earned.kisho + earned.major_req + earned.major_opt + earned.free_opt)
+    rem_total = max(0, reqs["total"] - total_earned)
+    
+    minor_info = MINOR_COURSES.get(req.selected_minor or "", {"required_credits": 16, "key_courses": []})
+    minor_taken = [c for c in req.taken_courses if c in minor_info.get("key_courses", [])]
+    minor_earned = len(minor_taken) * 2
+    minor_rem = max(0, minor_info["required_credits"] - minor_earned)
+    
+    missing_items = []
+    if rem_zengaku > 0:
+        missing_items.append("全学共通: 「自主創造の基礎」(2単位・1年次必修)")
+    if rem_sogo > 0:
+        missing_items.append(f"総合教育科目: 残り{rem_sogo}単位 (人文系・社会系・理学系各2単位必修含む)")
+    if rem_gaikokugo > 0:
+        missing_items.append(f"外国語教育科目: 残り{rem_gaikokugo}単位")
+    if rem_kisho > 0:
+        missing_items.append("基礎教育科目: 「情報リテラシー」(2単位) ＆ 「健康・スポーツ教育」(3単位)")
+    if rem_major_req > 0:
+        missing_items.append(f"学科専門必修: 残り{rem_major_req}単位 (優先登録推奨)")
+    if rem_major_opt > 0:
+        missing_items.append(f"学科専門選択: 残り{rem_major_opt}単位")
+        
+    progress_rate = round((total_earned / reqs["total"]) * 100, 1)
+    
+    advice = []
+    if progress_rate >= 80:
+        advice.append(f"🎉 卒業条件の達成率は{progress_rate}%です！非常に順調です。卒業論文・ゼミナールと残りの専門必修科目を中心に履修をまとめましょう。")
+    elif progress_rate >= 50:
+        advice.append(f"👍 卒業条件の達成率は{progress_rate}%です。順調な進捗です。次学期は学科専門必修（残り{rem_major_req}単位）を優先して登録してください。")
+    else:
+        advice.append(f"⚠️ 卒業条件の達成率は{progress_rate}%です。{req.grade}年次としては取得ペースを上げる必要があります。履修登録上限数（CAP制）を活用しましょう。")
+        
+    if req.selected_minor and req.selected_minor in MINOR_COURSES:
+        recom_courses = [c for c in minor_info.get("key_courses", []) if c not in minor_taken]
+        advice.append(f"🎓 [{req.selected_minor}] 進捗: {minor_earned}/{minor_info['required_credits']}単位完了。未履修のおすすめ科目: {', '.join(recom_courses) or '要件充足中'}")
+
+    return {
+        "department": req.department,
+        "total_earned": total_earned,
+        "total_required": reqs["total"],
+        "progress_rate": min(100.0, progress_rate),
+        "remaining_credits": {
+            "zengaku": rem_zengaku, "sogo": rem_sogo, "gaikokugo": rem_gaikokugo,
+            "kisho": rem_kisho, "major_req": rem_major_req, "major_opt": rem_major_opt, "total": rem_total
+        },
+        "minor_status": {
+            "name": req.selected_minor,
+            "earned_credits": minor_earned,
+            "required_credits": minor_info["required_credits"],
+            "remaining_credits": minor_rem,
+            "recommended_courses": [c for c in minor_info.get("key_courses", []) if c not in minor_taken]
+        },
+        "missing_requirements": missing_items,
+        "ai_advice": "\n".join(advice)
+    }
+
+FACILITIES_DB = [
+    {
+        "id": "library",
+        "name": "日本大学文理学部図書館",
+        "category": "図書・資料",
+        "weekday": "09:00 - 20:00",
+        "saturday": "09:00 - 19:00",
+        "sunday_holiday": "休館（授業なし日）",
+        "note": "地下書庫・貸出手続きは閉館30分前まで",
+        "location": "図書館棟"
+    },
+    {
+        "id": "comp_center",
+        "name": "コンピュータセンター（受付）",
+        "category": "ICT・端末",
+        "weekday": "09:00 - 18:00",
+        "saturday": "09:00 - 13:00",
+        "sunday_holiday": "休業",
+        "note": "アカウント・学内Wi-Fi問い合わせ対応",
+        "location": "3号館"
+    },
+    {
+        "id": "museum",
+        "name": "日本大学文理学部資料館",
+        "category": "展示・文化",
+        "weekday": "10:00 - 17:00",
+        "saturday": "10:00 - 13:00",
+        "sunday_holiday": "休館",
+        "note": "入館無料 / 企画展示開催中",
+        "location": "8号館"
+    },
+    {
+        "id": "learning_commons",
+        "name": "ラーニング・コモンズ",
+        "category": "学習スペース",
+        "weekday": "08:00 - 18:00 (サポートデスク 10:00 - 18:00)",
+        "saturday": "08:00 - 17:00 (サポートデスク 09:00 - 13:00)",
+        "sunday_holiday": "休館",
+        "note": "グループ学習・PC貸出・アカデミックコモンズ併設",
+        "location": "本館1階"
+    },
+    {
+        "id": "academic_affairs",
+        "name": "事務窓口・教務課等",
+        "category": "各種手続き",
+        "weekday": "09:00 - 17:00",
+        "saturday": "09:00 - 13:00",
+        "sunday_holiday": "休み",
+        "note": "証明書自動発行機利用は閉口15分前まで",
+        "location": "本館1階事務室"
+    }
+]
+
+class FacilityQueryRequest(BaseModel):
+    query: Optional[str] = None
+
+@app.get("/api/facilities/hours")
+@app.post("/api/facilities/hours")
+def facility_hours(req: Optional[FacilityQueryRequest] = None, q: Optional[str] = Query(None)):
+    search_q = (req.query if req and req.query else q) or ""
+    results = []
+    for f in FACILITIES_DB:
+        if not search_q or (search_q.lower() in f["name"].lower() or search_q.lower() in f["category"].lower() or search_q.lower() in f["location"].lower()):
+            results.append(f)
+            
+    if not results:
+        results = FACILITIES_DB
+        
+    ai_response = f"【文理学部 施設営業時間案内AI】\n検索条件: 「{search_q or '全施設'}」の回答結果です。\n\n"
+    for r in results:
+        ai_response += f"🏛 **{r['name']}** ({r['location']})\n"
+        ai_response += f"  • 平日: {r['weekday']}\n"
+        ai_response += f"  • 土曜: {r['saturday']}\n"
+        ai_response += f"  • 日祝: {r['sunday_holiday']}\n"
+        ai_response += f"  • 案内: {r['note']}\n\n"
+        
+    return {
+        "query": search_q,
+        "facilities": results,
+        "ai_response": ai_response.strip()
+    }
+
+class ScheduleItem(BaseModel):
+    id: str
+    title: str
+    date: str
+    period: Optional[str] = None
+    course_name: Optional[str] = None
+    type: str = "task"
+    push_notify: bool = True
+    completed: bool = False
+
+MOCK_SCHEDULES: List[Dict[str, Any]] = [
+    {"id": "1", "title": "情報科学演習 レポート提出", "date": "2026-10-09", "period": "3限", "course_name": "情報科学演習", "type": "task", "push_notify": True, "completed": False},
+    {"id": "2", "title": "データ構造 中間小テスト", "date": "2026-10-15", "period": "2限", "course_name": "データ構造", "type": "exam", "push_notify": True, "completed": False}
+]
+
+@app.get("/api/schedules")
+def get_schedules():
+    return {"schedules": MOCK_SCHEDULES}
+
+@app.post("/api/schedules")
+def add_schedule(item: ScheduleItem):
+    MOCK_SCHEDULES.append(item.dict())
+    return {"status": "success", "schedule": item}
+
+@app.delete("/api/schedules/{schedule_id}")
+def delete_schedule(schedule_id: str):
+    global MOCK_SCHEDULES
+    MOCK_SCHEDULES = [s for s in MOCK_SCHEDULES if s["id"] != schedule_id]
+    return {"status": "deleted", "id": schedule_id}
+
+class FriendCompareRequest(BaseModel):
+    friend_code: str
+    my_timetable: Dict[str, Any]
+
+@app.post("/api/friends/compare")
+def compare_friends(req: FriendCompareRequest):
+    dummy_friend_db = {
+        "ENE-1001": {
+            "name": "サクラ (情報科学科 2年)",
+            "timetable": {
+                "mon_1": "情報科学概論", "mon_3": "英語3",
+                "tue_2": "データ構造", "wed_1": "自修",
+                "thu_1": "Webプログラミング", "thu_3": "線形代数",
+                "fri_3": "健康・スポーツ実習"
+            }
+        },
+        "ENE-2002": {
+            "name": "ケンタ (国文学科 3年)",
+            "timetable": {
+                "mon_2": "日本文学史", "tue_1": "古文書学",
+                "tue_3": "国語学演習", "thu_2": "漢文学特別講義",
+                "fri_1": "近代文学研究"
+            }
+        }
+    }
+    
+    friend_data = dummy_friend_db.get(
+        req.friend_code.upper(),
+        {
+            "name": f"フレンド ({req.friend_code})",
+            "timetable": {"mon_1": "総合教養", "tue_2": "専門演習", "thu_4": "外国語"}
+        }
+    )
+    
+    common_free_slots = []
+    days = ["mon", "tue", "wed", "thu", "fri"]
+    periods = [1, 2, 3, 4, 5]
+    day_names = {"mon": "月曜", "tue": "火曜", "wed": "水曜", "thu": "木曜", "fri": "金曜"}
+    
+    for d in days:
+        for p in periods:
+            slot_key = f"{d}_{p}"
+            my_slot = req.my_timetable.get(slot_key, "")
+            friend_slot = friend_data["timetable"].get(slot_key, "")
+            
+            if not my_slot and not friend_slot:
+                common_free_slots.append({
+                    "key": slot_key,
+                    "day": day_names[d],
+                    "period": f"{p}限"
+                })
+                
+    return {
+        "friend_name": friend_data["name"],
+        "friend_code": req.friend_code,
+        "friend_timetable": friend_data["timetable"],
+        "common_free_slots": common_free_slots,
+        "common_free_count": len(common_free_slots)
+    }
+
 class TimetableItem(BaseModel):
     subject: str
     room_number: str
-
-class NavigatorQuery(BaseModel):
-    query: str
 
 def parse_room_detail(room: str) -> str:
     r = room.strip().upper()
@@ -84,143 +389,6 @@ def parse_room_detail(room: str) -> str:
 
     return "詳細場所未登録"
 
-def answer_navigator_query(query: str) -> str:
-    q = query.strip()
-    q_lower = q.lower()
-
-    room_match = re.search(r"\b([1-4]\d{2,3}[A-Ba-b]?)\b", q)
-    if room_match:
-        room_code = room_match.group(1).upper()
-        detail = parse_room_detail(room_code)
-        if detail != "詳細場所未登録":
-            return f"📍 【教室案内: {room_code}】\n場所: {detail}\n※エネコマ時間割にもこのまま登録できます！"
-
-    if any(k in q for k in ["水飲み場", "給水所", "給水", "水飲み", "冷水機"]):
-        return (
-            "🚰 【給水所（水飲み場）のご案内】\n"
-            "・現在使用可能な場所: **4号館 1階** のみ\n"
-            "※注意: 4号館 2階〜4階の給水所は現在使用不可となっています。"
-        )
-
-    if "ゴミ箱" in q or "ごみ箱" in q or "ゴミ" in q:
-        return (
-            "🗑️ 【ゴミ箱の設置場所】\n"
-            "・1号館、2号館、3号館、4号館の **全館・各階** に設置されています。\n"
-            "・4号館は **各階トイレ前** に設置されています。"
-        )
-
-    if "トイレ" in q or "お手洗い" in q or "便所" in q:
-        if "1号館" in q or "1号" in q:
-            return (
-                "🚻 【1号館のトイレ情報】\n"
-                "・1階: 正面左手前（女子）、左奥（男子）、右手前奥（男子）\n"
-                "・2階: 左奥（女子）、右手前（男子）、右奥（女子）\n"
-                "・3階: 左奥（男子）、右奥（女子）\n"
-                "⚠️ 注意: 4階・5階にはトイレがありません。2階または3階をご利用ください。"
-            )
-        elif "3号館" in q or "3号" in q:
-            return (
-                "🚻 【3号館のトイレ情報（各階共通）】\n"
-                "・男子トイレ: エスカレーター出て右 / エレベーター出て左（教室01〜05側）\n"
-                "・女子トイレ: エスカレーター出て左 / エレベーター出て右（教室06〜10側）"
-            )
-        elif "4号館" in q or "4号" in q:
-            return (
-                "🚻 【4号館のトイレ情報】\n"
-                "・1階: 左側（男子 / 411側）、右側（女子 / 412側）\n"
-                "・2階: 左側（男子 / 421側）、右側（女子 / 422側）\n"
-                "・3階: 右側（男子 / 431側）、左側（女子 / 432側）\n"
-                "・4階: 右側（男子 / 441・442側）、左側（女子 / 443・444側）"
-            )
-        else:
-            return (
-                "🚻 【各館トイレのご案内】\n"
-                "・3号館 (各階): 男子=エスカレーター右(01-05側) / 女子=エスカレーター左(06-10側)\n"
-                "・4号館 (各階): 階ごとに左右配置（1F/2Fは左男子・右女子、3F/4Fは右男子・左女子）\n"
-                "・1号館: 1F〜3Fに設置（※4階・5階にはトイレがありません）\n"
-                "・2号館: 各階に設置"
-            )
-
-    if any(k in q for k in ["クレジット", "クレカ", "タッチ決済", "コンタクトレス", "visa", "master"]):
-        return (
-            "💳 【クレジットカードタッチ決済が使える自販機】\n"
-            "・設置場所: **3号館 1階 食堂側**\n"
-            "・対象自販機: **コカ・コーラ（赤）**\n"
-            "・対応ブランド: Visa / Mastercard コンタクトレス決済対応\n"
-            "※他のサントリー自販機ではクレカ直接タッチは利用できません。"
-        )
-
-    if "paypay" in q_lower or "ペイペイ" in q:
-        return (
-            "📱 【PayPayが使える自販機】\n"
-            "学内のすべての自販機でPayPayが利用可能です！\n\n"
-            "1. **3号館 1階 食堂側 コカ・コーラ自販機（赤）**\n"
-            "   → 『Coke ON Pay』アプリ連携でPayPay決済可能\n"
-            "2. **3号館 1階 食堂側 サントリー自販機（計3台）＆ 4号館 1階 自販機**\n"
-            "   → サントリー『ジハンピ』アプリ連携でPayPay決済可能"
-        )
-
-    if any(k in q for k in ["交通系", "suica", "pasmo", "icカード"]):
-        return (
-            "🚃 【交通系IC（Suica/PASMO等）が使える自販機】\n"
-            "⚠️ 注意: 学内自販機は**物理カードの直接タッチには非対応**です。各社アプリ経由で決済できます。\n\n"
-            "・**3号館 1階 コカ・コーラ（赤）**: 『Coke ON Pay』連携で利用可能\n"
-            "・**3号館・4号館 サントリー各台**: 『ジハンピ』アプリ連携で利用可能"
-        )
-
-    if "100円以下" in q or "100円で買える" in q or "安い" in q:
-        return (
-            "🪙 【100円以下で購入できるお得な商品】\n\n"
-            "【80円（最安値！）】\n"
-            "・サントリー天然水 (4号館1F / 3号館1F水メイン)\n"
-            "・ZONe スカッと透明 (4号館1F)\n"
-            "・ZONe NOPE (3号館1F青)\n\n"
-            "【90円】\n"
-            "・やさしい麦茶 (4号館1F / 3号館1F各台)\n"
-            "・レモン強炭酸水 (3号館1Fスポーツ系)\n\n"
-            "【100円】\n"
-            "・マウンテンデュー / デカビタC GABA / ペプシコーラ生\n"
-            "・伊右衛門緑茶・焙じ茶 / プリン缶 / レモンスカッシュ / アイスティー\n"
-            "・ジョージア缶コーヒー各種 / BOSS缶コーヒー各種"
-        )
-
-    drink_keywords = [
-        {"kw": "レッドブル", "name": "レッドブル", "price": "170", "loc": "4号館1F, 3号館1F(スポーツ系/青)"},
-        {"kw": "モンスター", "name": "モンスターエナジー各種", "price": "180〜190", "loc": "3号館1F 食堂側（スポーツ系）"},
-        {"kw": "zone", "name": "ZONe(スカッと透明/NOPE)", "price": "80", "loc": "4号館1F(スカッと透明) / 3号館1F(青/NOPE)"},
-        {"kw": "天然水", "name": "サントリー天然水", "price": "80", "loc": "4号館1F / 3号館1F(水メイン)"},
-        {"kw": "いろはす", "name": "い・ろ・は・す", "price": "100〜110", "loc": "3号館1F 食堂側（コカ・コーラ赤）"},
-        {"kw": "麦茶", "name": "やさしい麦茶 / やかんの麦茶", "price": "90〜110", "loc": "4号館1F(90円), 3号館1F各台"},
-        {"kw": "緑茶", "name": "伊右衛門 / 綾鷹", "price": "100〜110", "loc": "4号館1F, 3号館1F各台"},
-        {"kw": "コーラ", "name": "コカ・コーラ(140円) / ペプシ生(100円)", "price": "100〜140", "loc": "3号館1F 食堂側"},
-        {"kw": "ミルクティー", "name": "リプトン白の贅沢 / 紅茶花伝", "price": 110, "loc": "4号館1F, 3号館1F各台"},
-        {"kw": "コーヒー", "name": "BOSS各種 / ジョージア各種", "price": "90〜140", "loc": "4号館1F, 3号館1F各台"},
-        {"kw": "プリン", "name": "ぷるぷるプリン缶", "price": "100", "loc": "3号館1F 食堂側（水メイン／スポーツ系）"},
-    ]
-
-    for item in drink_keywords:
-        if item["kw"] in q_lower:
-            return (
-                f"🥤 【「{item['name']}」の自販機情報】\n"
-                f"・価格目安: **{item['price']}円**\n"
-                f"・購入できる場所: **{item['loc']}**\n"
-                f"・決済方法: 現金、PayPay(ジハンピ/Coke ON連携)、交通系IC(アプリ連携)、3号館赤ならクレカタッチもOK！"
-            )
-
-    return (
-        "🎓 【キャンパス構内ナビゲーターAI】\n"
-        "校舎ナレッジベースに基づき、以下の内容をご案内できます：\n\n"
-        "1. **教室案内**: 「3505はどこ？」「411教室」「124の場所」など\n"
-        "2. **自販機案内**: 「レッドブルはどこ？」「100円以下の飲み物」「PayPay/クレカが使える自販機」\n"
-        "3. **設備案内**: 「水飲み場・給水所」「ゴミ箱の場所」「3号館のトイレ」\n\n"
-        "質問したい内容をお気軽に入力してください！"
-    )
-
-@app.get("/")
-@app.get("/api")
-def read_root():
-    return {"message": "EneKoma FastAPI Backend & Navigator is running"}
-
 @app.post("/api/timetable/parse")
 @app.post("/timetable/parse")
 def parse_timetable(item: TimetableItem):
@@ -230,13 +398,4 @@ def parse_timetable(item: TimetableItem):
         "room_number": item.room_number,
         "location_detail": location_detail,
         "full_display": f"{item.subject} （{item.room_number}：{location_detail}）"
-    }
-
-@app.post("/api/navigator/chat")
-@app.post("/navigator/chat")
-def navigator_chat(data: NavigatorQuery):
-    reply = answer_navigator_query(data.query)
-    return {
-        "query": data.query,
-        "reply": reply
     }

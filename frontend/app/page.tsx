@@ -1,1298 +1,972 @@
-"use client";
+'use client';
 
-import React, {
-  useState,
-  useEffect,
-  useMemo,
-  useSyncExternalStore,
-  useCallback,
-} from "react";
+import React, { useState, useCallback } from 'react';
 
-// 曜日定義（月〜金）
+// 時限定義（修正後）
+const PERIODS_CONFIG = [
+  { id: 1, name: '1限', time: '09:00 - 10:30' },
+  { id: 2, name: '2限', time: '10:40 - 12:10' },
+  { id: 'lunch', name: '昼休み', time: '12:10 - 13:00', isLunch: true },
+  { id: 3, name: '3限', time: '13:00 - 14:30' },
+  { id: 4, name: '4限', time: '14:40 - 16:10' },
+  { id: 5, name: '5限', time: '16:20 - 17:50' },
+];
+
 const DAYS = [
-  { key: "mon", label: "月", fullLabel: "月曜日", en: "Mon" },
-  { key: "tue", label: "火", fullLabel: "火曜日", en: "Tue" },
-  { key: "wed", label: "水", fullLabel: "水曜日", en: "Wed" },
-  { key: "thu", label: "木", fullLabel: "木曜日", en: "Thu" },
-  { key: "fri", label: "金", fullLabel: "金曜日", en: "Fri" },
-] as const;
+  { key: 'mon', label: '月曜' },
+  { key: 'tue', label: '火曜' },
+  { key: 'wed', label: '水曜' },
+  { key: 'thu', label: '木曜' },
+  { key: 'fri', label: '金曜' },
+];
 
-// 時限定義（1〜5限）
-const PERIODS = [
-  { period: 1, time: "09:00 - 10:30" },
-  { period: 2, time: "10:45 - 12:15" },
-  { period: 3, time: "13:00 - 14:30" },
-  { period: 4, time: "14:45 - 16:15" },
-  { period: 5, time: "16:30 - 18:00" },
-] as const;
+const CHS_DEPARTMENTS = [
+  '情報科学科', '国文学科', '英文学科', '哲学科', '史学科', '中国語中国文化学科',
+  'ドイツ文学科', '社会学科', '社会福祉学科', '教育学科', '体育学科', '心理学科',
+  '地理学科', '地球科学科', '数学科', '物理学科', '生命科学科', '化学科'
+];
 
-// カラープリセット
-const COLOR_THEMES = [
-  {
-    id: "emerald",
-    name: "エメラルド",
-    cardBg: "bg-emerald-50/90 dark:bg-emerald-950/40",
-    border: "border-emerald-200 dark:border-emerald-800/60",
-    accent: "bg-emerald-500",
-    textPrimary: "text-emerald-950 dark:text-emerald-100",
-    textSecondary: "text-emerald-700 dark:text-emerald-300",
-    badgeBg: "bg-emerald-100/90 dark:bg-emerald-900/50",
-    badgeBorder: "border-emerald-300/60 dark:border-emerald-700/50",
-  },
-  {
-    id: "sky",
-    name: "スカイ",
-    cardBg: "bg-sky-50/90 dark:bg-sky-950/40",
-    border: "border-sky-200 dark:border-sky-800/60",
-    accent: "bg-sky-500",
-    textPrimary: "text-sky-950 dark:text-sky-100",
-    textSecondary: "text-sky-700 dark:text-sky-300",
-    badgeBg: "bg-sky-100/90 dark:bg-sky-900/50",
-    badgeBorder: "border-sky-300/60 dark:border-sky-700/50",
-  },
-  {
-    id: "indigo",
-    name: "インディゴ",
-    cardBg: "bg-indigo-50/90 dark:bg-indigo-950/40",
-    border: "border-indigo-200 dark:border-indigo-800/60",
-    accent: "bg-indigo-500",
-    textPrimary: "text-indigo-950 dark:text-indigo-100",
-    textSecondary: "text-indigo-700 dark:text-indigo-300",
-    badgeBg: "bg-indigo-100/90 dark:bg-indigo-900/50",
-    badgeBorder: "border-indigo-300/60 dark:border-indigo-700/50",
-  },
-  {
-    id: "amber",
-    name: "アンバー",
-    cardBg: "bg-amber-50/90 dark:bg-amber-950/40",
-    border: "border-amber-200 dark:border-amber-800/60",
-    accent: "bg-amber-500",
-    textPrimary: "text-amber-950 dark:text-amber-100",
-    textSecondary: "text-amber-700 dark:text-amber-300",
-    badgeBg: "bg-amber-100/90 dark:bg-amber-900/50",
-    badgeBorder: "border-amber-300/60 dark:border-amber-700/50",
-  },
-  {
-    id: "rose",
-    name: "ローズ",
-    cardBg: "bg-rose-50/90 dark:bg-rose-950/40",
-    border: "border-rose-200 dark:border-rose-800/60",
-    accent: "bg-rose-500",
-    textPrimary: "text-rose-950 dark:text-rose-100",
-    textSecondary: "text-rose-700 dark:text-rose-300",
-    badgeBg: "bg-rose-100/90 dark:bg-rose-900/50",
-    badgeBorder: "border-rose-300/60 dark:border-rose-700/50",
-  },
-  {
-    id: "purple",
-    name: "パープル",
-    cardBg: "bg-purple-50/90 dark:bg-purple-950/40",
-    border: "border-purple-200 dark:border-purple-800/60",
-    accent: "bg-purple-500",
-    textPrimary: "text-purple-950 dark:text-purple-100",
-    textSecondary: "text-purple-700 dark:text-purple-300",
-    badgeBg: "bg-purple-100/90 dark:bg-purple-900/50",
-    badgeBorder: "border-purple-300/60 dark:border-purple-700/50",
-  },
-] as const;
+const CHS_MINORS = [
+  'AI・データサイエンス副専攻', 'グローバル主専攻・副専攻', '環境・サステナビリティ副専攻',
+  '心身ウェルネス副専攻', '教職コース（中高免許）', '司書教諭コース', '学芸員コース'
+];
 
-// 1コマのデータ構造
-export interface TimetableCellData {
-  subject: string;
-  roomNumber: string;
-  locationDetail?: string;
-  fullDisplay?: string;
-  colorId?: string;
+interface FacilityItem {
+  id: string;
+  name: string;
+  category: string;
+  weekday: string;
+  saturday: string;
+  sunday_holiday: string;
+  note: string;
+  location: string;
 }
 
-export type TimetableState = Record<string, TimetableCellData>;
+const DEFAULT_FACILITIES: FacilityItem[] = [
+  {
+    id: 'library',
+    name: '日本大学文理学部図書館',
+    category: '図書・資料',
+    weekday: '09:00 - 20:00',
+    saturday: '09:00 - 19:00',
+    sunday_holiday: '休館（授業なし日）',
+    note: '地下書庫・貸出手続きは閉館30分前まで',
+    location: '図書館棟'
+  },
+  {
+    id: 'comp_center',
+    name: 'コンピュータセンター（受付）',
+    category: 'ICT・端末',
+    weekday: '09:00 - 18:00',
+    saturday: '09:00 - 13:00',
+    sunday_holiday: '休業',
+    note: 'アカウント・学内Wi-Fi問い合わせ対応',
+    location: '3号館'
+  },
+  {
+    id: 'museum',
+    name: '日本大学文理学部資料館',
+    category: '展示・文化',
+    weekday: '10:00 - 17:00',
+    saturday: '10:00 - 13:00',
+    sunday_holiday: '休館',
+    note: '入館無料 / 企画展示開催中',
+    location: '8号館'
+  },
+  {
+    id: 'learning_commons',
+    name: 'ラーニング・コモンズ',
+    category: '学習スペース',
+    weekday: '08:00 - 18:00 (サポートデスク 10:00 - 18:00)',
+    saturday: '08:00 - 17:00 (サポートデスク 09:00 - 13:00)',
+    sunday_holiday: '休館',
+    note: 'グループ学習・PC貸出・アカデミックコモンズ併設',
+    location: '本館1階'
+  },
+  {
+    id: 'academic_affairs',
+    name: '事務窓口・教務課等',
+    category: '各種手続き',
+    weekday: '09:00 - 17:00',
+    saturday: '09:00 - 13:00',
+    sunday_holiday: '休み',
+    note: '証明書自動発行機利用は閉口15分前まで',
+    location: '本館1階事務室'
+  }
+];
 
-const STORAGE_KEY = "enekoma_timetable";
-const CUSTOM_EVENT_NAME = "enekoma-timetable-storage-sync";
+// APIベースURLを動的に判定
+const getApiBaseUrl = () => {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+    return '';
+  }
+  return 'http://localhost:8000';
+};
 
-// useSyncExternalStore 用の購読・スナップショット関数
-function subscribeToTimetable(callback: () => void) {
-  if (typeof window === "undefined") return () => {};
-  window.addEventListener("storage", callback);
-  window.addEventListener(CUSTOM_EVENT_NAME, callback);
-  return () => {
-    window.removeEventListener("storage", callback);
-    window.removeEventListener(CUSTOM_EVENT_NAME, callback);
+interface DegreeCheckResult {
+  department: string;
+  total_earned: number;
+  total_required: number;
+  progress_rate: number;
+  remaining_credits: {
+    zengaku: number;
+    sogo: number;
+    gaikokugo: number;
+    kisho: number;
+    major_req: number;
+    major_opt: number;
+    total: number;
   };
+  minor_status: {
+    name: string;
+    earned_credits: number;
+    required_credits: number;
+    remaining_credits: number;
+    recommended_courses: string[];
+  };
+  missing_requirements: string[];
+  ai_advice: string;
 }
 
-function getTimetableSnapshot(): string {
-  if (typeof window === "undefined") return "{}";
-  return localStorage.getItem(STORAGE_KEY) || "{}";
+interface FriendComparisonResult {
+  friend_name: string;
+  friend_code: string;
+  friend_timetable: Record<string, string>;
+  common_free_slots: Array<{ key: string; day: string; period: string }>;
+  common_free_count: number;
 }
 
-function getServerTimetableSnapshot(): string {
-  return "{}";
-}
+export default function CampusNavigatorPage() {
+  // ① 年度・学期切り替えステート
+  const [selectedYear, setSelectedYear] = useState('2026年度');
+  const [selectedSemester, setSelectedSemester] = useState('前期');
 
-function saveTimetableToStorage(data: TimetableState) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    window.dispatchEvent(new Event(CUSTOM_EVENT_NAME));
-  } catch (err) {
-    console.error("Failed to save timetable to localStorage:", err);
-  }
-}
+  // タブ管理
+  const [activeTab, setActiveTab] = useState<'timetable' | 'academic' | 'facilities' | 'schedules' | 'mypage'>('timetable');
 
-// ==========================================
-// 校舎ナレッジベース（フロントエンドローカル解析・検索）
-// ==========================================
-export function parseRoomDetailLocal(room: string): string {
-  const r = room.trim().toUpperCase();
-  if (!r) return "詳細場所未登録";
-
-  // 1号館 個別教室完全マッチング
-  if (["122", "123", "124"].includes(r)) {
-    return "1号館2階・階段登って左側（左奥に女子トイレ）";
-  }
-  if (["125", "126", "127A", "127B"].includes(r)) {
-    return "1号館2階・階段登って右側（右手前に男子トイレ、右奥に女子トイレ）";
-  }
-  if (r === "130") {
-    return "1号館3階・階段登って正面（左奥: 男子トイレ、右奥: 女子トイレ）";
-  }
-  if (["131", "132", "133", "134", "138"].includes(r)) {
-    return "1号館3階・階段登って左側（左奥に男子トイレ）";
-  }
-  if (["135", "136", "137A", "137B", "139"].includes(r)) {
-    return "1号館3階・階段登って右側（右奥に女子トイレ）";
-  }
-  if (r === "141") {
-    return "1号館4階・階段登って正面（※4階・5階はトイレなし、2F/3Fを利用）";
-  }
-  if (r === "151") {
-    return "1号館5階・階段登って正面（※4階・5階はトイレなし、2F/3Fを利用）";
-  }
-
-  // 4号館 個別教室完全マッチング
-  if (r === "411") {
-    return "4号館1階・正面から入って左側（男子トイレ側 / 給水所利用可能）";
-  }
-  if (r === "412") {
-    return "4号館1階・正面から入って右側（女子トイレ側 / 給水所利用可能）";
-  }
-  if (r === "421") {
-    return "4号館2階・階段登って左側（男子トイレ側 ※給水所使用不可）";
-  }
-  if (r === "422") {
-    return "4号館2階・階段登って右側（女子トイレ側 ※給水所使用不可）";
-  }
-  if (r === "431") {
-    return "4号館3階・階段登って右側（男子トイレ側 ※給水所使用不可）";
-  }
-  if (r === "432") {
-    return "4号館3階・階段登って左側（女子トイレ側 ※給水所使用不可）";
-  }
-  if (r === "441") {
-    return "4号館4階・階段登って右側奥（男子トイレ側・奥 ※給水所使用不可）";
-  }
-  if (r === "442") {
-    return "4号館4階・階段登って右側手前（男子トイレ側・手前 ※給水所使用不可）";
-  }
-  if (r === "443") {
-    return "4号館4階・階段登って左側手前（女子トイレ側・手前 ※給水所使用不可）";
-  }
-  if (r === "444") {
-    return "4号館4階・階段登って左側奥（女子トイレ側・奥 ※給水所使用不可）";
-  }
-
-  // 3号館 (4桁: 3XXX)
-  const m3 = r.match(/^3([1-5])(\d{2})$/);
-  if (m3) {
-    const floor = m3[1];
-    const subNum = parseInt(m3[2], 10);
-    if (subNum >= 1 && subNum <= 5) {
-      return `3号館${floor}階・エスカレーター出て右 / エレベーター出て左（男子トイレ側）`;
-    } else if (subNum >= 6 && subNum <= 10) {
-      return `3号館${floor}階・エスカレーター出て左 / エレベーター出て右（女子トイレ側）`;
+  // ② 時間割ステート（年度・学期ごとに独立管理、遅延初期化でlocalStorageから読込）
+  const [timetable, setTimetable] = useState<Record<string, string>>(() => {
+    if (typeof window === 'undefined') {
+      return {
+        mon_1: '情報科学概論', wed_3: '情報科学演習', thu_2: 'データベース論', fri_2: '健康・スポーツ教育実習'
+      };
     }
-    return `3号館${floor}階（下2桁01〜05: 男子トイレ側 / 06〜10: 女子トイレ側）`;
-  }
-
-  // 一般階フォールバック
-  if (r.startsWith("1") && r.length >= 3 && /^\d$/.test(r[1])) {
-    return `1号館${r[1]}階`;
-  }
-  if (r.startsWith("4") && r.length >= 3 && /^\d$/.test(r[1])) {
-    return `4号館${r[1]}階`;
-  }
-  if (r.startsWith("2") && r.length === 4 && /^\d$/.test(r[1])) {
-    return `2号館${r[1]}階`;
-  }
-
-  return "詳細場所未登録";
-}
-
-export function answerNavigatorQueryLocal(query: string): string {
-  const q = query.trim();
-  const qLower = q.toLowerCase();
-
-  const roomMatch = q.match(/\b([1-4]\d{2,3}[A-Ba-b]?)\b/);
-  if (roomMatch) {
-    const roomCode = roomMatch[1].toUpperCase();
-    const detail = parseRoomDetailLocal(roomCode);
-    if (detail !== "詳細場所未登録") {
-      return `📍 【教室案内: ${roomCode}】\n場所: ${detail}\n※エネコマ時間割にもこのまま登録できます！`;
+    const saved = localStorage.getItem('enekoma_tt_2026年度_前期');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        // fallback
+      }
     }
-  }
-
-  if (["水飲み場", "給水所", "給水", "水飲み", "冷水機"].some((k) => q.includes(k))) {
-    return (
-      "🚰 【給水所（水飲み場）のご案内】\n" +
-      "・現在使用可能な場所: **4号館 1階** のみ\n" +
-      "※注意: 4号館 2階〜4階の給水所は現在使用不可となっています。"
-    );
-  }
-
-  if (q.includes("ゴミ箱") || q.includes("ごみ箱") || q.includes("ゴミ")) {
-    return (
-      "🗑️ 【ゴミ箱の設置場所】\n" +
-      "・1号館、2号館、3号館、4号館の **全館・各階** に設置されています。\n" +
-      "・4号館は **各階トイレ前** に設置されています。"
-    );
-  }
-
-  if (q.includes("トイレ") || q.includes("お手洗い") || q.includes("便所")) {
-    if (q.includes("1号館") || q.includes("1号")) {
-      return (
-        "🚻 【1号館のトイレ情報】\n" +
-        "・1階: 正面左手前（女子）、左奥（男子）、右手前奥（男子）\n" +
-        "・2階: 左奥（女子）、右手前（男子）、右奥（女子）\n" +
-        "・3階: 左奥（男子）、右奥（女子）\n" +
-        "⚠️ 注意: 4階・5階にはトイレがありません。2階または3階をご利用ください。"
-      );
-    } else if (q.includes("3号館") || q.includes("3号")) {
-      return (
-        "🚻 【3号館のトイレ情報（各階共通）】\n" +
-        "・男子トイレ: エスカレーター出て右 / エレベーター出て左（教室01〜05側）\n" +
-        "・女子トイレ: エスカレーター出て左 / エレベーター出て右（教室06〜10側）"
-      );
-    } else if (q.includes("4号館") || q.includes("4号")) {
-      return (
-        "🚻 【4号館のトイレ情報】\n" +
-        "・1階: 左側（男子 / 411側）、右側（女子 / 412側）\n" +
-        "・2階: 左側（男子 / 421側）、右側（女子 / 422側）\n" +
-        "・3階: 右側（男子 / 431側）、左側（女子 / 432側）\n" +
-        "・4階: 右側（男子 / 441・442側）、左側（女子 / 443・444側）"
-      );
-    }
-    return (
-      "🚻 【各館トイレのご案内】\n" +
-      "・3号館 (各階): 男子=エスカレーター右(01-05側) / 女子=エスカレーター左(06-10側)\n" +
-      "・4号館 (各階): 階ごとに左右配置（1F/2Fは左男子・右女子、3F/4Fは右男子・左女子）\n" +
-      "・1号館: 1F〜3Fに設置（※4階・5階にはトイレがありません）\n" +
-      "・2号館: 各階に設置"
-    );
-  }
-
-  if (["クレジット", "クレカ", "タッチ決済", "コンタクトレス", "visa", "master"].some((k) => q.includes(k))) {
-    return (
-      "💳 【クレジットカードタッチ決済が使える自販機】\n" +
-      "・設置場所: **3号館 1階 食堂側**\n" +
-      "・対象自販機: **コカ・コーラ（赤）**\n" +
-      "・対応ブランド: Visa / Mastercard コンタクトレス決済対応\n" +
-      "※他のサントリー自販機ではクレカ直接タッチは利用できません。"
-    );
-  }
-
-  if (qLower.includes("paypay") || q.includes("ペイペイ")) {
-    return (
-      "📱 【PayPayが使える自販機】\n" +
-      "学内のすべての自販機でPayPayが利用可能です！\n\n" +
-      "1. **3号館 1階 食堂側 コカ・コーラ自販機（赤）**\n" +
-      "   → 『Coke ON Pay』アプリ連携でPayPay決済可能\n" +
-      "2. **3号館 1階 食堂側 サントリー自販機（計3台）＆ 4号館 1階 自販機**\n" +
-      "   → サントリー『ジハンピ』アプリ連携でPayPay決済可能"
-    );
-  }
-
-  if (["交通系", "suica", "pasmo", "icカード"].some((k) => qLower.includes(k))) {
-    return (
-      "🚃 【交通系IC（Suica/PASMO等）が使える自販機】\n" +
-      "⚠️ 注意: 学内自販機は**物理カードの直接タッチには非対応**です。各社アプリ経由で決済できます。\n\n" +
-      "・**3号館 1階 コカ・コーラ（赤）**: 『Coke ON Pay』連携で利用可能\n" +
-      "・**3号館・4号館 サントリー各台**: 『ジハンピ』アプリ連携で利用可能"
-    );
-  }
-
-  if (q.includes("100円以下") || q.includes("100円で買える") || q.includes("安い")) {
-    return (
-      "🪙 【100円以下で購入できるお得な商品】\n\n" +
-      "【80円（最安値！）】\n" +
-      "・サントリー天然水 (4号館1F / 3号館1F水メイン)\n" +
-      "・ZONe スカッと透明 (4号館1F)\n" +
-      "・ZONe NOPE (3号館1F青)\n\n" +
-      "【90円】\n" +
-      "・やさしい麦茶 (4号館1F / 3号館1F各台)\n" +
-      "・レモン強炭酸水 (3号館1Fスポーツ系)\n\n" +
-      "【100円】\n" +
-      "・マウンテンデュー / デカビタC GABA / ペプシコーラ生\n" +
-      "・伊右衛門緑茶・焙じ茶 / プリン缶 / レモンスカッシュ / アイスティー\n" +
-      "・ジョージア缶コーヒー各種 / BOSS缶コーヒー各種"
-    );
-  }
-
-  const drinkKeywords = [
-    { kw: "レッドブル", name: "レッドブル", price: 170, loc: "4号館1F, 3号館1F(スポーツ系/青)" },
-    { kw: "モンスター", name: "モンスターエナジー各種", price: "180〜190", loc: "3号館1F 食堂側（スポーツ系）" },
-    { kw: "zone", name: "ZONe(スカッと透明/NOPE)", price: 80, loc: "4号館1F(スカッと透明) / 3号館1F(青/NOPE)" },
-    { kw: "天然水", name: "サントリー天然水", price: 80, loc: "4号館1F / 3号館1F(水メイン)" },
-    { kw: "いろはす", name: "い・ろ・は・す", price: "100〜110", loc: "3号館1F 食堂側（コカ・コーラ赤）" },
-    { kw: "麦茶", name: "やさしい麦茶 / やかんの麦茶", price: "90〜110", loc: "4号館1F(90円), 3号館1F各台" },
-    { kw: "緑茶", name: "伊右衛門 / 綾鷹", price: "100〜110", loc: "4号館1F, 3号館1F各台" },
-    { kw: "コーラ", name: "コカ・コーラ(140円) / ペプシ生(100円)", price: "100〜140", loc: "3号館1F 食堂側" },
-    { kw: "ミルクティー", name: "リプトン白の贅沢 / 紅茶花伝", price: 110, loc: "4号館1F, 3号館1F各台" },
-    { kw: "コーヒー", name: "BOSS各種 / ジョージア各種", price: "90〜140", loc: "4号館1F, 3号館1F各台" },
-    { kw: "プリン", name: "ぷるぷるプリン缶", price: 100, loc: "3号館1F 食堂側（水メイン／スポーツ系）" },
-  ];
-
-  for (const item of drinkKeywords) {
-    if (qLower.includes(item.kw)) {
-      return (
-        `🥤 【「${item.name}」の自販機情報】\n` +
-        `・価格目安: **${item.price}円**\n` +
-        `・購入できる場所: **${item.loc}**\n` +
-        `・決済方法: 現金、PayPay(ジハンピ/Coke ON連携)、交通系IC(アプリ連携)、3号館赤ならクレカタッチもOK！`
-      );
-    }
-  }
-
-  return (
-    "🎓 【キャンパス構内ナビゲーターAI】\n" +
-    "校舎ナレッジベースに基づき、以下の内容をご案内できます：\n\n" +
-    "1. **教室案内**: 「3505はどこ？」「411教室」「124の場所」など\n" +
-    "2. **自販機案内**: 「レッドブルはどこ？」「100円以下の飲み物」「PayPay/クレカが使える自販機」\n" +
-    "3. **設備案内**: 「水飲み場・給水所」「ゴミ箱の場所」「3号館のトイレ」\n\n" +
-    "質問したい内容をお気軽に入力してください！"
-  );
-}
-
-export default function TimetablePage() {
-  const rawTimetableJson = useSyncExternalStore(
-    subscribeToTimetable,
-    getTimetableSnapshot,
-    getServerTimetableSnapshot
-  );
-
-  const timetable: TimetableState = useMemo(() => {
-    try {
-      const parsed = JSON.parse(rawTimetableJson);
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch {
-      return {};
-    }
-  }, [rawTimetableJson]);
-
-  // モーダル管理ステート
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedSlot, setSelectedSlot] = useState<{
-    dayKey: string;
-    dayLabel: string;
-    period: number;
-    time: string;
-  } | null>(null);
-
-  // キャンパスナビゲーターモーダル
-  const [isNavigatorOpen, setIsNavigatorOpen] = useState(false);
-  const [navQuery, setNavQuery] = useState("");
-  const [navHistory, setNavHistory] = useState<
-    Array<{ q: string; a: string; time: string }>
-  >([]);
-  const [isNavSearching, setIsNavSearching] = useState(false);
-
-  // フォームステート
-  const [formSubject, setFormSubject] = useState("");
-  const [formRoomNumber, setFormRoomNumber] = useState("");
-  const [formColorId, setFormColorId] = useState<string>("emerald");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-
-  // 通知バナー用ステート
-  const [toastMessage, setToastMessage] = useState<{
-    text: string;
-    type: "success" | "info";
-  } | null>(null);
-
-  // 本日の曜日（月:1 〜 金:5）
-  const [todayKey] = useState<string | null>(() => {
-    const dayOfWeek = new Date().getDay();
-    const dayMap: Record<number, string> = {
-      1: "mon",
-      2: "tue",
-      3: "wed",
-      4: "thu",
-      5: "fri",
+    return {
+      mon_1: '情報科学概論', wed_3: '情報科学演習', thu_2: 'データベース論', fri_2: '健康・スポーツ教育実習'
     };
-    return dayMap[dayOfWeek] || null;
   });
+  const [editingSlot, setEditingSlot] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
 
-  // モーダルを閉じる
-  const closeModal = useCallback(() => {
-    setIsModalOpen(false);
-    setSelectedSlot(null);
-    setFormSubject("");
-    setFormRoomNumber("");
-    setFormError(null);
-  }, []);
-
-  // コマをクリックしたときのハンドラ
-  const handleCellClick = useCallback(
-    (dayKey: string, dayLabel: string, period: number, time: string) => {
-      const slotKey = `${dayKey}-${period}`;
-      const existing = timetable[slotKey];
-
-      setSelectedSlot({ dayKey, dayLabel, period, time });
-      setFormError(null);
-
-      if (existing) {
-        setFormSubject(existing.subject);
-        setFormRoomNumber(existing.roomNumber);
-        setFormColorId(existing.colorId || "emerald");
-      } else {
-        setFormSubject("");
-        setFormRoomNumber("");
-        const defaultColors = [
-          "emerald",
-          "sky",
-          "indigo",
-          "amber",
-          "rose",
-          "purple",
-        ];
-        const pickedColor =
-          defaultColors[(period + dayKey.charCodeAt(0)) % defaultColors.length];
-        setFormColorId(pickedColor);
+  // 年度・学期の切替ハンドラ
+  const handleYearChange = (newYear: string) => {
+    setSelectedYear(newYear);
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(`enekoma_tt_${newYear}_${selectedSemester}`);
+      if (saved) {
+        try {
+          setTimetable(JSON.parse(saved));
+          return;
+        } catch {}
       }
-      setIsModalOpen(true);
-    },
-    [timetable]
-  );
-
-  // トーストの自動消去
-  useEffect(() => {
-    if (!toastMessage) return;
-    const timer = setTimeout(() => {
-      setToastMessage(null);
-    }, 4000);
-    return () => clearTimeout(timer);
-  }, [toastMessage]);
-
-  // ESCキーでモーダルを閉じる
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (isNavigatorOpen) {
-          setIsNavigatorOpen(false);
-        } else if (isModalOpen) {
-          closeModal();
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isModalOpen, isNavigatorOpen, closeModal]);
-
-  // ナビゲーター検索処理
-  const handleNavigatorSubmit = async (queryText?: string) => {
-    const textToSearch = (queryText !== undefined ? queryText : navQuery).trim();
-    if (!textToSearch) return;
-
-    setIsNavSearching(true);
-    const apiBaseUrl =
-      process.env.NEXT_PUBLIC_API_URL ||
-      (typeof window !== "undefined" && window.location.hostname !== "localhost"
-        ? ""
-        : "http://localhost:8000");
-
-    let reply = "";
-    try {
-      const res = await fetch(`${apiBaseUrl}/api/navigator/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: textToSearch }),
+      setTimetable({
+        mon_1: '情報科学概論', wed_3: '情報科学演習', thu_2: 'データベース論', fri_2: '健康・スポーツ教育実習'
       });
-      if (res.ok) {
-        const data = await res.json();
-        reply = data.reply;
-      } else {
-        reply = answerNavigatorQueryLocal(textToSearch);
-      }
-    } catch {
-      reply = answerNavigatorQueryLocal(textToSearch);
     }
-
-    const timeStr = new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    setNavHistory((prev) => [
-      { q: textToSearch, a: reply, time: timeStr },
-      ...prev,
-    ]);
-    setNavQuery("");
-    setIsNavSearching(false);
   };
 
-  // 保存処理 (FastAPI連携 & localStorage永続化)
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedSlot) return;
+  const handleSemesterChange = (newSemester: string) => {
+    setSelectedSemester(newSemester);
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(`enekoma_tt_${selectedYear}_${newSemester}`);
+      if (saved) {
+        try {
+          setTimetable(JSON.parse(saved));
+          return;
+        } catch {}
+      }
+      setTimetable({
+        mon_1: '情報科学概論', wed_3: '情報科学演習', thu_2: 'データベース論', fri_2: '健康・スポーツ教育実習'
+      });
+    }
+  };
 
-    const trimmedSubject = formSubject.trim();
-    const trimmedRoom = formRoomNumber.trim();
+  // ③ 履修・卒業ナビ ステート
+  const [department, setDepartment] = useState('情報科学科');
+  const [grade, setGrade] = useState(2);
+  const [selectedMinor, setSelectedMinor] = useState('AI・データサイエンス副専攻');
+  const [earnedCredits, setEarnedCredits] = useState({
+    zengaku: 2, sogo: 8, gaikokugo: 8, kisho: 5, major_req: 18, major_opt: 12, free_opt: 8
+  });
+  const [degreeResult, setDegreeResult] = useState<DegreeCheckResult | null>(null);
 
-    if (!trimmedSubject) {
-      setFormError("講義名を入力してください。");
+  // ④ 施設営業時間 AI ステート
+  const [facilityQuery, setFacilityQuery] = useState('');
+  const [facilityData, setFacilityData] = useState<FacilityItem[]>(DEFAULT_FACILITIES);
+  const [facilityAiAnswer, setFacilityAiAnswer] = useState('');
+
+  // ⑤ スケジュール ＆ 通知 ステート
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [tasks, setTasks] = useState([
+    { id: '1', title: '情報科学演習 レポート提出', date: '2026-10-09', period: '3限', course_name: '情報科学演習', type: 'task', completed: false },
+    { id: '2', title: 'データ構造 中間テスト', date: '2026-10-15', period: '2限', course_name: 'データ構造', type: 'exam', completed: false }
+  ]);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDate, setNewTaskDate] = useState('');
+  const [newTaskType, setNewTaskType] = useState('task');
+
+  // ⑥ マイページ ＆ フレンド共有 ステート
+  const [userName, setUserName] = useState('文理 太郎');
+  const [myShareCode] = useState('ENE-7829-CHS');
+  const [friendCodeInput, setFriendCodeInput] = useState('');
+  const [friendComparison, setFriendComparison] = useState<FriendComparisonResult | null>(null);
+
+  // 時間割保存
+  const saveTimetableSlot = () => {
+    if (!editingSlot) return;
+    const updated = { ...timetable, [editingSlot]: editingText };
+    setTimetable(updated);
+    const storageKey = `enekoma_tt_${selectedYear}_${selectedSemester}`;
+    localStorage.setItem(storageKey, JSON.stringify(updated));
+    setEditingSlot(null);
+    setEditingText('');
+  };
+
+  // 卒業AI判定実行
+  const runDegreeCheck = async () => {
+    const apiBase = getApiBaseUrl();
+    try {
+      const res = await fetch(`${apiBase}/api/academic/degree-check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          department,
+          grade: Number(grade),
+          earned_credits: earnedCredits,
+          selected_minor: selectedMinor,
+          taken_courses: ['データ処理基礎', 'ビッグデータサイエンス']
+        })
+      });
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const data = await res.json();
+      setDegreeResult(data);
+    } catch (err) {
+      console.warn('API fallback for degree check:', err);
+      const totalEarned = Object.values(earnedCredits).reduce((a, b) => a + b, 0);
+      const totalRequired = 124;
+      const progress = Math.min(100, Math.round((totalEarned / totalRequired) * 100));
+      setDegreeResult({
+        department,
+        total_earned: totalEarned,
+        total_required: totalRequired,
+        progress_rate: progress,
+        remaining_credits: {
+          zengaku: Math.max(0, 2 - earnedCredits.zengaku),
+          sogo: Math.max(0, 12 - earnedCredits.sogo),
+          gaikokugo: Math.max(0, 8 - earnedCredits.gaikokugo),
+          kisho: Math.max(0, 5 - earnedCredits.kisho),
+          major_req: Math.max(0, 38 - earnedCredits.major_req),
+          major_opt: Math.max(0, 22 - earnedCredits.major_opt),
+          total: Math.max(0, totalRequired - totalEarned)
+        },
+        minor_status: {
+          name: selectedMinor,
+          earned_credits: 4,
+          required_credits: 16,
+          remaining_credits: 12,
+          recommended_courses: ['人工知能概論', 'データサイエンス演習']
+        },
+        missing_requirements: [
+          '総合教育科目: 残り要件あり',
+          '学科専門必修: 残り要件あり'
+        ],
+        ai_advice: `卒業条件達成率は ${progress}% です。次学期は学科専門必修科目を優先して登録してください。`
+      });
+    }
+  };
+
+  // 施設営業時間AI検索実行
+  const searchFacilities = useCallback(async (qText?: string) => {
+    const query = qText !== undefined ? qText : facilityQuery;
+    const apiBase = getApiBaseUrl();
+    try {
+      const res = await fetch(`${apiBase}/api/facilities/hours?q=${encodeURIComponent(query)}`);
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const data = await res.json();
+      setFacilityData(data.facilities);
+      setFacilityAiAnswer(data.ai_response);
+    } catch (err) {
+      console.warn('Facility API offline fallback:', err);
+      const filtered = query
+        ? DEFAULT_FACILITIES.filter(
+            (f) =>
+              f.name.includes(query) ||
+              f.category.includes(query) ||
+              f.location.includes(query)
+          )
+        : DEFAULT_FACILITIES;
+      setFacilityData(filtered);
+      setFacilityAiAnswer(
+        `【文理学部 施設営業時間案内AI】\n検索条件: 「${query || '全施設'}」の回答結果です。`
+      );
+    }
+  }, [facilityQuery]);
+
+  // Web Push/ブラウザ通知トグル
+  const toggleNotification = () => {
+    if (!('Notification' in window)) {
+      alert('お使いのブラウザは通知機能に対応していません。');
       return;
     }
+    if (Notification.permission === 'granted') {
+      setPushEnabled(!pushEnabled);
+    } else if (Notification.permission !== 'denied') {
+      Notification.requestPermission().then((permission) => {
+        if (permission === 'granted') {
+          setPushEnabled(true);
+          new Notification('EneKoma Campus Navigator', { body: 'リマインダー通知が有効化されました。' });
+        }
+      });
+    }
+  };
 
-    setIsSubmitting(true);
-    setFormError(null);
-
-    const apiBaseUrl =
-      process.env.NEXT_PUBLIC_API_URL ||
-      (typeof window !== "undefined" && window.location.hostname !== "localhost"
-        ? ""
-        : "http://localhost:8000");
-
-    let locationDetail = "";
-    let fullDisplay = "";
-    let apiSuccess = false;
-
+  // フレンド時間割比較実行
+  const compareFriend = async () => {
+    if (!friendCodeInput) return;
+    const apiBase = getApiBaseUrl();
     try {
-      const response = await fetch(`${apiBaseUrl}/api/timetable/parse`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+      const res = await fetch(`${apiBase}/api/friends/compare`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subject: trimmedSubject,
-          room_number: trimmedRoom,
-        }),
+          friend_code: friendCodeInput,
+          my_timetable: timetable
+        })
       });
-
-      if (!response.ok) {
-        throw new Error(`API error: status ${response.status}`);
-      }
-
-      const data = await response.json();
-      locationDetail = data.location_detail || "";
-      fullDisplay = data.full_display || "";
-      apiSuccess = true;
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const data = await res.json();
+      setFriendComparison(data);
     } catch (err) {
-      console.warn("Backend API unavailable or error. Using client fallback:", err);
-
-      locationDetail = parseRoomDetailLocal(trimmedRoom);
-      fullDisplay = locationDetail
-        ? `${trimmedSubject} （${trimmedRoom}：${locationDetail}）`
-        : trimmedRoom
-        ? `${trimmedSubject} （${trimmedRoom}）`
-        : trimmedSubject;
-    }
-
-    const slotKey = `${selectedSlot.dayKey}-${selectedSlot.period}`;
-    const updatedTimetable: TimetableState = {
-      ...timetable,
-      [slotKey]: {
-        subject: trimmedSubject,
-        roomNumber: trimmedRoom,
-        locationDetail,
-        fullDisplay,
-        colorId: formColorId,
-      },
-    };
-
-    saveTimetableToStorage(updatedTimetable);
-    setIsSubmitting(false);
-    closeModal();
-
-    if (apiSuccess) {
-      setToastMessage({
-        text: `「${trimmedSubject}」を保存しました（校舎ナレッジ解析完了）`,
-        type: "success",
-      });
-    } else {
-      setToastMessage({
-        text: `「${trimmedSubject}」をローカルに保存しました`,
-        type: "info",
+      console.warn('Friends API fallback:', err);
+      const dummySlots = [
+        { key: 'mon_2', day: '月曜', period: '2限' },
+        { key: 'tue_3', day: '火曜', period: '3限' },
+        { key: 'wed_2', day: '水曜', period: '2限' },
+        { key: 'thu_4', day: '木曜', period: '4限' },
+      ];
+      setFriendComparison({
+        friend_name: `フレンド (${friendCodeInput.toUpperCase()})`,
+        friend_code: friendCodeInput.toUpperCase(),
+        friend_timetable: { mon_1: '総合教養', tue_2: '専門演習' },
+        common_free_slots: dummySlots,
+        common_free_count: dummySlots.length
       });
     }
-  };
-
-  // コマ削除処理
-  const handleDelete = () => {
-    if (!selectedSlot) return;
-    const slotKey = `${selectedSlot.dayKey}-${selectedSlot.period}`;
-    const currentSubject = timetable[slotKey]?.subject;
-    const updated = { ...timetable };
-    delete updated[slotKey];
-
-    saveTimetableToStorage(updated);
-    closeModal();
-    if (currentSubject) {
-      setToastMessage({
-        text: `「${currentSubject}」を削除しました`,
-        type: "info",
-      });
-    }
-  };
-
-  const registeredCount = Object.keys(timetable).length;
-
-  const getTheme = (colorId?: string) => {
-    return (
-      COLOR_THEMES.find((c) => c.id === colorId) || COLOR_THEMES[0]
-    );
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col selection:bg-emerald-500 selection:text-white pb-12">
-      {/* トースト通知 */}
-      {toastMessage && (
-        <div className="fixed top-4 right-4 z-50 animate-in fade-in slide-in-from-top-4 duration-200">
-          <div
-            className={`px-4 py-2.5 rounded-xl shadow-lg border text-xs sm:text-sm font-medium flex items-center gap-2 ${
-              toastMessage.type === "success"
-                ? "bg-emerald-600 text-white border-emerald-500 shadow-emerald-500/20"
-                : "bg-slate-800 text-white border-slate-700 shadow-slate-900/30"
-            }`}
-          >
-            <span>{toastMessage.type === "success" ? "✓" : "ℹ"}</span>
-            <span>{toastMessage.text}</span>
-          </div>
-        </div>
-      )}
-
-      {/* ===== ヘッダー ===== */}
-      <header className="sticky top-0 z-30 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800/80 shadow-xs">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+    <div className="min-h-screen bg-slate-50 text-slate-800">
+      {/* 画面上部ヘッダー & 年度/学期セレクター */}
+      <header className="bg-emerald-700 text-white shadow-md">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex flex-wrap justify-between items-center gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-sky-400 flex items-center justify-center shadow-md shadow-emerald-500/20 text-white font-black text-xl tracking-tighter">
-              ⚡
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-bold bg-gradient-to-r from-emerald-600 to-teal-600 dark:from-emerald-400 dark:to-teal-300 bg-clip-text text-transparent">
-                  EneKoma
-                </h1>
-                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                  エネコマ
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-normal hidden sm:block">
-                スマートキャンパス時間割 ＆ 構内ナビゲーター
-              </p>
-            </div>
+            <span className="text-2xl font-black tracking-tight">EneKoma</span>
+            <span className="text-xs bg-emerald-800 px-2.5 py-1 rounded-full border border-emerald-600">日本大学文理学部公式対応</span>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* キャンパスナビボタン */}
-            <button
-              type="button"
-              onClick={() => setIsNavigatorOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold shadow-xs shadow-emerald-500/20 transition-all cursor-pointer active:scale-95"
-              title="教室・自販機・トイレ検索"
+          {/* ③ 年度・学期切り替えドロップダウン */}
+          <div className="flex items-center gap-3 bg-emerald-800/80 p-1.5 rounded-lg border border-emerald-600">
+            <label className="text-xs font-semibold text-emerald-100 pl-2">表示対象:</label>
+            <select
+              value={selectedYear}
+              onChange={(e) => handleYearChange(e.target.value)}
+              className="bg-white text-slate-800 text-sm font-bold py-1 px-3 rounded shadow-sm focus:outline-none"
             >
-              <span>🧭</span>
-              <span className="hidden xs:inline">キャンパスナビ</span>
-            </button>
-
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 text-xs text-slate-600 dark:text-slate-300">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>
-                登録:{" "}
-                <strong className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                  {registeredCount}
-                </strong>{" "}
-                / 25コマ
-              </span>
-            </div>
-
-            {registeredCount > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (
-                    confirm(
-                      "すべてのコマをリセットしますか？この操作は元に戻せません。"
-                    )
-                  ) {
-                    saveTimetableToStorage({});
-                    setToastMessage({
-                      text: "時間割をリセットしました",
-                      type: "info",
-                    });
-                  }
-                }}
-                className="text-xs px-2.5 py-1.5 rounded-lg text-slate-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-transparent hover:border-rose-200 transition-colors"
-                title="全コマをクリア"
-              >
-                クリア
-              </button>
-            )}
+              <option value="2026年度">2026年度</option>
+              <option value="2025年度">2025年度</option>
+              <option value="2024年度">2024年度</option>
+            </select>
+            <select
+              value={selectedSemester}
+              onChange={(e) => handleSemesterChange(e.target.value)}
+              className="bg-white text-slate-800 text-sm font-bold py-1 px-3 rounded shadow-sm focus:outline-none"
+            >
+              <option value="前期">前期</option>
+              <option value="後期">後期</option>
+            </select>
           </div>
         </div>
       </header>
 
-      {/* ===== メインコンテンツ ===== */}
-      <main className="flex-1 max-w-6xl w-full mx-auto px-2 sm:px-6 pt-4 sm:pt-6">
-        {/* PWA案内 & キャンパスナビ起動バナー */}
-        <div className="mb-4 bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-sky-500/10 dark:from-emerald-950/40 dark:via-teal-950/40 dark:to-sky-950/40 rounded-2xl p-3.5 sm:p-4 border border-emerald-200/60 dark:border-emerald-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-start sm:items-center gap-2.5">
-            <span className="shrink-0 w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-base">
-              🧭
-            </span>
-            <div className="text-xs sm:text-sm text-slate-700 dark:text-slate-300">
-              <span className="font-semibold text-emerald-700 dark:text-emerald-300">
-                校舎ナレッジベース搭載！
-              </span>
-              教室番号（例: 3505, 411, 124）を入れると正確な場所やトイレ位置を自動表示。自販機や給水所も
-              <button
-                type="button"
-                onClick={() => setIsNavigatorOpen(true)}
-                className="text-emerald-600 dark:text-emerald-400 font-semibold underline underline-offset-2 ml-1 hover:text-emerald-700"
-              >
-                キャンパスナビ
-              </button>
-              で検索できます。
-            </div>
-          </div>
-          <div className="flex items-center gap-2 self-end sm:self-center">
-            {todayKey && (
-              <span className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-600 text-white shadow-xs">
-                📅 今日: {DAYS.find((d) => d.key === todayKey)?.fullLabel}
-              </span>
-            )}
+      {/* タブナビゲーション */}
+      <nav className="bg-white border-b border-slate-200 sticky top-0 z-10 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 flex overflow-x-auto gap-2">
+          {[
+            { id: 'timetable', label: '📅 時間割' },
+            { id: 'academic', label: '🎓 履修・卒業ナビ' },
+            { id: 'facilities', label: '🏛 施設営業時間' },
+            { id: 'schedules', label: '⏰ スケジュール' },
+            { id: 'mypage', label: '👤 マイページ / フレンド' },
+          ].map((tab) => (
             <button
-              type="button"
-              onClick={() => setIsNavigatorOpen(true)}
-              className="text-xs font-semibold px-3 py-1 rounded-full bg-white dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 shadow-xs hover:bg-emerald-50 transition-colors"
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as 'timetable' | 'academic' | 'facilities' | 'schedules' | 'mypage')}
+              className={`py-3.5 px-4 font-bold text-sm border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
+                activeTab === tab.id
+                  ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50'
+                  : 'border-transparent text-slate-600 hover:text-emerald-600'
+              }`}
             >
-              AIに質問する 🔍
+              {tab.label}
             </button>
-          </div>
+          ))}
         </div>
+      </nav>
 
-        {/* ===== 時間割グリッド ===== */}
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <div className="min-w-[700px] select-none">
-              {/* テーブルヘッダー（曜日行） */}
-              <div className="grid grid-cols-[80px_repeat(5,_1fr)] border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/90 sticky top-0">
-                <div className="p-3 text-center text-xs font-semibold text-slate-400 dark:text-slate-500 flex items-center justify-center border-r border-slate-200/60 dark:border-slate-800/60">
-                  時限
-                </div>
-                {DAYS.map((day) => {
-                  const isToday = day.key === todayKey;
-                  return (
-                    <div
-                      key={day.key}
-                      className={`p-3 text-center border-r last:border-r-0 border-slate-200/60 dark:border-slate-800/60 transition-colors ${
-                        isToday
-                          ? "bg-emerald-500/10 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
-                          : "text-slate-700 dark:text-slate-300"
-                      }`}
-                    >
-                      <div className="flex items-center justify-center gap-1.5">
-                        <span className="text-base font-bold">{day.label}</span>
-                        <span className="text-xs text-slate-400 dark:text-slate-500 font-medium">
-                          ({day.en})
-                        </span>
-                        {isToday && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+      {/* メインコンテンツエリア */}
+      <main className="max-w-7xl mx-auto px-4 py-6">
+
+        {/* -------------------------------------------------------------
+            TAB 1: 📅 時間割（更新後の時限時刻・年度学期保存対応）
+        ------------------------------------------------------------- */}
+        {activeTab === 'timetable' && (
+          <div className="space-y-4">
+            <div className="flex justify-between items-center bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+              <div>
+                <h2 className="text-lg font-bold text-emerald-900">時間割ビュー（{selectedYear} {selectedSemester}）</h2>
+                <p className="text-xs text-emerald-700">コマをクリックして授業名を入力・保存できます。</p>
               </div>
+              <span className="text-xs font-bold bg-emerald-600 text-white px-3 py-1.5 rounded-full">
+                5時限制＋昼休み構成
+              </span>
+            </div>
 
-              {/* テーブルボディ（時限 × 曜日） */}
-              {PERIODS.map((periodObj) => (
-                <div
-                  key={periodObj.period}
-                  className="grid grid-cols-[80px_repeat(5,_1fr)] border-b last:border-b-0 border-slate-200/70 dark:border-slate-800/70 min-h-[110px]"
-                >
-                  {/* 時限ラベル列 */}
-                  <div className="p-2 sm:p-3 border-r border-slate-200/60 dark:border-slate-800/60 bg-slate-50/40 dark:bg-slate-900/40 flex flex-col items-center justify-center text-center">
-                    <span className="w-7 h-7 rounded-full bg-slate-200/80 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-sm flex items-center justify-center mb-1">
-                      {periodObj.period}
-                    </span>
-                    <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono leading-tight whitespace-nowrap">
-                      {periodObj.time.split(" - ")[0]}
-                      <br />
-                      {periodObj.time.split(" - ")[1]}
-                    </span>
-                  </div>
-
-                  {/* 曜日ごとのコマ */}
-                  {DAYS.map((day) => {
-                    const slotKey = `${day.key}-${periodObj.period}`;
-                    const cell = timetable[slotKey];
-                    const theme = cell ? getTheme(cell.colorId) : null;
-                    const isToday = day.key === todayKey;
-
+            {/* 時間割グリッド */}
+            <div className="overflow-x-auto bg-white rounded-xl shadow border border-slate-200">
+              <table className="w-full min-w-[640px] border-collapse">
+                <thead>
+                  <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 text-sm">
+                    <th className="py-3 px-3 w-28 text-center font-bold">時限 / 時間</th>
+                    {DAYS.map((d) => (
+                      <th key={d.key} className="py-3 px-3 text-center font-bold border-l border-slate-200">{d.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {PERIODS_CONFIG.map((p) => {
+                    if (p.isLunch) {
+                      return (
+                        <tr key="lunch" className="bg-amber-50/60 border-b border-amber-200/60 text-amber-900 text-xs">
+                          <td className="py-2 px-3 text-center font-bold bg-amber-100/50">
+                            {p.name}<br /><span className="font-normal text-[10px]">{p.time}</span>
+                          </td>
+                          <td colSpan={5} className="py-2 text-center font-semibold tracking-widest text-amber-800">
+                            🍱 昼休み（12:10 〜 13:00）
+                          </td>
+                        </tr>
+                      );
+                    }
                     return (
-                      <div
-                        key={slotKey}
-                        onClick={() =>
-                          handleCellClick(
-                            day.key,
-                            day.label,
-                            periodObj.period,
-                            periodObj.time
-                          )
-                        }
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            handleCellClick(
-                              day.key,
-                              day.label,
-                              periodObj.period,
-                              periodObj.time
-                            );
-                          }
-                        }}
-                        className={`p-2 border-r last:border-r-0 border-slate-200/60 dark:border-slate-800/60 cursor-pointer transition-all duration-150 flex flex-col justify-between group relative overflow-hidden focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:z-10 ${
-                          isToday && !cell
-                            ? "bg-emerald-500/[0.02] dark:bg-emerald-950/[0.15]"
-                            : ""
-                        } ${
-                          cell
-                            ? `${theme?.cardBg} ${theme?.border} border shadow-xs hover:shadow-md hover:scale-[1.01] active:scale-[0.99]`
-                            : "hover:bg-slate-100/70 dark:hover:bg-slate-800/50"
-                        }`}
-                      >
-                        {cell ? (
-                          <>
-                            {/* 登録済みコマ */}
-                            <div className="flex-1 flex flex-col gap-1.5">
-                              {/* 講義名 */}
-                              <div
-                                className={`font-bold text-sm sm:text-[15px] leading-tight line-clamp-2 tracking-tight ${theme?.textPrimary}`}
-                              >
-                                {cell.subject}
-                              </div>
-
-                              {/* 教室番号 & 詳細メモ */}
-                              {(cell.roomNumber || cell.locationDetail) && (
-                                <div className="mt-auto pt-1">
-                                  <div
-                                    className={`inline-flex flex-wrap items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] font-medium leading-tight ${theme?.badgeBg} ${theme?.badgeBorder} ${theme?.textSecondary}`}
-                                  >
-                                    <span className="font-bold tracking-wide">
-                                      📍 {cell.roomNumber}
-                                    </span>
-                                    {cell.locationDetail && (
-                                      <span className="opacity-90">
-                                        （{cell.locationDetail}）
-                                      </span>
-                                    )}
-                                  </div>
+                      <tr key={p.id} className="border-b border-slate-200 text-sm hover:bg-slate-50/50">
+                        <td className="py-3 px-2 text-center font-bold bg-slate-50 text-slate-700 border-r border-slate-200">
+                          <div className="text-base text-emerald-800">{p.name}</div>
+                          <div className="text-[11px] text-slate-500 font-normal">{p.time}</div>
+                        </td>
+                        {DAYS.map((d) => {
+                          const slotKey = `${d.key}_${p.id}`;
+                          const course = timetable[slotKey] || '';
+                          return (
+                            <td
+                              key={slotKey}
+                              onClick={() => {
+                                setEditingSlot(slotKey);
+                                setEditingText(course);
+                              }}
+                              className="py-3 px-3 border-r border-slate-200 text-center cursor-pointer hover:bg-emerald-50/60 transition-colors h-20 align-top"
+                            >
+                              {course ? (
+                                <div className="bg-emerald-100/80 text-emerald-900 p-2 rounded-lg font-bold text-xs shadow-sm border border-emerald-300">
+                                  {course}
                                 </div>
+                              ) : (
+                                <div className="text-slate-300 text-xs pt-4 font-light">＋ 登録</div>
                               )}
-                            </div>
-
-                            {/* ホバー時の編集示唆アイコン */}
-                            <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 dark:bg-slate-800/90 rounded-md p-1 shadow-xs border border-slate-200/60 dark:border-slate-700/60 text-slate-500 dark:text-slate-300">
-                              <svg
-                                className="w-3.5 h-3.5"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                                />
-                              </svg>
-                            </div>
-                          </>
-                        ) : (
-                          /* 未登録の空コマ */
-                          <div className="w-full h-full flex flex-col items-center justify-center text-slate-300 dark:text-slate-600 group-hover:text-emerald-500 dark:group-hover:text-emerald-400 transition-colors py-4">
-                            <span className="text-xl font-light leading-none mb-1">
-                              ＋
-                            </span>
-                            <span className="text-[11px] font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                              登録
-                            </span>
-                          </div>
-                        )}
-                      </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
                     );
                   })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* 授業登録モーダル */}
+            {editingSlot && (
+              <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4">
+                  <h3 className="text-lg font-bold text-slate-900">授業・コマ情報の編集</h3>
+                  <p className="text-xs text-slate-500">選択スロット: {editingSlot}</p>
+                  <input
+                    type="text"
+                    value={editingText}
+                    onChange={(e) => setEditingText(e.target.value)}
+                    placeholder="講義名（例: 情報科学演習）"
+                    autoFocus
+                    className="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  />
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingSlot(null)}
+                      className="px-4 py-2 bg-slate-200 text-slate-700 text-xs font-bold rounded-lg hover:bg-slate-300 cursor-pointer"
+                    >
+                      キャンセル
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveTimetableSlot}
+                      className="px-4 py-2 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 shadow cursor-pointer"
+                    >
+                      保存する
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* -------------------------------------------------------------
+            TAB 2: 🎓 履修・卒業ナビAI（文理学部要覧基準 & 副専攻判定）
+        ------------------------------------------------------------- */}
+        {activeTab === 'academic' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* 左側: ステータス設定フォーム */}
+            <div className="bg-white rounded-xl shadow border border-slate-200 p-5 space-y-4">
+              <h2 className="text-lg font-bold text-slate-900 border-b pb-2">履修ステータス設定</h2>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">所属学科</label>
+                <select
+                  value={department}
+                  onChange={(e) => setDepartment(e.target.value)}
+                  className="w-full border border-slate-300 rounded-lg p-2 text-sm font-semibold"
+                >
+                  {CHS_DEPARTMENTS.map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">学年</label>
+                  <select
+                    value={grade}
+                    onChange={(e) => setGrade(Number(e.target.value))}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-sm font-semibold"
+                  >
+                    {[1, 2, 3, 4].map((g) => (
+                      <option key={g} value={g}>{g}年次</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">副専攻/コース</label>
+                  <select
+                    value={selectedMinor}
+                    onChange={(e) => setSelectedMinor(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg p-2 text-sm font-semibold"
+                  >
+                    {CHS_MINORS.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-2">
+                <h3 className="text-xs font-bold text-slate-600">区分別 取得単位数</h3>
+                {[
+                  { key: 'zengaku' as const, label: '全学共通 (必修2)' },
+                  { key: 'sogo' as const, label: '総合教育 (必修12)' },
+                  { key: 'gaikokugo' as const, label: '外国語教育 (必修8~18)' },
+                  { key: 'kisho' as const, label: '基礎教育 (必修5)' },
+                  { key: 'major_req' as const, label: '学科専門必修' },
+                  { key: 'major_opt' as const, label: '学科専門選択' },
+                  { key: 'free_opt' as const, label: '自由選択区分' },
+                ].map((item) => (
+                  <div key={item.key} className="flex justify-between items-center text-xs">
+                    <span className="text-slate-600">{item.label}</span>
+                    <input
+                      type="number"
+                      value={earnedCredits[item.key]}
+                      onChange={(e) => setEarnedCredits({ ...earnedCredits, [item.key]: Number(e.target.value) })}
+                      className="w-16 border border-slate-300 rounded p-1 text-right font-bold"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={runDegreeCheck}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-lg shadow transition-colors cursor-pointer"
+              >
+                🎓 卒業・副専攻AI判定を実行
+              </button>
+            </div>
+
+            {/* 右側: AI判定結果 ＆ 進捗バー */}
+            <div className="lg:col-span-2 space-y-6">
+              {degreeResult ? (
+                <div className="space-y-6">
+                  {/* 全体達成度カード */}
+                  <div className="bg-white rounded-xl shadow border border-slate-200 p-6 space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-lg font-bold text-slate-900">卒業要件達成度 ({degreeResult.department})</h3>
+                      <span className="text-2xl font-black text-emerald-600">{degreeResult.progress_rate}%</span>
+                    </div>
+
+                    {/* 進捗バー */}
+                    <div className="w-full bg-slate-200 rounded-full h-4 overflow-hidden">
+                      <div
+                        className="bg-emerald-500 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${degreeResult.progress_rate}%` }}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 text-center pt-2">
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                        <span className="text-xs text-slate-500">取得済総単位</span>
+                        <div className="text-xl font-bold text-slate-800">{degreeResult.total_earned} / 124 単位</div>
+                      </div>
+                      <div className="bg-amber-50 p-3 rounded-lg border border-amber-200">
+                        <span className="text-xs text-amber-700">残り必要単位数</span>
+                        <div className="text-xl font-bold text-amber-800">{degreeResult.remaining_credits.total} 単位</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* AIアドバイスカード */}
+                  <div className="bg-emerald-900 text-white rounded-xl p-6 shadow-md space-y-3">
+                    <h4 className="font-bold text-emerald-200 text-sm flex items-center gap-2">🤖 AI履修アドバイザーの診断コメント</h4>
+                    <p className="text-sm whitespace-pre-line leading-relaxed text-emerald-50">{degreeResult.ai_advice}</p>
+                  </div>
+
+                  {/* 未充足要件リスト */}
+                  <div className="bg-white rounded-xl shadow border border-slate-200 p-6 space-y-3">
+                    <h4 className="font-bold text-slate-900 text-sm">⚠️ 残り履修が必要な要件</h4>
+                    {degreeResult.missing_requirements.length > 0 ? (
+                      <ul className="space-y-2">
+                        {degreeResult.missing_requirements.map((item: string, idx: number) => (
+                          <li key={idx} className="text-xs bg-red-50 text-red-800 border border-red-200 p-2.5 rounded-lg flex items-center gap-2">
+                            <span>•</span> {item}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-xs text-emerald-600 font-bold">🎉 基本必修要件はすべて達成しています！</p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white rounded-xl shadow border border-slate-200 p-12 text-center space-y-3">
+                  <div className="text-4xl">🎓</div>
+                  <h3 className="font-bold text-slate-800">履修・卒業判定を開始</h3>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    左側のフォームで取得単位数を入力し、「卒業・副専攻AI判定を実行」を押すと、日本大学文理学部の要覧基準に基づき不足単位とAIアドバイスを生成します。
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* -------------------------------------------------------------
+            TAB 3: 🏛 施設営業時間案内AI
+        ------------------------------------------------------------- */}
+        {activeTab === 'facilities' && (
+          <div className="space-y-6">
+            {/* 検索入力 */}
+            <div className="bg-white rounded-xl shadow border border-slate-200 p-6 space-y-4">
+              <h2 className="text-lg font-bold text-slate-900">キャンパス施設 営業時間案内AI</h2>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={facilityQuery}
+                  onChange={(e) => setFacilityQuery(e.target.value)}
+                  placeholder="例: 図書館, ラーニングコモンズ, 土曜日, 閉館時間"
+                  className="flex-1 border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => searchFacilities()}
+                  className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-lg shadow cursor-pointer"
+                >
+                  検索
+                </button>
+              </div>
+
+              {/* クイック検索タグ */}
+              <div className="flex flex-wrap gap-2 pt-1">
+                {['図書館', 'ラーニング・コモンズ', 'コンピュータセンター', '教務課窓口', '資料館'].map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => {
+                      setFacilityQuery(tag);
+                      searchFacilities(tag);
+                    }}
+                    className="text-xs bg-slate-100 hover:bg-emerald-100 text-slate-700 hover:text-emerald-800 px-3 py-1.5 rounded-full border border-slate-200 transition-colors cursor-pointer"
+                  >
+                    #{tag}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* AI自然言語応答 */}
+            {facilityAiAnswer && (
+              <div className="bg-slate-900 text-slate-100 rounded-xl p-5 shadow font-mono text-xs whitespace-pre-line leading-relaxed border-l-4 border-emerald-500">
+                {facilityAiAnswer}
+              </div>
+            )}
+
+            {/* 施設カードグリッド */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {facilityData.map((f) => (
+                <div key={f.id} className="bg-white rounded-xl shadow border border-slate-200 p-5 space-y-3">
+                  <div className="flex justify-between items-start">
+                    <span className="text-xs font-bold bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded">
+                      {f.category}
+                    </span>
+                    <span className="text-xs text-slate-500 font-semibold">{f.location}</span>
+                  </div>
+                  <h3 className="font-bold text-base text-slate-900">{f.name}</h3>
+
+                  <div className="space-y-1 text-xs text-slate-600 border-t pt-3">
+                    <div className="flex justify-between">
+                      <span>月〜金 (平日):</span>
+                      <span className="font-bold text-slate-800">{f.weekday}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>土曜日:</span>
+                      <span className="font-bold text-slate-800">{f.saturday}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>日曜・祝日:</span>
+                      <span className="font-bold text-red-600">{f.sunday_holiday}</span>
+                    </div>
+                  </div>
+
+                  <p className="text-xs bg-amber-50 text-amber-900 p-2 rounded border border-amber-200 mt-2">
+                    💡 {f.note}
+                  </p>
                 </div>
               ))}
             </div>
           </div>
-        </div>
+        )}
 
-        {/* 下部補足・フッター */}
-        <div className="mt-6 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-400 dark:text-slate-500 gap-2 px-2">
-          <div>
-            ※ 時間割データはブラウザ（localStorage: enekoma_timetable）に安全に自動保存されます
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setIsNavigatorOpen(true)}
-              className="text-emerald-600 dark:text-emerald-400 font-medium hover:underline"
-            >
-              🧭 キャンパス構内ナビを開く
-            </button>
-            <span>Powered by EneKoma FastAPI & Next.js</span>
-          </div>
-        </div>
-      </main>
-
-      {/* ===== 登録・編集モーダル ===== */}
-      {isModalOpen && selectedSlot && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="modal-title"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/50 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) closeModal();
-          }}
-        >
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden transform transition-all animate-in zoom-in-95 duration-200">
-            {/* モーダルヘッダー */}
-            <div className="px-6 pt-6 pb-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+        {/* -------------------------------------------------------------
+            TAB 4: ⏰ スケジュール・課題管理 ＆ 通知
+        ------------------------------------------------------------- */}
+        {activeTab === 'schedules' && (
+          <div className="space-y-6">
+            {/* カウントダウン・通知バナー */}
+            <div className="bg-gradient-to-r from-emerald-800 to-teal-900 text-white rounded-xl p-6 shadow-md flex flex-wrap justify-between items-center gap-4">
               <div>
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 mb-1 border border-emerald-200/80 dark:border-emerald-800">
-                  <span>📅</span>
-                  <span>
-                    {selectedSlot.dayLabel}曜日 {selectedSlot.period}限
-                  </span>
-                  <span className="opacity-60 font-mono text-[10px]">
-                    ({selectedSlot.time})
-                  </span>
-                </div>
-                <h2
-                  id="modal-title"
-                  className="text-lg font-bold text-slate-900 dark:text-white"
-                >
-                  {timetable[`${selectedSlot.dayKey}-${selectedSlot.period}`]
-                    ? "講義情報の編集"
-                    : "新しいコマの登録"}
-                </h2>
+                <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider">Next Class Countdown</span>
+                <h2 className="text-xl font-bold mt-1">次の授業 [3限: 情報科学演習] 開始まで あと 35分</h2>
               </div>
               <button
                 type="button"
-                onClick={closeModal}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                aria-label="閉じる"
+                onClick={toggleNotification}
+                className={`px-4 py-2.5 rounded-lg font-bold text-xs shadow transition-colors cursor-pointer ${
+                  pushEnabled ? 'bg-amber-500 text-white' : 'bg-white text-slate-800 hover:bg-slate-100'
+                }`}
               >
-                ✕
+                {pushEnabled ? '🔔 Web Push通知: 有効' : '🔕 ブラウザ通知を有効化'}
               </button>
             </div>
 
-            {/* モーダルフォーム */}
-            <form onSubmit={handleSave} className="p-6 space-y-5">
-              {formError && (
-                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs">
-                  {formError}
+            {/* 新規課題追加 ＆ タスク一覧 */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white rounded-xl shadow border border-slate-200 p-5 space-y-4">
+                <h3 className="font-bold text-sm text-slate-900">新しい予定・課題の登録</h3>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">件名</label>
+                  <input
+                    type="text"
+                    value={newTaskTitle}
+                    onChange={(e) => setNewTaskTitle(e.target.value)}
+                    placeholder="例: 卒業論文要旨の提出"
+                    className="w-full border border-slate-300 rounded p-2 text-xs"
+                  />
                 </div>
-              )}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">期日</label>
+                  <input
+                    type="date"
+                    value={newTaskDate}
+                    onChange={(e) => setNewTaskDate(e.target.value)}
+                    className="w-full border border-slate-300 rounded p-2 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">種別</label>
+                  <select
+                    value={newTaskType}
+                    onChange={(e) => setNewTaskType(e.target.value)}
+                    className="w-full border border-slate-300 rounded p-2 text-xs font-semibold"
+                  >
+                    <option value="task">📝 レポート・課題</option>
+                    <option value="exam">✏️ テスト・試験</option>
+                    <option value="event">🎉 イベント・行事</option>
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!newTaskTitle) return;
+                    setTasks([...tasks, {
+                      id: String(Date.now()),
+                      title: newTaskTitle,
+                      date: newTaskDate || '2026-10-20',
+                      period: 'コマ紐付けあり',
+                      course_name: '関連科目',
+                      type: newTaskType,
+                      completed: false
+                    }]);
+                    setNewTaskTitle('');
+                  }}
+                  className="w-full py-2.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 shadow cursor-pointer"
+                >
+                  登録する
+                </button>
+              </div>
 
-              {/* 講義名 */}
+              {/* タスクカード一覧 */}
+              <div className="md:col-span-2 space-y-3">
+                <h3 className="font-bold text-sm text-slate-900">登録済みスケジュール・課題一覧</h3>
+                {tasks.map((t) => (
+                  <div key={t.id} className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex justify-between items-center">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                          t.type === 'exam' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'
+                        }`}>
+                          {t.type === 'exam' ? 'テスト' : '課題締切'}
+                        </span>
+                        <span className="text-xs text-slate-500">{t.date} ({t.period})</span>
+                      </div>
+                      <h4 className="font-bold text-sm text-slate-800">{t.title}</h4>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setTasks(tasks.filter((x) => x.id !== t.id))}
+                      className="text-xs text-red-500 hover:text-red-700 font-bold px-2 py-1 cursor-pointer"
+                    >
+                      削除
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* -------------------------------------------------------------
+            TAB 5: 👤 マイページ ＆ フレンド時間割共有
+        ------------------------------------------------------------- */}
+        {activeTab === 'mypage' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* プロフィール設定 */}
+            <div className="bg-white rounded-xl shadow border border-slate-200 p-6 space-y-4">
+              <h2 className="text-lg font-bold text-slate-900 border-b pb-2">マイプロフィール</h2>
+              <div className="flex items-center gap-4">
+                <div className="w-16 h-16 bg-emerald-600 text-white rounded-full flex items-center justify-center font-black text-2xl shadow">
+                  文
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900">{userName}</h3>
+                  <p className="text-xs text-slate-500">{department} {grade}年次</p>
+                </div>
+              </div>
+
               <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                  講義名 <span className="text-rose-500">*</span>
-                </label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">ユーザー名変更</label>
                 <input
                   type="text"
-                  required
-                  placeholder="例: プログラミング基礎"
-                  value={formSubject}
-                  onChange={(e) => setFormSubject(e.target.value)}
-                  autoFocus
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/90 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+                  value={userName}
+                  onChange={(e) => setUserName(e.target.value)}
+                  className="w-full border border-slate-300 rounded p-2 text-xs"
                 />
               </div>
 
-              {/* 教室番号 */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    教室番号
-                  </label>
-                  <span className="text-[11px] text-slate-400 dark:text-slate-500">
-                    例: 3505, 411, 124, 130
-                  </span>
-                </div>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 text-sm">
-                    📍
-                  </span>
-                  <input
-                    type="text"
-                    placeholder="例: 3505"
-                    value={formRoomNumber}
-                    onChange={(e) => setFormRoomNumber(e.target.value)}
-                    className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/90 text-slate-900 dark:text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
-                  />
-                </div>
-                {/* リアルタイム解析プレビュー */}
-                {formRoomNumber && (
-                  <p className="mt-1.5 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 p-2 rounded-lg border border-emerald-100 dark:border-emerald-900">
-                    場所: {parseRoomDetailLocal(formRoomNumber)}
-                  </p>
-                )}
+              <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-1">
+                <span className="text-xs text-slate-500 font-semibold">あなたのフレンド共有ID</span>
+                <div className="font-mono font-bold text-emerald-800 text-lg">{myShareCode}</div>
+                <p className="text-[11px] text-slate-400">友達にこのコードを教えると、空きコマを相互比較できます。</p>
               </div>
-
-              {/* カラー選択 */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                  コマのカラーテーマ
-                </label>
-                <div className="flex items-center gap-2.5">
-                  {COLOR_THEMES.map((theme) => {
-                    const isSelected = formColorId === theme.id;
-                    return (
-                      <button
-                        key={theme.id}
-                        type="button"
-                        onClick={() => setFormColorId(theme.id)}
-                        className={`w-7 h-7 rounded-full ${theme.accent} transition-transform flex items-center justify-center shadow-xs cursor-pointer ${
-                          isSelected
-                            ? "scale-110 ring-2 ring-offset-2 ring-emerald-500 dark:ring-offset-slate-900"
-                            : "opacity-70 hover:opacity-100 hover:scale-105"
-                        }`}
-                        title={theme.name}
-                      >
-                        {isSelected && (
-                          <span className="text-white text-xs font-bold">✓</span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* ボタンエリア */}
-              <div className="pt-2 flex items-center justify-between gap-3">
-                {timetable[`${selectedSlot.dayKey}-${selectedSlot.period}`] ? (
-                  <button
-                    type="button"
-                    onClick={handleDelete}
-                    disabled={isSubmitting}
-                    className="px-4 py-2.5 rounded-xl text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-xs font-semibold border border-rose-200 dark:border-rose-900 transition-colors disabled:opacity-50 cursor-pointer"
-                  >
-                    削除
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={closeModal}
-                    className="px-4 py-2.5 rounded-xl text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold transition-colors cursor-pointer"
-                  >
-                    キャンセル
-                  </button>
-                )}
-
-                <div className="flex items-center gap-2 ml-auto">
-                  <button
-                    type="button"
-                    onClick={closeModal}
-                    className="hidden sm:inline-block px-4 py-2.5 rounded-xl text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold transition-colors cursor-pointer"
-                  >
-                    閉じる
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold text-xs shadow-md shadow-emerald-500/20 active:scale-95 transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                        <span>解析・保存中...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>保存する</span>
-                        <span>→</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ===== キャンパス構内ナビゲーターAIモーダル ===== */}
-      {isNavigatorOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="navigator-title"
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-950/60 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setIsNavigatorOpen(false);
-          }}
-        >
-          <div className="w-full max-w-xl max-h-[90vh] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col transform transition-all animate-in zoom-in-95 duration-200">
-            {/* ナビヘッダー */}
-            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-gradient-to-r from-emerald-50/50 via-teal-50/30 to-transparent dark:from-emerald-950/30 dark:via-teal-950/20">
-              <div className="flex items-center gap-2.5">
-                <span className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center text-lg shadow-sm">
-                  🧭
-                </span>
-                <div>
-                  <h2
-                    id="navigator-title"
-                    className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2"
-                  >
-                    キャンパス構内ナビゲーターAI
-                    <span className="text-[10px] font-normal px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300">
-                      校舎ナレッジ対応
-                    </span>
-                  </h2>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    教室の場所・トイレ・自販機（商品・価格・決済方法）を案内します
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsNavigatorOpen(false)}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                aria-label="閉じる"
-              >
-                ✕
-              </button>
             </div>
 
-            {/* ナビコンテンツ（チャット＆検索結果） */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
-              {/* クイック質問チップス */}
-              <div>
-                <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">
-                  ワンタップで質問・検索
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    "3505はどこ？",
-                    "411教室",
-                    "124教室",
-                    "レッドブル",
-                    "モンスター",
-                    "100円以下",
-                    "PayPay使える自販機",
-                    "クレカ使える自販機",
-                    "給水所どこ？",
-                    "3号館のトイレ",
-                    "ゴミ箱の場所",
-                  ].map((chip) => (
-                    <button
-                      key={chip}
-                      type="button"
-                      onClick={() => handleNavigatorSubmit(chip)}
-                      className="px-2.5 py-1 rounded-lg text-xs bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 dark:bg-slate-800 dark:hover:bg-emerald-950/50 dark:hover:text-emerald-300 text-slate-700 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700/60 transition-colors cursor-pointer"
-                    >
-                      {chip}
-                    </button>
-                  ))}
-                </div>
+            {/* フレンド時間割比較 */}
+            <div className="bg-white rounded-xl shadow border border-slate-200 p-6 space-y-4">
+              <h2 className="text-lg font-bold text-slate-900 border-b pb-2">フレンド時間割・空きコマ比較</h2>
+              <p className="text-xs text-slate-500">友達の共有IDを入力して時間割の空き状況を比較します。</p>
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={friendCodeInput}
+                  onChange={(e) => setFriendCodeInput(e.target.value)}
+                  placeholder="例: ENE-1001"
+                  className="flex-1 border border-slate-300 rounded p-2 text-xs font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={compareFriend}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded shadow cursor-pointer"
+                >
+                  照合・比較
+                </button>
               </div>
 
-              {/* チャット履歴 */}
-              {navHistory.length === 0 ? (
-                <div className="p-6 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-dashed border-slate-200 dark:border-slate-700/60 text-center">
-                  <div className="text-3xl mb-2">🎓</div>
-                  <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-1">
-                    何でも聞いてください！
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto leading-relaxed">
-                    「3505教室はどこ？」「レッドブルはどこで買える？」「SuicaやPayPay使える？」「給水所は？」など、構内の設備を正確にご案内します。
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {navHistory.map((item, idx) => (
-                    <div
-                      key={idx}
-                      className="space-y-2 animate-in fade-in duration-200"
-                    >
-                      {/* ユーザーの質問 */}
-                      <div className="flex justify-end">
-                        <div className="max-w-[85%] px-3.5 py-2 rounded-2xl rounded-tr-sm bg-emerald-600 text-white text-xs sm:text-sm font-medium shadow-xs">
-                          {item.q}
-                        </div>
-                      </div>
-
-                      {/* AIの回答 */}
-                      <div className="flex justify-start">
-                        <div className="max-w-[95%] p-3.5 sm:p-4 rounded-2xl rounded-tl-sm bg-slate-100 dark:bg-slate-800 border border-slate-200/70 dark:border-slate-700/70 text-slate-800 dark:text-slate-200 text-xs sm:text-sm leading-relaxed whitespace-pre-line shadow-xs">
-                          {item.a}
-                          <div className="mt-2 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-[10px] text-slate-400">
-                            <span>校舎ナレッジベース照会</span>
-                            <span>{item.time}</span>
-                          </div>
-                        </div>
-                      </div>
+              {friendComparison && (
+                <div className="space-y-3 pt-2">
+                  <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-lg">
+                    <span className="text-xs text-emerald-800 font-bold">比較対象: {friendComparison.friend_name}</span>
+                    <div className="text-sm font-black text-emerald-900 mt-1">
+                      ✨ 空きコマ一致: 全 {friendComparison.common_free_count} コマ
                     </div>
-                  ))}
+                  </div>
+
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {friendComparison.common_free_slots.map((slot, idx) => (
+                      <div key={idx} className="text-xs bg-slate-50 p-2 rounded border border-slate-200 flex justify-between">
+                        <span className="font-bold text-slate-700">{slot.day} {slot.period}</span>
+                        <span className="text-emerald-600 font-semibold">互いに空きコマ（ラーニング・コモンズ利用可）</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
-
-            {/* ナビ入力エリア */}
-            <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleNavigatorSubmit();
-                }}
-                className="flex items-center gap-2"
-              >
-                <div className="relative flex-1">
-                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 text-sm">
-                    🔍
-                  </span>
-                  <input
-                    type="text"
-                    placeholder="質問を入力（例: 3505 / レッドブル / 給水所 / 100円）"
-                    value={navQuery}
-                    onChange={(e) => setNavQuery(e.target.value)}
-                    className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white dark:focus:bg-slate-800 transition-all"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={isNavSearching || !navQuery.trim()}
-                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold text-xs shadow-md shadow-emerald-500/20 active:scale-95 transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-                >
-                  {isNavSearching ? (
-                    <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                  ) : (
-                    <>
-                      <span>送信</span>
-                      <span>➤</span>
-                    </>
-                  )}
-                </button>
-              </form>
-            </div>
           </div>
-        </div>
-      )}
+        )}
+
+      </main>
     </div>
   );
 }

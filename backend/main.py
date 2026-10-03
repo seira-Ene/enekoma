@@ -260,98 +260,13 @@ def degree_check(req: DegreeCheckRequest):
 # ==========================================
 # 3. 講義データベース & 空き教室判定 API
 # ==========================================
-# 添付資料（物理、生命、化学、情報科学、数、国文、史、哲、地球科、体育、心理、地理、教育、社会福祉、社会、中国語中国文化、英文、基礎教育、外国語、教職等）に基づく講義データ
-CHS_LECTURE_DATABASE = [
-    # 月曜日
-    {"day": "月", "period": 1, "name": "細胞生物学1", "teacher": "安原 徳子", "room": "3306", "department": "生命科学科"},
-    {"day": "月", "period": 1, "name": "発達と学習", "teacher": "大森 馨子", "room": "411", "department": "教育学科/教職"},
-    {"day": "月", "period": 1, "name": "日本文学入門", "teacher": "小林 茂美", "room": "122", "department": "国文学科"},
-    {"day": "月", "period": 1, "name": "英語1（オーラル）", "teacher": "スミス J", "room": "3203", "department": "外国語教育科目"},
-    {"day": "月", "period": 1, "name": "自然地理学の基礎", "teacher": "高橋 和博", "room": "3401", "department": "地理学科"},
-    {"day": "月", "period": 2, "name": "力学2", "teacher": "玉岡 幸太郎", "room": "3403", "department": "物理学科"},
-    {"day": "月", "period": 2, "name": "量子力学1", "teacher": "山本 大輔", "room": "3403", "department": "物理学科"},
-    {"day": "月", "period": 2, "name": "心理学実験", "teacher": "佐藤 健一", "room": "421", "department": "心理学科"},
-    {"day": "月", "period": 2, "name": "史学概論", "teacher": "鈴木 孝治", "room": "131", "department": "史学科"},
-    {"day": "月", "period": 2, "name": "中国社会論", "teacher": "張 偉", "room": "3302", "department": "中国語中国文化学科"},
-    {"day": "月", "period": 3, "name": "教育原論", "teacher": "原 圭寛", "room": "431", "department": "教育学科/教職"},
-    {"day": "月", "period": 3, "name": "固体地球科学基礎実験", "teacher": "田中 秀樹", "room": "3506", "department": "地球科学科"},
-    {"day": "月", "period": 3, "name": "英文法", "teacher": "ジョンソン M", "room": "124", "department": "英文学科"},
-    {"day": "月", "period": 3, "name": "ドイツ語1", "teacher": "ミュラー K", "room": "3205", "department": "外国語教育科目"},
-    {"day": "月", "period": 4, "name": "基礎物理実験A", "teacher": "上岡 隼人", "room": "125", "department": "物理学科"},
-    {"day": "月", "period": 4, "name": "社会学史", "teacher": "中村 陽一", "room": "441", "department": "社会学科"},
-    {"day": "月", "period": 4, "name": "運動生理学", "teacher": "渡辺 学", "room": "3206", "department": "体育学科"},
-    {"day": "月", "period": 5, "name": "情報ネットワーク論", "teacher": "伊藤 賢治", "room": "3304", "department": "情報科学科"},
-
-    # 火曜日
-    {"day": "火", "period": 1, "name": "生徒指導・進路指導論", "teacher": "土屋 弥生", "room": "3500", "department": "教育学科/教職"},
-    {"day": "火", "period": 1, "name": "古文書学", "teacher": "加藤 秀雄", "room": "132", "department": "史学科"},
-    {"day": "火", "period": 1, "name": "地球科学概論", "teacher": "小林 誠", "room": "3402", "department": "地球科学科"},
-    {"day": "火", "period": 2, "name": "特別支援教育概論", "teacher": "田部 絢子", "room": "3506", "department": "教育学科/教職"},
-    {"day": "火", "period": 2, "name": "データ構造とアルゴリズム", "teacher": "森田 浩司", "room": "3305", "department": "情報科学科"},
-    {"day": "火", "period": 2, "name": "哲学基礎講義", "teacher": "吉田 聡", "room": "412", "department": "哲学科"},
-    {"day": "火", "period": 3, "name": "物理数学1", "teacher": "千葉 剛", "room": "3404", "department": "物理学科"},
-    {"day": "火", "period": 3, "name": "教育課程論", "teacher": "野内 頼一", "room": "131", "department": "教育学科/教職"},
-    {"day": "火", "period": 3, "name": "ソーシャルワーク演習", "teacher": "松本 恵子", "room": "422", "department": "社会福祉学科"},
-    {"day": "火", "period": 4, "name": "現代家族論", "teacher": "斉藤 直子", "room": "3204", "department": "社会学科"},
-    {"day": "火", "period": 4, "name": "スポーツバイオメカニクス", "teacher": "木村 剛", "room": "3303", "department": "体育学科"},
-    {"day": "火", "period": 5, "name": "フランス語初級", "teacher": "デュポン P", "room": "135", "department": "外国語教育科目"},
-
-    # 水曜日
-    {"day": "水", "period": 1, "name": "基礎線形代数1", "teacher": "柳田 昌宏", "room": "3302", "department": "数学科"},
-    {"day": "水", "period": 1, "name": "アカデミックICT基礎", "teacher": "清水 達也", "room": "3401", "department": "基礎教育科目"},
-    {"day": "水", "period": 1, "name": "中国語1", "teacher": "李 芳", "room": "123", "department": "外国語教育科目"},
-    {"day": "水", "period": 2, "name": "教育相談", "teacher": "西本 和月", "room": "3305", "department": "教育学科/教職"},
-    {"day": "水", "period": 2, "name": "地形学", "teacher": "宮崎 慎一", "room": "3403", "department": "地理学科"},
-    {"day": "水", "period": 2, "name": "障害者福祉施策", "teacher": "井上 敏", "room": "411", "department": "社会福祉学科"},
-    {"day": "水", "period": 3, "name": "情報理論1", "teacher": "古市 茂", "room": "3308", "department": "情報科学科"},
-    {"day": "水", "period": 3, "name": "アメリカ文学史", "teacher": "ベーカー R", "room": "126", "department": "英文学科"},
-    {"day": "水", "period": 3, "name": "日本語学入門", "teacher": "橋本 健", "room": "130", "department": "国文学科"},
-    {"day": "水", "period": 4, "name": "地震学", "teacher": "岡田 浩一", "room": "3500", "department": "地球科学科"},
-    {"day": "水", "period": 4, "name": "認知心理学特講", "teacher": "西村 誠司", "room": "432", "department": "心理学科"},
-    {"day": "水", "period": 5, "name": "スペイン語会話", "teacher": "ガルシア M", "room": "3203", "department": "外国語教育科目"},
-
-    # 木曜日
-    {"day": "木", "period": 1, "name": "道徳教育の理論と方法", "teacher": "河野 桃子", "room": "3305", "department": "教育学科/教職"},
-    {"day": "木", "period": 1, "name": "有機化学基礎", "teacher": "竹内 亮", "room": "3402", "department": "化学科"},
-    {"day": "木", "period": 2, "name": "データベース論", "teacher": "杉本 雅弘", "room": "3306", "department": "情報科学科"},
-    {"day": "木", "period": 2, "name": "都市地理学", "teacher": "野村 貴行", "room": "3404", "department": "地理学科"},
-    {"day": "木", "period": 2, "name": "東洋史特講", "teacher": "島田 英樹", "room": "131", "department": "史学科"},
-    {"day": "木", "period": 3, "name": "教育原論", "teacher": "小野 雅章", "room": "3303", "department": "教育学科/教職"},
-    {"day": "木", "period": 3, "name": "気圏科学実習", "teacher": "大野 健太", "room": "3506", "department": "地球科学科"},
-    {"day": "木", "period": 3, "name": "韓国・朝鮮語1", "teacher": "金 秀賢", "room": "124", "department": "外国語教育科目"},
-    {"day": "木", "period": 4, "name": "電磁気学3", "teacher": "鈴木 優樹", "room": "3401", "department": "物理学科"},
-    {"day": "木", "period": 4, "name": "マス・コミュニケーション論", "teacher": "藤田 剛", "room": "442", "department": "社会学科"},
-    {"day": "木", "period": 5, "name": "ロシア語初級", "teacher": "イワノフ D", "room": "127A", "department": "外国語教育科目"},
-
-    # 金曜日
-    {"day": "金", "period": 1, "name": "微分・積分1", "teacher": "石部 正", "room": "412", "department": "数学科"},
-    {"day": "金", "period": 1, "name": "近代文学研究", "teacher": "安田 正人", "room": "122", "department": "国文学科"},
-    {"day": "金", "period": 1, "name": "英語プレゼンテーション", "teacher": "クラーク S", "room": "3204", "department": "外国語教育科目"},
-    {"day": "金", "period": 2, "name": "教育原論", "teacher": "佐野 良介", "room": "3204", "department": "教育学科/教職"},
-    {"day": "金", "period": 2, "name": "健康・スポーツ教育実習", "teacher": "本田 孝文", "room": "体育館", "department": "基礎教育科目/体育"},
-    {"day": "金", "period": 2, "name": "心理調査法実習", "teacher": "工藤 由美", "room": "421", "department": "心理学科"},
-    {"day": "金", "period": 3, "name": "Webプログラミング", "teacher": "藤本 一平", "room": "3308", "department": "情報科学科"},
-    {"day": "金", "period": 3, "name": "倫理学概論", "teacher": "中川 徹", "room": "132", "department": "哲学科"},
-    {"day": "金", "period": 3, "name": "高齢者福祉論", "teacher": "西川 和恵", "room": "431", "department": "社会福祉学科"},
-    {"day": "金", "period": 4, "name": "地理情報科学(GIS)", "teacher": "山崎 俊", "room": "3403", "department": "地理学科"},
-    {"day": "金", "period": 4, "name": "同位体地球科学", "teacher": "池田 雅之", "room": "3500", "department": "地球科学科"},
-    {"day": "金", "period": 5, "name": "中国語スピーキング", "teacher": "王 俊", "room": "125", "department": "中国語中国文化学科"},
-
-    # 土曜日
-    {"day": "土", "period": 1, "name": "教職総合演習", "teacher": "教職担当班", "room": "411", "department": "教職コース"},
-    {"day": "土", "period": 2, "name": "学校図書館メディアの構成", "teacher": "図書館学担当", "room": "3203", "department": "司書教諭コース"},
-    {"day": "土", "period": 3, "name": "博物館展示論", "teacher": "学芸員担当", "room": "3302", "department": "学芸員コース"},
-
-    # 集中講義（不定期・実習・オンデマンド）
-    {"day": "集中", "period": 0, "name": "データサイエンスの世界", "teacher": "オンデマンド", "room": "遠隔", "department": "情報科学科/副専攻"},
-    {"day": "集中", "period": 0, "name": "ヨーロッパの教育思想", "teacher": "横田 みどり", "room": "3402", "department": "教育学科"},
-    {"day": "集中", "period": 0, "name": "野外教育論(含実習)", "teacher": "西島 大祐", "room": "学外", "department": "体育学科"},
-    {"day": "集中", "period": 0, "name": "恐竜学", "teacher": "藤原 慎一", "room": "3410", "department": "地球科学科"},
-    {"day": "集中", "period": 0, "name": "キャリアデザイン特講", "teacher": "峯岸 久枝", "room": "学内3500", "department": "全学科共通"},
-    {"day": "集中", "period": 0, "name": "教育実習事前・事後指導", "teacher": "教職指導委員会", "room": "131", "department": "教職コース"},
-    {"day": "集中", "period": 0, "name": "博物館実習", "teacher": "資料館担当教授", "room": "8号館資料館", "department": "学芸員コース"},
-    {"day": "集中", "period": 0, "name": "野外調査法（含実習）", "teacher": "地理学科スタッフ", "room": "学外巡検", "department": "地理学科"}
-]
+try:
+    from chs_courses import CHS_LECTURE_DATABASE
+except ImportError:
+    try:
+        from backend.chs_courses import CHS_LECTURE_DATABASE
+    except ImportError:
+        CHS_LECTURE_DATABASE = []
 
 # キャンパスの主要教室一覧
 ALL_CAMPUS_ROOMS = [

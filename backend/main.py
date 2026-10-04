@@ -5,6 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import re
 
+try:
+    from chs_courses import CHS_LECTURE_DATABASE
+except ImportError:
+    CHS_LECTURE_DATABASE = []
+
 app = FastAPI(
     title="EneKoma Campus Navigator API",
     version="2.1.0",
@@ -217,6 +222,19 @@ def degree_check(req: DegreeCheckRequest):
     if rem_major_opt > 0:
         missing_items.append(f"学科専門選択: 残り{rem_major_opt}単位")
         
+    # 情報科学科の専門必修・卒業研究要件判定
+    if req.department == "情報科学科":
+        cs_required = [
+            "基礎微分積分1", "基礎微分積分2", "線形代数1", "線形代数2",
+            "基礎プログラミング1", "基礎プログラミング2", "情報科学実習1", "情報科学実習2",
+            "データ構造", "アルゴリズム", "情報理論1", "情報科学研究1", "情報科学研究2"
+        ]
+        missing_cs = [c for c in cs_required if not any(c in t for t in req.taken_courses)]
+        if missing_cs and rem_major_req > 0:
+            missing_items.append(f"情報科学科 必修指定残存: {', '.join(missing_cs[:3])}{' など' if len(missing_cs) > 3 else ''}")
+        if req.grade >= 3:
+            advice.append("🔬 【情報科学科・卒研着手要件】4年次の「情報科学研究1・2（卒業研究）」着手には、3年次終了時までに所定の専門必修単位修得が必須です。データ構造・アルゴリズム・情報科学実習等の未修得科目がないか確認してください。")
+
     progress_rate = round((total_earned / reqs["total"]) * 100, 1)
     
     advice = []
@@ -552,30 +570,48 @@ class TimetableItem(BaseModel):
     subject: str
     room_number: str
 
+def get_room_short_label(room: str) -> str:
+    r = room.strip().upper()
+    if not r:
+        return "教室未指定"
+    if r == "411": return "4号館411(男子側)"
+    if r == "412": return "4号館412(女子側)"
+    if r == "421": return "4号館421(男子側)"
+    if r == "422": return "4号館422(女子側)"
+    if r == "431": return "4号館431(男子側)"
+    if r == "432": return "4号館432(女子側)"
+    if r == "441": return "4号館441(男子側)"
+    if r == "442": return "4号館442(男子側)"
+    if r == "443": return "4号館443(女子側)"
+    if r == "444": return "4号館444(女子側)"
+    m3 = re.match(r"^3([1-5])(\d{2})$", r)
+    if m3:
+        fl = m3.group(1)
+        sub = int(m3.group(2))
+        side = "男子側" if 1 <= sub <= 5 else "女子側" if 6 <= sub <= 10 else "中央"
+        return f"3号館{fl}{sub:02d}({side})"
+    if r in ["122", "123", "124"]: return f"1号館{r}(左側)"
+    if r in ["125", "126", "127A", "127B"]: return f"1号館{r}(右側)"
+    if r == "130": return "1号館130(正面)"
+    if r in ["131", "132", "133", "134", "138"]: return f"1号館{r}(左側)"
+    if r in ["135", "136", "137A", "137B", "139"]: return f"1号館{r}(右側)"
+    if r == "141": return "1号館141(4F)"
+    if r == "151": return "1号館151(5F)"
+    if r.startswith("1") and len(r) == 3: return f"1号館{r}"
+    if r.startswith("2") and len(r) == 4: return f"2号館{r[1:]}"
+    if "8B" in r or "88" in r:
+        clean = r.replace("88", "8B")
+        return f"8号館{clean.replace('8号館', '')[:4]}"
+    return r[:12]
+
 def parse_room_detail(room: str) -> str:
     r = room.strip().upper()
     if not r:
         return "詳細場所未登録"
-
-    if r in ["122", "123", "124"]:
-        return "1号館2階・階段登って左側（左奥に女子トイレ）"
-    if r in ["125", "126", "127A", "127B"]:
-        return "1号館2階・階段登って右側（右手前に男子トイレ、右奥に女子トイレ）"
-    if r == "130":
-        return "1号館3階・階段登って正面（左奥: 男子トイレ、右奥: 女子トイレ）"
-    if r in ["131", "132", "133", "134", "138"]:
-        return "1号館3階・階段登って左側（左奥に男子トイレ）"
-    if r in ["135", "136", "137A", "137B", "139"]:
-        return "1号館3階・階段登って右側（右奥に女子トイレ）"
-    if r == "141":
-        return "1号館4階・階段登って正面（※4階・5階はトイレなし、2F/3Fを利用）"
-    if r == "151":
-        return "1号館5階・階段登って正面（※4階・5階はトイレなし、2F/3Fを利用）"
-
     if r == "411":
-        return "4号館1階・正面から入って左側（男子トイレ側 / 給水所利用可能）"
+        return "4号館1階・正面入って左側（男子トイレ側 / 給水所利用可能）"
     if r == "412":
-        return "4号館1階・正面から入って右側（女子トイレ側 / 給水所利用可能）"
+        return "4号館1階・正面入って右側（女子トイレ側 / 給水所利用可能）"
     if r == "421":
         return "4号館2階・階段登って左側（男子トイレ側 ※給水所使用不可）"
     if r == "422":
@@ -592,238 +628,455 @@ def parse_room_detail(room: str) -> str:
         return "4号館4階・階段登って左側手前（女子トイレ側・手前 ※給水所使用不可）"
     if r == "444":
         return "4号館4階・階段登って左側奥（女子トイレ側・奥 ※給水所使用不可）"
-
     m3 = re.match(r"^3([1-5])(\d{2})$", r)
     if m3:
-        floor = m3.group(1)
-        sub_num = int(m3.group(2))
-        if 1 <= sub_num <= 5:
-            return f"3号館{floor}階・エスカレーター出て右 / エレベーター出て左（男子トイレ側）"
-        elif 6 <= sub_num <= 10:
-            return f"3号館{floor}階・エスカレーター出て左 / エレベーター出て右（女子トイレ側）"
-        elif sub_num == 0:
-            return f"3号館{floor}階・大教室（フロア中央エリア）"
-        else:
-            return f"3号館{floor}階（3{floor}{sub_num:02d}教室）"
-
+        fl = m3.group(1)
+        sub = int(m3.group(2))
+        if 1 <= sub <= 5:
+            return f"3号館{fl}階・エスカレーター出て右 / エレベーター出て左（男子トイレ側）"
+        elif 6 <= sub <= 10:
+            return f"3号館{fl}階・エスカレーター出て左 / エレベーター出て右（女子トイレ側）"
+        return f"3号館{fl}階（フロア中央エリア）"
+    if r in ["122", "123", "124"]:
+        return "1号館2階・階段登って左側（奥に女子トイレ）"
+    if r in ["125", "126", "127A", "127B"]:
+        return "1号館2階・階段登って右側（手前に男子トイレ、奥に女子トイレ）"
+    if r == "130":
+        return "1号館3階・階段登って正面（左奥に男子トイレ、右奥に女子トイレ）"
+    if r in ["131", "132", "133", "134", "138"]:
+        return "1号館3階・階段登って左側（奥に男子トイレ）"
+    if r in ["135", "136", "137A", "137B", "139"]:
+        return "1号館3階・階段登って右側（奥に女子トイレ）"
+    if r == "141":
+        return "1号館4階・階段登って正面（※4階・5階はトイレなし、2F/3Fを利用）"
+    if r == "151":
+        return "1号館5階・階段登って正面（※4階・5階はトイレなし、2F/3Fを利用）"
     m2 = re.match(r"^2([1-5])(\d{2})$", r)
     if m2:
-        floor = m2.group(1)
-        return f"2号館{floor}階（2号館は自動販売機・ゴミ箱未設置）"
-
-    m1 = re.match(r"^1(\d)(\d)$", r)
-    if m1:
-        floor = m1.group(1)
-        return f"1号館{floor}階"
-
+        fl = m2.group(1)
+        return f"2号館{fl}階（※2号館は自動販売機・ゴミ箱未設置）"
     return f"{room}教室（キャンパス構内）"
 
 @app.post("/api/timetable/parse")
 def parse_timetable_room(item: TimetableItem):
+    short_label = get_room_short_label(item.room_number)
     detail = parse_room_detail(item.room_number)
     return {
         "subject": item.subject,
         "room_number": item.room_number,
+        "short_label": short_label,
         "room_detail": detail
     }
 
 # ==========================================
-# 8. 自販機・構内ナビゲーターチャット（100%保持）
+# 8. 自販機・構内ナビゲーターチャット（校舎ナレッジ完全準拠）
 # ==========================================
-VENDING_MACHINES = [
+VENDING_MACHINES_DB = [
     {
-        "id": "1f_drink",
-        "building": "1号館",
-        "floor": "1階",
-        "type": "飲み物",
-        "location": "正面入口を入って左手側",
-        "payment": ["現金", "交通系IC", "iD", "QUICPay", "楽天Edy", "nanaco", "WAON", "PayPay", "LINE Pay", "メルペイ", "au PAY", "d払い", "WeChat Pay", "Alipay"],
-        "items": [
-            {"name": "コカ・コーラ 500ml", "price": 160},
-            {"name": "綾鷹 525ml", "price": 140},
-            {"name": "アクエリアス 500ml", "price": 150},
-            {"name": "ジョージア ジャパンクラフトマン", "price": 130},
-            {"name": "い・ろ・は・す 540ml", "price": 110},
-            {"name": "爽健美茶 600ml", "price": 140},
-            {"name": "リアルゴールド", "price": 120}
-        ]
-    },
-    {
-        "id": "1f_bread",
-        "building": "1号館",
-        "floor": "1階",
-        "type": "パン・軽食",
-        "location": "飲み物自販機の並び",
-        "payment": ["現金", "交通系IC"],
-        "items": [
-            {"name": "あんパン", "price": 130},
-            {"name": "クリームパン", "price": 130},
-            {"name": "メロンパン", "price": 140},
-            {"name": "チョコデニッシュ", "price": 150},
-            {"name": "カレーパン", "price": 150},
-            {"name": "焼きそばパン", "price": 160}
-        ]
-    },
-    {
-        "id": "3f_drink",
-        "building": "3号館",
-        "floor": "1階",
-        "type": "飲み物",
-        "location": "エレベーターホール横",
-        "payment": ["現金", "交通系IC", "クレジットカード(タッチ決済)", "iD", "QUICPay", "PayPay", "d払い", "au PAY", "楽天ペイ"],
-        "items": [
-            {"name": "モンスターエナジー 355ml", "price": 210},
-            {"name": "レッドブル 250ml", "price": 210},
-            {"name": "サントリー天然水 550ml", "price": 100},
-            {"name": "伊右衛門 600ml", "price": 130},
-            {"name": "クラフトボス ラテ 500ml", "price": 140},
-            {"name": "ポカリスエット 500ml", "price": 150},
-            {"name": "オロナミンC", "price": 120}
-        ]
-    },
-    {
-        "id": "3f_ice",
-        "building": "3号館",
-        "floor": "1階",
-        "type": "アイス",
-        "location": "飲み物自販機横（セブンティーンアイス）",
-        "payment": ["現金", "交通系IC"],
-        "items": [
-            {"name": "チョコチップ", "price": 160},
-            {"name": "クッキー＆クリーム", "price": 170},
-            {"name": "ワッフルコーンバニラ", "price": 170},
-            {"name": "ソーダフロート", "price": 150},
-            {"name": "濃厚いちご", "price": 160}
-        ]
-    },
-    {
-        "id": "4f_drink",
+        "id": "bldg4_1f_suntory",
         "building": "4号館",
         "floor": "1階",
-        "type": "飲み物",
-        "location": "エントランスホール（給水所横）",
-        "payment": ["現金", "交通系IC", "PayPay", "LINE Pay", "d払い"],
+        "brand": "サントリー",
+        "app": "ジハンピ",
+        "location": "4号館 1階 エントランスホール（給水所横）",
+        "payment": "PayPay〇、交通系IC（モバイル）〇、※物理交通系IC直接タッチ×、現金〇",
         "items": [
-            {"name": "お〜いお茶 525ml", "price": 130},
-            {"name": "健康ミネラルむぎ茶 600ml", "price": 130},
-            {"name": "タリーズ バリスタズブラック 390ml", "price": 140},
-            {"name": "充実野菜 200ml", "price": 110},
-            {"name": "エビアン 500ml", "price": 110},
-            {"name": "カルピスウォーター 500ml", "price": 140}
+            {"name": "サントリー天然水", "price": 80, "pos": "上段"},
+            {"name": "ZONe スカッと透明", "price": 80, "pos": "中段"},
+            {"name": "やさしい麦茶", "price": 90, "pos": "上段"},
+            {"name": "マウンテンデュー", "price": 100, "pos": "中段"},
+            {"name": "デカビタC GABA", "price": 100, "pos": "中段"},
+            {"name": "伊右衛門 焙じ茶", "price": 100, "pos": "下段"},
+            {"name": "伊右衛門 緑茶", "price": 110, "pos": "上段/下段"},
+            {"name": "果汁飲料 赤パッケージ", "price": 110, "pos": "下段"},
+            {"name": "リプトン 白の贅沢ミルクティー", "price": 110, "pos": "下段"},
+            {"name": "プレミアムボス", "price": 130, "pos": "下段"},
+            {"name": "amino VITAL", "price": 140, "pos": "上段"},
+            {"name": "PREMIUM GREEN DA・KA・RA マスカット", "price": 150, "pos": "中段"},
+            {"name": "レッドブル", "price": 170, "pos": "中段"},
+        ]
+    },
+    {
+        "id": "bldg3_1f_suntory_white_water",
+        "building": "3号館",
+        "floor": "1階",
+        "brand": "サントリー（白・水メイン）",
+        "app": "ジハンピ",
+        "location": "3号館 1階（食堂側・サントリー白・水メイン）",
+        "payment": "PayPay〇、交通系IC（モバイル）〇、※物理カード直タッチ×、現金〇",
+        "items": [
+            {"name": "サントリー天然水", "price": 80},
+            {"name": "GREEN DA・KA・RA やさしい麦茶 600ml", "price": 90},
+            {"name": "ぷるぷるプリン缶", "price": 100},
+            {"name": "伊右衛門 特茶/焙じ茶", "price": 100, "price_max": 110, "price_display": "100〜110円"},
+            {"name": "リプトン 白の贅沢ミルクティー", "price": 110},
+            {"name": "BOSS各種（ブラック・アイスコーヒー・クラフトボス等）", "price": 90, "price_max": 140, "price_display": "90〜140円"},
+        ]
+    },
+    {
+        "id": "bldg3_1f_suntory_white_sports",
+        "building": "3号館",
+        "floor": "1階",
+        "brand": "サントリー（白・スポーツ/エナジー系）",
+        "app": "ジハンピ",
+        "location": "3号館 1階（食堂側・サントリー白・スポーツ/エナジー系）",
+        "payment": "PayPay〇、交通系IC（モバイル）〇、※物理カード直タッチ×、現金〇",
+        "items": [
+            {"name": "レモン強炭酸水", "price": 90},
+            {"name": "やさしい麦茶", "price": 90},
+            {"name": "レモンスカッシュ", "price": 100},
+            {"name": "アイスティー", "price": 100},
+            {"name": "プリン缶/MATCH", "price": 100},
+            {"name": "デカビタC", "price": 100},
+            {"name": "ダカラ (DAKARA)", "price": 110},
+            {"name": "ポカリスエット/ポカリウォーター", "price": 110, "price_max": 130, "price_display": "110〜130円"},
+            {"name": "MATCH", "price": 120},
+            {"name": "ライムソルト", "price": 120},
+            {"name": "T&S果汁系", "price": 130},
+            {"name": "レッドブル", "price": 170},
+            {"name": "モンスターエナジー各種", "price": 180, "price_max": 190, "price_display": "180〜190円"},
+        ]
+    },
+    {
+        "id": "bldg3_1f_suntory_blue",
+        "building": "3号館",
+        "floor": "1階",
+        "brand": "サントリー（青）",
+        "app": "ジハンピ",
+        "location": "3号館 1階（食堂側・サントリー青）",
+        "payment": "PayPay〇、交通系IC（モバイル）〇、※物理カード直タッチ×、現金〇",
+        "items": [
+            {"name": "ZONe NOPE", "price": 80},
+            {"name": "BOSS いちごミルク/贅沢微糖", "price": 90, "price_max": 100, "price_display": "90〜100円"},
+            {"name": "缶コーヒー微糖/プレミアムボス", "price": 100},
+            {"name": "デカビタC GABA", "price": 100},
+            {"name": "ペプシコーラ生", "price": 100},
+            {"name": "マウンテンデュー", "price": 100},
+            {"name": "塩分補給ドリンク", "price": 120},
+            {"name": "京都レモネード", "price": 140},
+            {"name": "果汁系ドリンク", "price": 140},
+            {"name": "レッドブル", "price": 170},
+        ]
+    },
+    {
+        "id": "bldg3_1f_coca_cola_red",
+        "building": "3号館",
+        "floor": "1階",
+        "brand": "コカ・コーラ（赤）",
+        "app": "Coke ON（Coke ON Pay）",
+        "location": "3号館 1階（食堂側・コカ・コーラ赤自販機）",
+        "payment": "クレジットカードタッチ決済（Visa/Mastercard等）〇、PayPay〇、交通系IC（モバイル）〇、※物理カード直タッチ×、現金〇",
+        "items": [
+            {"name": "ジョージア各種", "price": 90, "price_max": 110, "price_display": "90〜110円"},
+            {"name": "い・ろ・は・す", "price": 100, "price_max": 110, "price_display": "100〜110円"},
+            {"name": "リアルゴールド", "price": 110, "price_max": 120, "price_display": "110〜120円"},
+            {"name": "綾鷹", "price": 110},
+            {"name": "やかんの麦茶", "price": 110},
+            {"name": "アロエ＆白ぶどう", "price": 110},
+            {"name": "紅茶花伝 ミルクティー", "price": 110},
+            {"name": "ファンタ グレープ/ドクターペッパー", "price": 120},
+            {"name": "アクエリアス", "price": 130},
+            {"name": "コカ・コーラ", "price": 140},
         ]
     }
 ]
+
+VENDING_MACHINES = VENDING_MACHINES_DB
 
 class ChatRequest(BaseModel):
     query: str
     history: Optional[List[Dict[str, str]]] = []
 
 def answer_navigator_query(q: str) -> str:
-    query = q.lower()
+    query = q.strip()
+    q_lower = query.lower()
+
+    # 1. 価格帯検索判定（「80円」「100~110円」「100円以下」など）を最優先判定
+    range_match = re.search(r"(\d{2,3})\s*[-~〜]\s*(\d{2,3})\s*円?", query)
+    exact_match = re.search(r"(\d{2,3})\s*円", query)
+    under_match = re.search(r"(\d{2,3})\s*円?\s*(以下|未満)", query)
     
-    # 1. 教室番号検索
-    m_room = re.search(r"(\d{3,4}[a-zA-Z]?)", query)
-    if m_room:
-        room = m_room.group(1).upper()
-        detail = parse_room_detail(room)
-        ans = f"【教室案内: {room}教室】\n{detail}\n\n"
-        if room.startswith("1"):
-            ans += "• トイレ: 1F/2F/3Fにあります（4F・5Fにはトイレがありませんのでご注意ください）。\n• 自販機・ゴミ箱: 1階に設置されています。"
-        elif room.startswith("3"):
-            ans += "• トイレ: 奇数番号(01-05)は男子トイレ側、偶数番号(06-10)は女子トイレ側です。\n• 自販機: 1階エレベーターホール横（電子マネー・クレカタッチ対応、アイス自販機あり）。"
-        elif room.startswith("4"):
-            ans += "• 給水所: 1階のみ冷水機が利用可能です（2F〜4Fは使用不可）。\n• 自販機・ゴミ箱: 1階に設置されています。"
-        elif room.startswith("2"):
-            ans += "• 注意: 2号館内には自動販売機およびゴミ箱は設置されていません。"
-        return ans
+    min_p, max_p = None, None
+    if range_match:
+        min_p = int(range_match.group(1))
+        max_p = int(range_match.group(2))
+    elif under_match:
+        min_p = 0
+        max_p = int(under_match.group(1))
+    elif exact_match:
+        val = int(exact_match.group(1))
+        min_p, max_p = val, val
+    elif any(k in query for k in ["安い", "最安", "格安"]):
+        min_p, max_p = 0, 100
+    elif query.isdigit() and int(query) in [80, 90, 100, 110, 120, 130, 140, 150, 170, 180, 190]:
+        val = int(query)
+        min_p, max_p = val, val
 
-    # 2. 自動販売機・商品・価格・決済
-    if any(k in query for k in ["自販機", "自動販売機", "ジュース", "アイス", "パン", "レッドブル", "モンスター", "水", "お茶", "いくら", "円", "決済", "クレカ", "suica", "paypay"]):
-        found_items = []
-        for vm in VENDING_MACHINES:
+    if min_p is not None and max_p is not None:
+        results_by_vm: Dict[str, List[Dict[str, Any]]] = {}
+        for vm in VENDING_MACHINES_DB:
             for it in vm["items"]:
-                if any(w in it["name"].lower() for w in ["コーラ", "レッドブル", "モンスター", "お茶", "水", "コーヒー", "アイス", "パン", "ラテ"]) and (w in query for w in ["コーラ", "レッドブル", "モンスター", "お茶", "水", "コーヒー", "アイス", "パン", "ラテ"]):
-                    found_items.append((vm, it))
-                elif query in it["name"].lower() or it["name"].lower() in query:
-                    found_items.append((vm, it))
-        
-        if found_items:
-            res = "【自動販売機 商品・価格案内】\n"
-            for vm, it in found_items[:5]:
-                res += f"• **{it['name']}**: {it['price']}円\n  場所: {vm['building']} {vm['floor']}（{vm['location']}）\n  決済方法: {', '.join(vm['payment'])}\n\n"
-            return res.strip()
+                it_min = it["price"]
+                it_max = it.get("price_max", it_min)
+                if not (it_max < min_p or it_min > max_p):
+                    vm_title = f"{vm['building']} {vm['floor']}（{vm['brand']}）"
+                    if vm_title not in results_by_vm:
+                        results_by_vm[vm_title] = []
+                    results_by_vm[vm_title].append(it)
 
-        # 決済方法で探す
-        if any(pay in query for pay in ["クレカ", "クレジットカード", "タッチ決済", "カード"]):
-            return (
-                "【クレジットカード利用可能な自販機】\n"
-                "• **3号館 1階 エレベーターホール横** の自動販売機がクレジットカードのタッチ決済に対応しています。\n"
-                "（他: 交通系IC、iD、QUICPay、PayPay、d払い、au PAY、楽天ペイなども利用可能）"
-            )
+        title = f"【{min_p}〜{max_p}円で買える商品】" if min_p != max_p else f"【{min_p}円で買える商品】"
+        if not results_by_vm:
+            return f"{title}\n該当する商品は見つかりませんでした。"
 
-        if "100円" in query or "安い" in query or "最安" in query:
-            return (
-                "【100円〜お得な商品案内】\n"
-                "• **3号館 1階**: サントリー天然水 550ml (100円)\n"
-                "• **4号館 1階**: エビアン 500ml (110円)、充実野菜 (110円)\n"
-                "• **1号館 1階**: い・ろ・は・す 540ml (110円)"
-            )
+        lines = [title]
+        for vm_title, items in results_by_vm.items():
+            lines.append(f"\n■ {vm_title}:")
+            for it in items:
+                p_str = it.get("price_display", f"{it['price']}円")
+                pos_info = f" ({it['pos']})" if "pos" in it else ""
+                lines.append(f"・{it['name']} ({p_str}){pos_info}")
+        return "\n".join(lines).strip()
 
-        res = "【キャンパス内 自販機設置情報】\n"
-        for vm in VENDING_MACHINES:
-            res += f"■ **{vm['building']} {vm['floor']}** ({vm['type']})\n"
-            res += f"  場所: {vm['location']}\n"
-            res += f"  決済: {', '.join(vm['payment'][:5])}など\n"
-            res += f"  主な商品: {', '.join([i['name'] for i in vm['items'][:3]])}\n\n"
-        res += "※2号館には自販機・ゴミ箱がありませんのでご注意ください。"
-        return res.strip()
-
-    # 3. 給水所
-    if any(k in query for k in ["給水", "水飲み", "冷水機", "ウォーターサーバー"]):
+    # 2. 給水所・ゴミ箱・トイレ・決済等の設備検索
+    if any(k in q_lower for k in ["給水", "冷水機", "ウォーターサーバー"]):
         return (
             "【構内 給水所（冷水機）のご案内】\n"
-            "• **4号館 1階 エントランスホール**: 給水所（冷水機）が設置されており、マイボトルへの給水が可能です！\n"
+            "・**4号館 1階 エントランスホールのみ使用可能**！マイボトルへの給水が可能です。\n"
             "⚠️ 注意: 4号館の2階・3階・4階の給水所は現在使用不可となっています。1階をご利用ください。"
         )
 
-    # 4. トイレ
-    if any(k in query for k in ["トイレ", "お手洗い", "化粧室", "便所"]):
-        return (
-            "【トイレ位置関係ガイド】\n"
-            "• **1号館**:\n"
-            "  - 1階: 左手前に女子、左奥に男子、右手前奥に男子\n"
-            "  - 2階: 左奥に女子、右手前に男子、右奥に女子\n"
-            "  - 3階: 左奥に男子、右奥に女子\n"
-            "  - ⚠️ **4階・5階にはトイレがありません**（2F/3Fをご利用ください）\n"
-            "• **3号館**: 各階共通\n"
-            "  - 奇数教室側(01〜05): 男子トイレ側（エスカレーター出て右 / EV出て左）\n"
-            "  - 偶数教室側(06〜10): 女子トイレ側（エスカレーター出て左 / EV出て右）\n"
-            "• **4号館**: 1階〜4階\n"
-            "  - 1階: 正面入って左側が男子、右側が女子\n"
-            "  - 2階〜4階: 左右に男子・女子が分かれて配置されています。"
-        )
-
-    # 5. ゴミ箱
-    if any(k in query for k in ["ゴミ箱", "ごみ箱", "ゴミ", "廃棄"]):
+    if any(k in q_lower for k in ["ゴミ箱", "ごみ箱", "ゴミ", "ごみ"]):
         return (
             "【ゴミ箱の設置場所】\n"
-            "• **1号館 1階**: 自販機横に設置\n"
-            "• **3号館 1階**: エレベーターホール自販機コーナー横に分別ゴミ箱設置\n"
-            "• **4号館 1階**: エントランスホール自販機横に設置\n"
-            "⚠️ **2号館にはゴミ箱が設置されていません**。他号館のゴミ箱をご利用ください。"
+            "・**1号館**：各階に設置\n"
+            "・**3号館**：各階に設置\n"
+            "・**4号館**：各階トイレ前に設置\n"
+            "⚠️ 注意: **2号館内にはゴミ箱および自動販売機は設置されていません**。他号館をご利用ください。"
         )
 
-    # デフォルト応答
+    if any(k in q_lower for k in ["トイレ", "お手洗い", "化粧室", "便所"]):
+        return (
+            "【トイレ位置関係ガイド】\n"
+            "■ **1号館**:\n"
+            "・1階: 正面入って左手前＝女子トイレ、左奥＝男子トイレ、右手前奥＝男子トイレ\n"
+            "・2階: 左奥＝女子トイレ、右手前＝男子トイレ、右奥＝女子トイレ\n"
+            "・3階: 左奥＝男子トイレ、右奥＝女子トイレ\n"
+            "⚠️ **4階・5階にはトイレがありません**（2階または3階をご利用ください）\n\n"
+            "■ **3号館（全階共通）**:\n"
+            "・下2桁 `01〜05`: **男子トイレ側**（エスカレーター出て右 / エレベーター出て左）\n"
+            "・下2桁 `06〜10`: **女子トイレ側**（エスカレーター出て左 / エレベーター出て右）\n\n"
+            "■ **4号館**:\n"
+            "・1階: 左側＝男子トイレ、右側＝女子トイレ\n"
+            "・2階: 左側＝男子トイレ、右側＝女子トイレ\n"
+            "・3階: 右側＝男子トイレ、左側＝女子トイレ\n"
+            "・4階: 右側（手前442/奥441）＝男子側、左側（手前443/奥444）＝女子側\n"
+            "※4号館は各階トイレ前にゴミ箱が設置されています。"
+        )
+
+    if any(k in q_lower for k in ["クレカ", "クレジットカード", "タッチ決済", "コンタクトレス", "カード"]):
+        return (
+            "【クレジットカード（タッチ決済）が使える自販機】\n"
+            "・**場所**: 3号館 1階（食堂側・コカ・コーラ赤自販機）\n"
+            "・**決済アプリ**: Coke ON（Coke ON Pay）\n"
+            "・**対応カード**: Visa、Mastercard 等のクレジットカードタッチ決済に対応しています！\n"
+            "※サントリー自販機は物理カード直タッチ不可ですが、ジハンピ連携のPayPay等で決済可能です。"
+        )
+
+    if any(k in q_lower for k in ["paypay", "ペイペイ", "交通系ic", "suica", "pasmo", "ジハンピ", "coke on", "決済", "支払い"]):
+        return (
+            "【自動販売機の決済方法・対応アプリ一覧】\n"
+            "■ **4号館 1階 サントリー自販機**:\n"
+            "・アプリ: ジハンピ\n"
+            "・決済: PayPay〇、交通系IC（モバイル）〇、※物理カード直タッチ×（現金〇）\n\n"
+            "■ **3号館 1階 サントリー自販機（計3台: 白水メイン、白スポーツ/エナジー、青）**:\n"
+            "・アプリ: ジハンピ\n"
+            "・決済: PayPay〇、交通系IC（モバイル）〇、※物理カード直タッチ×（現金〇）\n\n"
+            "■ **3号館 1階 コカ・コーラ赤自販機**:\n"
+            "・アプリ: Coke ON（Coke ON Pay）\n"
+            "・決済: クレジットカードタッチ決済（Visa/Mastercard）〇、PayPay〇、交通系IC（モバイル）〇、※物理交通系IC直タッチ×（現金〇）"
+        )
+
+    # 3. 教室番号直接入力判定（「421」「3505」「124」等の直打ち・質問）
+    m_room = re.search(r"([1-4]\d{2,3}[a-zA-Z]?)", query)
+    if m_room:
+        r = m_room.group(1).upper()
+        short_label = get_room_short_label(r)
+        
+        # 4号館
+        if r == "411":
+            detail = "4号館411教室は 4号館 1階 です。正面を入って左側（男子トイレ側）にあります。給水所（冷水機）が利用可能です。トイレ前にゴミ箱が設置されています。"
+        elif r == "412":
+            detail = "4号館412教室は 4号館 1階 です。正面を入って右側（女子トイレ側）にあります。給水所（冷水機）が利用可能です。トイレ前にゴミ箱が設置されています。"
+        elif r == "421":
+            detail = "4号館421教室は 4号館 2階 です。階段を登って左側（男子トイレ側）にあります。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）"
+        elif r == "422":
+            detail = "4号館422教室は 4号館 2階 です。階段を登って右側（女子トイレ側）にあります。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）"
+        elif r == "431":
+            detail = "4号館431教室は 4号館 3階 です。階段を登って右側（男子トイレ側）にあります。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）"
+        elif r == "432":
+            detail = "4号館432教室は 4号館 3階 です。階段を登って左側（女子トイレ側）にあります。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）"
+        elif r == "441":
+            detail = "4号館441教室は 4号館 4階 です。階段を登って右側奥（男子トイレ側・奥）にあります。手前が442教室です。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）"
+        elif r == "442":
+            detail = "4号館442教室は 4号館 4階 です。階段を登って右側手前（男子トイレ側・手前）にあります。奥が441教室です。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）"
+        elif r == "443":
+            detail = "4号館443教室は 4号館 4階 です。階段を登って左側手前（女子トイレ側・手前）にあります。奥が444教室です。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）"
+        elif r == "444":
+            detail = "4号館444教室は 4号館 4階 です。階段を登って左側奥（女子トイレ側・奥）にあります。手前が443教室です。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）"
+        elif r.startswith("3") and len(r) == 4:
+            fl = r[1]
+            sub = int(r[2:])
+            sub_str = r[1:]
+            if 1 <= sub <= 5:
+                detail = f"3号館{sub_str}教室は 3号館 {fl}階 です。エスカレーターを出て右側（エレベーターを出て左側）の 男子トイレ側 にあります。ゴミ箱は各階に設置されています。"
+            elif 6 <= sub <= 10:
+                detail = f"3号館{sub_str}教室は 3号館 {fl}階 です。エスカレーターを出て左側（エレベーターを出て右側）の 女子トイレ側 にあります。ゴミ箱は各階に設置されています。"
+            else:
+                detail = f"3号館{sub_str}教室は 3号館 {fl}階 です。ゴミ箱は各階に設置されています。"
+        elif r in ["122", "123", "124"]:
+            detail = f"1号館{r}教室は 1号館 2階 です。階段を登って左側（奥に女子トイレ）にあります。ゴミ箱は各階に設置されています。"
+        elif r in ["125", "126", "127A", "127B"]:
+            detail = f"1号館{r}教室は 1号館 2階 です。階段を登って右側（手前に男子トイレ、奥に女子トイレ）にあります。ゴミ箱は各階に設置されています。"
+        elif r == "130":
+            detail = "1号館130教室は 1号館 3階 です。階段を登って正面にあります（左奥に男子トイレ、右奥に女子トイレ）。ゴミ箱は各階に設置されています。"
+        elif r in ["131", "132", "133", "134", "138"]:
+            detail = f"1号館{r}教室は 1号館 3階 です。階段を登って左側（奥に男子トイレ）にあります。ゴミ箱は各階に設置されています。"
+        elif r in ["135", "136", "137A", "137B", "139"]:
+            detail = f"1号館{r}教室は 1号館 3階 です。階段を登って右側（奥に女子トイレ）にあります。ゴミ箱は各階に設置されています。"
+        elif r == "141":
+            detail = "1号館141教室は 1号館 4階 です。階段を登って正面にあります。※注意：1号館の4階・5階にはトイレがありませんので、2階または3階のトイレをご利用ください。ゴミ箱は各階に設置されています。"
+        elif r == "151":
+            detail = "1号館151教室は 1号館 5階 です。階段を登って正面にあります。※注意：1号館の4階・5階にはトイレがありませんので、2階または3階のトイレをご利用ください。ゴミ箱は各階に設置されています。"
+        elif r.startswith("2") and len(r) == 4:
+            detail = f"2号館{r}教室は 2号館 {r[1]}階 です。※注意：2号館内には自動販売機およびゴミ箱は設置されていませんので他号館をご利用ください。"
+        else:
+            detail = f"{r}教室はキャンパス構内にあります。詳細は各号館のフロア案内板をご確認ください。"
+
+        return f"表示用：{short_label}\n詳細案内：{detail}"
+
+    # 4. 商品名・ドリンク検索（「コーラ」「レッドブル」「天然水」など）
+    if any(k in q_lower for k in ["コーラ", "ペプシ", "coca", "pepsi"]):
+        return (
+            "【コカ・コーラ（140円）】\n"
+            "場所：3号館 1階（食堂側・コカ・コーラ赤自販機）\n"
+            "決済：Coke ON（PayPay、交通系IC）、クレジットカードタッチ決済\n\n"
+            "【ペプシコーラ生（100円）】\n"
+            "場所：3号館 1階（食堂側・サントリー青自販機）\n"
+            "決済：ジハンピ（PayPay、交通系IC）"
+        )
+
+    if any(k in q_lower for k in ["レッドブル", "red bull", "redbull"]):
+        return (
+            "【レッドブル（170円）】※学内格安！\n"
+            "・4号館 1階（サントリー自販機 中段）/ アプリ：ジハンピ\n"
+            "・3号館 1階（食堂側・白スポーツ/エナジー系自販機）/ アプリ：ジハンピ\n"
+            "・3号館 1階（食堂側・青自販機）/ アプリ：ジハンピ\n"
+            "決済：PayPay〇、交通系IC（モバイル）〇、※物理カード直タッチ×、現金〇"
+        )
+
+    if any(k in q_lower for k in ["天然水", "いろはす", "い・ろ・は・す", "ミネラルウォーター"]) or (q_lower == "水" or "お水" in q_lower):
+        return (
+            "【サントリー天然水（80円）】※学内最安値！\n"
+            "場所：\n"
+            "・4号館 1階（サントリー自販機 上段）\n"
+            "・3号館 1階（食堂側・サントリー白・水メイン自販機）\n"
+            "決済：アプリ「ジハンピ」連携（PayPay、モバイル交通系IC、現金）\n\n"
+            "【い・ろ・は・す（100〜110円）】\n"
+            "場所：3号館 1階（食堂側・コカ・コーラ赤自販機）\n"
+            "決済：Coke ON（PayPay、モバイル交通系IC）、クレジットカードタッチ決済"
+        )
+
+    if any(k in q_lower for k in ["モンスター", "monster", "zone", "ゾーン", "エナジー"]):
+        return (
+            "【エナジードリンク一覧】\n"
+            "■ ZONe スカッと透明 / NOPE（80円）：※激安エナジー！\n"
+            "  ・4号館 1階（スカッと透明 / ジハンピ）\n"
+            "  ・3号館 1階 青自販機（NOPE / ジハンピ）\n"
+            "■ レッドブル（170円）：※コンビニよりお得！\n"
+            "  ・4号館 1階、3号館 1階（白スポーツ、青自販機）\n"
+            "■ モンスターエナジー各種（180〜190円）：\n"
+            "  ・3号館 1階 食堂側（白・スポーツ/エナジー系自販機）"
+        )
+
+    if any(k in q_lower for k in ["麦茶", "緑茶", "お茶", "伊右衛門", "綾鷹", "ほうじ茶", "焙じ茶"]):
+        return (
+            "【お茶・麦茶ラインナップ】\n"
+            "■ やさしい麦茶（90円）：4号館1階（上段）、3号館1階（白水・白スポーツ）\n"
+            "■ サントリー緑茶 伊右衛門（100〜110円）：4号館1階、3号館1階（白水）\n"
+            "■ 綾鷹 / やかんの麦茶（110円）：3号館1階（コカ・コーラ赤自販機・クレカ決済可）\n"
+            "■ 伊右衛門 焙じ茶（100円）：4号館1階、3号館1階"
+        )
+
+    if any(k in q_lower for k in ["コーヒー", "珈琲", "ボス", "boss", "ジョージア", "カフェオレ"]):
+        return (
+            "【コーヒー・カフェ飲料】\n"
+            "■ BOSS各種（90〜140円）：3号館1階（白水、青自販機）、4号館1階（プレミアムボス130円）\n"
+            "■ ジョージア各種（90〜110円）：3号館1階（コカ・コーラ赤自販機）\n"
+            "■ リプトン 白の贅沢ミルクティー（110円）：4号館1階、3号館1階（白水）\n"
+            "■ 紅茶花伝 ミルクティー（110円）：3号館1階（赤自販機）"
+        )
+
+    if any(k in q_lower for k in ["プリン", "プリン缶"]):
+        return (
+            "【ぷるぷるプリン缶（100円）】\n"
+            "場所：3号館 1階 食堂側（サントリー白・水メイン、白・スポーツ系）\n"
+            "決済：アプリ「ジハンピ」連携（PayPay、モバイル交通系IC、現金）"
+        )
+
+    # 5. 講義検索（科目名・教員名）
+    if CHS_LECTURE_DATABASE and len(query) >= 2:
+        user_day = None
+        user_period = None
+        for d in ["月", "火", "水", "木", "金", "土"]:
+            if f"{d}曜" in query or d in query:
+                user_day = d
+                break
+        for p in range(1, 6):
+            if f"{p}限" in query or f"{p}コマ" in query:
+                user_period = p
+                break
+
+        clean_q = re.sub(r"(月|火|水|木|金|土)曜?(日)?", "", query)
+        clean_q = re.sub(r"[1-5]限(目|コマ)?", "", clean_q)
+        clean_q = re.sub(r"(教室|どこ|何限|いつ|教えて|誰|先生|講義|授業)", "", clean_q)
+        clean_q = re.sub(r"^[の\s]+|[の\s]+$", "", clean_q).strip()
+
+        if len(clean_q) >= 2:
+            matches = [
+                c for c in CHS_LECTURE_DATABASE
+                if clean_q.lower() in c.get("name", "").lower() or clean_q.lower() in c.get("teacher", "").lower()
+            ]
+
+            if matches:
+                suggestion = ""
+                if user_day or user_period:
+                    exact = [
+                        c for c in matches
+                        if (not user_day or c["day"] == user_day) and (not user_period or c["period"] == user_period)
+                    ]
+                    if not exact:
+                        best = matches[0]
+                        suggestion = f"⚠️ もしかして {best['day']}曜{best['period']}限 の『{best['name']}』（担当：{best['teacher']} 先生）ですか？\n\n"
+
+                lines = []
+                if suggestion:
+                    lines.append(suggestion)
+                lines.append(f"【講義検索結果: {clean_q}】")
+                for c in matches[:6]:
+                    room_lbl = get_room_short_label(c.get("room", ""))
+                    lines.append(f"・{c['name']}（{c['teacher']}）| {c['day']}曜{c['period']}限 | {room_lbl}")
+                return "\n".join(lines).strip()
+
+    # 6. 定型案内
     return (
         "【キャンパス構内ナビゲーターAI】\n"
-        "教室番号（例: 3402, 411, 124）、トイレ・給水所の場所、自販機の商品・価格・決済方法（クレカ・電子マネー）、ゴミ箱の位置についてお答えできます。\n"
+        "教室番号（3505、421、124等）、自販機商品（コーラ、レッドブル、天然水等）、価格帯（80円、100~110円等）、設備（給水所、ゴミ箱、トイレ、クレカ決済）について直接入力すると即座にご案内します。\n\n"
         "質問例:\n"
-        "• 「3305教室はどこ？」\n"
-        "• 「レッドブルが買える自販機は？」\n"
-        "• 「クレジットカードが使える自販機はある？」\n"
-        "• 「100円で買える水はどこ？」\n"
-        "• 「給水所はどこ？」\n"
-        "• 「1号館のトイレの注意点は？」"
+        "• 「3505」または「421」\n"
+        "• 「コーラ」または「レッドブル」\n"
+        "• 「80円」または「100~110円」\n"
+        "• 「給水所」または「ゴミ箱」\n"
+        "• 「クレカ」または「PayPay」"
     )
 
 @app.post("/api/navigator/chat")

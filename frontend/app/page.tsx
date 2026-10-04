@@ -492,6 +492,230 @@ export default function CampusNavigatorPage() {
   }, [modalTarget, searchQuery]);
 
   // 構内ナビ チャット送信
+  // クライアント側ナビゲーター即時判定（オフライン・フェイルセーフ対応）
+  const getClientNavigatorReply = (rawQ: string): string => {
+    const q = rawQ.trim();
+    const qLower = q.toLowerCase();
+
+    // 1. 価格帯検索
+    const rangeMatch = q.match(/(\d{2,3})\s*[-~〜]\s*(\d{2,3})\s*円?/);
+    const exactMatch = q.match(/(\d{2,3})\s*円/);
+    const underMatch = q.match(/(\d{2,3})\s*円?\s*(以下|未満)/);
+
+    let minP: number | null = null;
+    let maxP: number | null = null;
+    if (rangeMatch) {
+      minP = parseInt(rangeMatch[1], 10);
+      maxP = parseInt(rangeMatch[2], 10);
+    } else if (underMatch) {
+      minP = 0;
+      maxP = parseInt(underMatch[1], 10);
+    } else if (exactMatch) {
+      minP = parseInt(exactMatch[1], 10);
+      maxP = minP;
+    } else if (['安い', '最安', '格安'].some((k) => q.includes(k))) {
+      minP = 0;
+      maxP = 100;
+    } else if (/^\d{2,3}$/.test(q)) {
+      const val = parseInt(q, 10);
+      if ([80, 90, 100, 110, 120, 130, 140, 150, 170, 180, 190].includes(val)) {
+        minP = val;
+        maxP = val;
+      }
+    }
+
+    if (minP !== null && maxP !== null) {
+      if (minP <= 80 && maxP >= 80) {
+        return (
+          `【${minP === maxP ? `${minP}円` : `${minP}〜${maxP}円`}で買える商品】\n\n` +
+          `■ 4号館 1階（サントリー自販機 / ジハンピ）:\n` +
+          `・サントリー天然水 (80円) (上段・最安！)\n` +
+          `・ZONe スカッと透明 (80円) (中段・激安エナジー)\n\n` +
+          `■ 3号館 1階（食堂側・サントリー白・水メイン）:\n` +
+          `・サントリー天然水 (80円)\n\n` +
+          `■ 3号館 1階（食堂側・サントリー青）:\n` +
+          `・ZONe NOPE (80円)`
+        );
+      }
+      return (
+        `【${minP === maxP ? `${minP}円` : `${minP}〜${maxP}円`}で買える商品】\n\n` +
+        `■ 4号館 1階（サントリー / ジハンピ）:\n` +
+        `・やさしい麦茶 (90円)、マウンテンデュー (100円)、デカビタC GABA (100円)、伊右衛門 焙じ茶 (100円)、伊右衛門 緑茶 (110円)、リプトン 白の贅沢ミルクティー (110円)\n\n` +
+        `■ 3号館 1階（サントリー白・青・コカコーラ赤）:\n` +
+        `・ぷるぷるプリン缶 (100円)、レモンスカッシュ (100円)、ペプシコーラ生 (100円)、い・ろ・は・す (100〜110円)、綾鷹 (110円)、リアルゴールド (110〜120円)`
+      );
+    }
+
+    // 2. 設備検索
+    if (['給水', '冷水機', 'ウォーターサーバー'].some((k) => qLower.includes(k))) {
+      return (
+        `【構内 給水所（冷水機）のご案内】\n` +
+        `・**4号館 1階 エントランスホールのみ使用可能**！マイボトルへの給水が可能です。\n` +
+        `⚠️ 注意: 4号館の2階〜4階の給水所は現在使用不可となっています。1階をご利用ください。`
+      );
+    }
+
+    if (['ゴミ箱', 'ごみ箱', 'ゴミ', 'ごみ'].some((k) => qLower.includes(k))) {
+      return (
+        `【ゴミ箱の設置場所】\n` +
+        `・1号館：各階に設置\n` +
+        `・3号館：各階に設置\n` +
+        `・4号館：各階トイレ前に設置\n` +
+        `⚠️ 注意: **2号館内にはゴミ箱および自動販売機は設置されていません**。他号館をご利用ください。`
+      );
+    }
+
+    if (['トイレ', 'お手洗い', '化粧室', '便所'].some((k) => qLower.includes(k))) {
+      return (
+        `【トイレ位置関係ガイド】\n` +
+        `■ 1号館: 1F〜3Fに設置（⚠️4階・5階にはトイレがありませんので2F/3Fをご利用ください）\n` +
+        `■ 3号館: 下2桁01〜05＝男子トイレ側（エスカレーター右/EV左）、06〜10＝女子トイレ側（エスカレーター左/EV右）\n` +
+        `■ 4号館: 各階トイレ前にゴミ箱あり（1F左男子/右女子、2F左男子/右女子、3F右男子/左女子、4F右男子/左女子）`
+      );
+    }
+
+    if (['クレカ', 'クレジットカード', 'タッチ決済', 'コンタクトレス'].some((k) => qLower.includes(k))) {
+      return (
+        `【クレジットカード（タッチ決済）が使える自販機】\n` +
+        `・場所: 3号館 1階（食堂側・コカ・コーラ赤自販機）\n` +
+        `・決済アプリ: Coke ON（Coke ON Pay）\n` +
+        `・対応カード: Visa、Mastercard 等のクレジットカードタッチ決済に対応しています！`
+      );
+    }
+
+    if (['paypay', 'ペイペイ', '交通系ic', 'suica', 'pasmo', 'ジハンピ', 'coke on', '決済', '支払い'].some((k) => qLower.includes(k))) {
+      return (
+        `【自動販売機の決済方法・対応アプリ一覧】\n` +
+        `■ 4号館 1階 サントリー自販機:\n` +
+        `・アプリ: ジハンピ（PayPay〇、交通系ICモバイル〇、※物理カード直タッチ×、現金〇）\n\n` +
+        `■ 3号館 1階 サントリー自販機（計3台）:\n` +
+        `・アプリ: ジハンピ（PayPay〇、交通系ICモバイル〇、※物理カード直タッチ×、現金〇）\n\n` +
+        `■ 3号館 1階 コカ・コーラ赤自販機:\n` +
+        `・アプリ: Coke ON（クレカタッチ決済〇、PayPay〇、交通系ICモバイル〇、現金〇）`
+      );
+    }
+
+    // 3. 教室番号直接入力
+    const roomMatch = q.match(/([1-4]\d{2,3}[a-zA-Z]?)/);
+    if (roomMatch) {
+      const r = roomMatch[1].toUpperCase();
+      let shortLabel = `${r}`;
+      let detail = '';
+
+      if (r === '411') {
+        shortLabel = '4号館411(男子側)';
+        detail = '4号館411教室は 4号館 1階 です。正面を入って左側（男子トイレ側）にあります。給水所（冷水機）が利用可能です。トイレ前にゴミ箱が設置されています。';
+      } else if (r === '412') {
+        shortLabel = '4号館412(女子側)';
+        detail = '4号館412教室は 4号館 1階 です。正面を入って右側（女子トイレ側）にあります。給水所（冷水機）が利用可能です。トイレ前にゴミ箱が設置されています。';
+      } else if (r === '421') {
+        shortLabel = '4号館421(男子側)';
+        detail = '4号館421教室は 4号館 2階 です。階段を登って左側（男子トイレ側）にあります。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）';
+      } else if (r === '422') {
+        shortLabel = '4号館422(女子側)';
+        detail = '4号館422教室は 4号館 2階 です。階段を登って右側（女子トイレ側）にあります。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）';
+      } else if (r === '431') {
+        shortLabel = '4号館431(男子側)';
+        detail = '4号館431教室は 4号館 3階 です。階段を登って右側（男子トイレ側）にあります。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）';
+      } else if (r === '432') {
+        shortLabel = '4号館432(女子側)';
+        detail = '4号館432教室は 4号館 3階 です。階段を登って左側（女子トイレ側）にあります。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）';
+      } else if (r === '441') {
+        shortLabel = '4号館441(男子側)';
+        detail = '4号館441教室は 4号館 4階 です。階段を登って右側奥（男子トイレ側・奥）にあります。手前が442教室です。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）';
+      } else if (r === '442') {
+        shortLabel = '4号館442(男子側)';
+        detail = '4号館442教室は 4号館 4階 です。階段を登って右側手前（男子トイレ側・手前）にあります。奥が441教室です。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）';
+      } else if (r === '443') {
+        shortLabel = '4号館443(女子側)';
+        detail = '4号館443教室は 4号館 4階 です。階段を登って左側手前（女子トイレ側・手前）にあります。奥が444教室です。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）';
+      } else if (r === '444') {
+        shortLabel = '4号館444(女子側)';
+        detail = '4号館444教室は 4号館 4階 です。階段を登って左側奥（女子トイレ側・奥）にあります。手前が443教室です。トイレ前にゴミ箱が設置されています。（※給水所は1階のみ使用可）';
+      } else if (r.startsWith('3') && r.length === 4) {
+        const fl = r[1];
+        const sub = parseInt(r.slice(2), 10);
+        const subStr = r.slice(1);
+        const side = sub >= 1 && sub <= 5 ? '男子側' : sub >= 6 && sub <= 10 ? '女子側' : '中央';
+        shortLabel = `3号館${fl}${sub.toString().padStart(2, '0')}(${side})`;
+        detail = `3号館${subStr}教室は 3号館 ${fl}階 です。エスカレーターを出て${sub <= 5 ? '右側（エレベーターを出て左側）の 男子トイレ側' : '左側（エレベーターを出て右側）の 女子トイレ側'} にあります。ゴミ箱は各階に設置されています。`;
+      } else if (['122', '123', '124'].includes(r)) {
+        shortLabel = `1号館${r}(左側)`;
+        detail = `1号館${r}教室は 1号館 2階 です。階段を登って左側（奥に女子トイレ）にあります。ゴミ箱は各階に設置されています。`;
+      } else if (['125', '126', '127A', '127B'].includes(r)) {
+        shortLabel = `1号館${r}(右側)`;
+        detail = `1号館${r}教室は 1号館 2階 です。階段を登って右側（手前に男子トイレ、奥に女子トイレ）にあります。ゴミ箱は各階に設置されています。`;
+      } else if (r === '130') {
+        shortLabel = '1号館130(正面)';
+        detail = '1号館130教室は 1号館 3階 です。階段を登って正面にあります（左奥に男子トイレ、右奥に女子トイレ）。ゴミ箱は各階に設置されています。';
+      } else if (['131', '132', '133', '134', '138'].includes(r)) {
+        shortLabel = `1号館${r}(左側)`;
+        detail = `1号館${r}教室は 1号館 3階 です。階段を登って左側（奥に男子トイレ）にあります。ゴミ箱は各階に設置されています。`;
+      } else if (['135', '136', '137A', '137B', '139'].includes(r)) {
+        shortLabel = `1号館${r}(右側)`;
+        detail = `1号館${r}教室は 1号館 3階 です。階段を登って右側（奥に女子トイレ）にあります。ゴミ箱は各階に設置されています。`;
+      } else if (r === '141') {
+        shortLabel = '1号館141(4F)';
+        detail = '1号館141教室は 1号館 4階 です。階段を登って正面にあります。※注意：1号館の4階・5階にはトイレがありませんので、2階または3階のトイレをご利用ください。';
+      } else if (r === '151') {
+        shortLabel = '1号館151(5F)';
+        detail = '1号館151教室は 1号館 5階 です。階段を登って正面にあります。※注意：1号館の4階・5階にはトイレがありませんので、2階または3階のトイレをご利用ください。';
+      } else {
+        shortLabel = r.slice(0, 12);
+        detail = `${r}教室はキャンパス構内にあります。詳細は各号館のフロア案内板をご確認ください。`;
+      }
+
+      return `表示用：${shortLabel}\n詳細案内：${detail}`;
+    }
+
+    // 4. 商品名検索
+    if (['コーラ', 'ペプシ', 'coca', 'pepsi'].some((k) => qLower.includes(k))) {
+      return (
+        `【コカ・コーラ（140円）】\n` +
+        `場所：3号館 1階（食堂側・コカ・コーラ赤自販機）\n` +
+        `決済：Coke ON（PayPay、交通系IC）、クレジットカードタッチ決済\n\n` +
+        `【ペプシコーラ生（100円）】\n` +
+        `場所：3号館 1階（食堂側・サントリー青自販機）\n` +
+        `決済：ジハンピ（PayPay、交通系IC）`
+      );
+    }
+
+    if (['レッドブル', 'red bull', 'redbull'].some((k) => qLower.includes(k))) {
+      return (
+        `【レッドブル（170円）】※学内格安！\n` +
+        `・4号館 1階（サントリー自販機 中段）/ アプリ：ジハンピ\n` +
+        `・3号館 1階（食堂側・白スポーツ/エナジー系自販機）/ アプリ：ジハンピ\n` +
+        `・3号館 1階（食堂側・青自販機）/ アプリ：ジハンピ\n` +
+        `決済：PayPay〇、交通系IC（モバイル）〇、※物理カード直タッチ×、現金〇`
+      );
+    }
+
+    if (['天然水', 'いろはす', 'い・ろ・は・す'].some((k) => qLower.includes(k)) || qLower === '水' || qLower.includes('お水')) {
+      return (
+        `【サントリー天然水（80円）】※学内最安値！\n` +
+        `場所：\n` +
+        `・4号館 1階（サントリー自販機 上段）\n` +
+        `・3号館 1階（食堂側・サントリー白・水メイン自販機）\n` +
+        `決済：アプリ「ジハンピ」連携（PayPay、モバイル交通系IC、現金）\n\n` +
+        `【い・ろ・は・す（100〜110円）】\n` +
+        `場所：3号館 1階（食堂側・コカ・コーラ赤自販機）\n` +
+        `決済：Coke ON（PayPay、モバイル交通系IC）、クレジットカードタッチ決済`
+      );
+    }
+
+    return (
+      `【キャンパス構内ナビゲーターAI】\n` +
+      `教室番号（3505、421、124等）、自販機商品（コーラ、レッドブル、天然水等）、価格帯（80円、100~110円等）、設備（給水所、ゴミ箱、トイレ、クレカ決済）について直接入力すると即座にご案内します。\n\n` +
+      `質問例:\n` +
+      `• 「3505」または「421」\n` +
+      `• 「コーラ」または「レッドブル」\n` +
+      `• 「80円」または「100~110円」\n` +
+      `• 「給水所」または「ゴミ箱」\n` +
+      `• 「クレカ」または「PayPay」`
+    );
+  };
+
+  // 構内ナビ チャット送信
   const handleSendNav = async (overrideQ?: string) => {
     const query = overrideQ || navQuery;
     if (!query.trim()) return;
@@ -515,22 +739,70 @@ export default function CampusNavigatorPage() {
       // ignore
     }
 
-    // フォールバック応答
-    let reply = '【キャンパス構内ナビ】\n';
-    if (query.includes('3505') || query.includes('3402')) {
-      reply += '3号館は偶数番号が女子トイレ側、奇数番号が男子トイレ側です。1階に自販機とゴミ箱があります。';
-    } else if (query.includes('レッドブル') || query.includes('自販機')) {
-      reply += '3号館1階および4号館1階の自販機でレッドブル（170円）を購入できます。3号館赤自販機はクレカタッチ対応です。';
-    } else if (query.includes('給水')) {
-      reply += '給水所（冷水機）は4号館1階エントランスのみ使用可能です（2〜4階は使用不可）。';
-    } else {
-      reply += '教室（例: 3402, 411）、トイレ、自販機（レッドブル、クレカ決済、100円商品）、ゴミ箱などをご案内できます。';
-    }
+    // クライアント側フォールバック応答
+    const reply = getClientNavigatorReply(query);
     setNavMessages([...newMessages, { sender: 'ai', text: reply }]);
   };
 
+  // 時間割から単位数を自動計算
+  const handleAutoCalculateCredits = () => {
+    const registeredSubjects = [
+      ...Object.values(timetable).map((c) => c.subject).filter(Boolean),
+      ...intensiveList.map((c) => c.name).filter(Boolean),
+    ];
+
+    let zengaku = 0;
+    let sogo = 0;
+    let gaikokugo = 0;
+    let kisho = 0;
+    let major_req = 0;
+    let major_opt = 0;
+    const free_opt = earnedCredits.free_opt;
+
+    registeredSubjects.forEach((sub) => {
+      const s = sub.trim();
+      if (s.includes('自主創造')) {
+        zengaku += 2;
+      } else if (['英語', '中国語', 'ドイツ語', 'フランス語', 'スペイン語', 'ロシア語', '韓国'].some((l) => s.includes(l))) {
+        gaikokugo += 2;
+      } else if (s.includes('情報リテラシー') || s.includes('健康・スポーツ')) {
+        kisho += 2;
+      } else if (s.includes('総合研究') || s.includes('データサイエンスの世界') || s.includes('キャリアデザイン')) {
+        sogo += 2;
+      } else if (department === '情報科学科') {
+        const csReqList = ['基礎微分積分', '線形代数', '基礎プログラミング', '情報科学実習', 'データ構造', 'アルゴリズム', '情報理論', '情報科学研究'];
+        if (csReqList.some((req) => s.includes(req))) {
+          major_req += 2;
+        } else {
+          major_opt += 2;
+        }
+      } else {
+        major_req += 2;
+      }
+    });
+
+    const newCredits = {
+      zengaku: Math.max(earnedCredits.zengaku, zengaku),
+      sogo: Math.max(earnedCredits.sogo, sogo),
+      gaikokugo: Math.max(earnedCredits.gaikokugo, gaikokugo),
+      kisho: Math.max(earnedCredits.kisho, kisho),
+      major_req: Math.max(earnedCredits.major_req, major_req),
+      major_opt: Math.max(earnedCredits.major_opt, major_opt),
+      free_opt: free_opt,
+    };
+
+    setEarnedCredits(newCredits);
+    runDegreeCheck(newCredits, registeredSubjects);
+  };
+
   // 卒業AI判定
-  const runDegreeCheck = async () => {
+  const runDegreeCheck = async (customCredits?: typeof earnedCredits, customTaken?: string[]) => {
+    const creditsToUse = customCredits || earnedCredits;
+    const takenCourses = customTaken || [
+      ...Object.values(timetable).map((c) => c.subject).filter(Boolean),
+      ...intensiveList.map((c) => c.name).filter(Boolean),
+    ];
+
     try {
       const res = await fetch('/api/academic/degree-check', {
         method: 'POST',
@@ -538,9 +810,9 @@ export default function CampusNavigatorPage() {
         body: JSON.stringify({
           department,
           grade: Number(grade),
-          earned_credits: earnedCredits,
+          earned_credits: creditsToUse,
           selected_minor: selectedMinor,
-          taken_courses: ['データ処理基礎', 'ビッグデータサイエンス', '教育原理']
+          taken_courses: takenCourses
         })
       });
       if (res.ok) {
@@ -553,14 +825,14 @@ export default function CampusNavigatorPage() {
     }
 
     // クライアント側フォールバック
-    const totalEarned = Object.values(earnedCredits).reduce((a, b) => a + Number(b), 0);
+    const totalEarned = Object.values(creditsToUse).reduce((a, b) => a + Number(b), 0);
     const progressRate = Math.min(100, Math.round((totalEarned / 124) * 100));
     setDegreeResult({
       department,
       total_earned: totalEarned,
       total_required: 124,
       progress_rate: progressRate,
-      remaining_credits: { total: Math.max(0, 124 - totalEarned), major_req: Math.max(0, 38 - earnedCredits.major_req) },
+      remaining_credits: { total: Math.max(0, 124 - totalEarned), major_req: Math.max(0, 38 - creditsToUse.major_req) },
       minor_status: { name: selectedMinor, earned_credits: 4, required_credits: 16, remaining_credits: 12 },
       missing_requirements: totalEarned < 124 ? [`全学共通または専門必修科目の残りがあります`] : [],
       ai_advice: `達成率は${progressRate}%です。${grade}年次として卒業論文・専門必修科目を優先して履修登録しましょう。`
@@ -1061,13 +1333,15 @@ export default function CampusNavigatorPage() {
               {/* 質問サジェストチップ */}
               <div className="px-4 py-2 border-t border-slate-100 flex flex-wrap gap-1.5 bg-slate-50">
                 {[
-                  '3505教室はどこ？',
-                  '411教室',
-                  'レッドブルが買える自販機',
-                  'クレカが使える自販機',
-                  '給水所の場所',
-                  '1号館のトイレ注意点',
-                  'ゴミ箱の設置場所'
+                  '3505',
+                  '421',
+                  'コーラ',
+                  '80円',
+                  '100~110円',
+                  'クレカ',
+                  '給水所',
+                  'ゴミ箱',
+                  'データ構造'
                 ].map((s) => (
                   <button
                     key={s}
@@ -1088,7 +1362,7 @@ export default function CampusNavigatorPage() {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSendNav();
                   }}
-                  placeholder="質問を入力（例: 3402教室、100円の飲み物、クレカ使える自販機）..."
+                  placeholder="質問を入力（例: 3505、421、コーラ、80円、100~110円、給水所、クレカ）..."
                   className="flex-1 border border-slate-300 rounded-xl p-2.5 text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                 />
                 <button
@@ -1211,7 +1485,16 @@ export default function CampusNavigatorPage() {
                 </div>
 
                 <button
-                  onClick={runDegreeCheck}
+                  type="button"
+                  onClick={handleAutoCalculateCredits}
+                  className="w-full py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold rounded-lg border border-emerald-300 transition-colors flex items-center justify-center gap-1.5 shadow-xs"
+                >
+                  <span>📅</span>
+                  <span>時間割の登録科目から単位数を自動計算</span>
+                </button>
+
+                <button
+                  onClick={() => runDegreeCheck()}
                   className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-lg shadow transition-colors"
                 >
                   🎓 卒業・副専攻AI判定を実行
@@ -1251,6 +1534,84 @@ export default function CampusNavigatorPage() {
                       <h4 className="font-bold text-emerald-200 text-sm flex items-center gap-2">🤖 AIアドバイザーの診断コメント</h4>
                       <p className="text-sm whitespace-pre-line leading-relaxed text-emerald-50">{degreeResult.ai_advice}</p>
                     </div>
+
+                    {degreeResult.missing_requirements && degreeResult.missing_requirements.length > 0 && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 space-y-2">
+                        <h4 className="font-bold text-amber-900 text-xs flex items-center gap-1.5">
+                          <span>⚠️</span>
+                          <span>不足している卒業・専攻要件</span>
+                        </h4>
+                        <ul className="text-xs space-y-1.5 text-amber-800 list-disc list-inside">
+                          {degreeResult.missing_requirements.map((item, idx) => (
+                            <li key={idx} className="leading-relaxed">{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {department === '情報科学科' && (
+                      <div className="bg-white rounded-xl shadow border border-slate-200 p-5 space-y-4">
+                        <div className="flex justify-between items-center border-b pb-2">
+                          <h4 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                            <span>💻</span>
+                            <span>情報科学科 専門カリキュラム修得チェック</span>
+                          </h4>
+                          <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded">令和8年度 時間割連動</span>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          時間割（月〜土／集中）に登録されている講義は自動的に「✓ 登録済」としてハイライトされます。
+                        </p>
+                        <div>
+                          <span className="text-xs font-bold text-emerald-800 block mb-2">■ 専門必修科目（13科目・卒業必須）</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[
+                              '基礎微分積分1', '基礎微分積分2', '線形代数1', '線形代数2',
+                              '基礎プログラミング1', '基礎プログラミング2', '情報科学実習1', '情報科学実習2',
+                              'データ構造', 'アルゴリズム', '情報理論1', '情報科学研究1', '情報科学研究2'
+                            ].map((sub) => {
+                              const isTaken = Object.values(timetable).some(c => c.subject?.includes(sub)) || intensiveList.some(c => c.name.includes(sub));
+                              return (
+                                <span
+                                  key={sub}
+                                  className={`text-xs px-2.5 py-1 rounded-lg border transition-all ${
+                                    isTaken
+                                      ? 'bg-emerald-100 text-emerald-900 border-emerald-400 font-bold shadow-2xs'
+                                      : 'bg-slate-50 text-slate-600 border-slate-200'
+                                  }`}
+                                >
+                                  {isTaken ? '✓ ' : ''}{sub}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div className="pt-2 border-t">
+                          <span className="text-xs font-bold text-sky-800 block mb-2">■ 専門選択科目（代表科目・選択必修含む）</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[
+                              'オブジェクト指向プログラミング', '離散数学', 'Webプログラミング',
+                              'データベース', 'マルチメディア表現', 'データ科学1', 'データ科学2',
+                              'コンピューティング1', 'コンピューティング2', '数理計画', '実践プログラミング1',
+                              '情報理論2', '暗号理論', '情報可視化', 'オートマトンと形式言語'
+                            ].map((sub) => {
+                              const isTaken = Object.values(timetable).some(c => c.subject?.includes(sub)) || intensiveList.some(c => c.name.includes(sub));
+                              return (
+                                <span
+                                  key={sub}
+                                  className={`text-xs px-2.5 py-1 rounded-lg border transition-all ${
+                                    isTaken
+                                      ? 'bg-sky-100 text-sky-900 border-sky-400 font-bold shadow-2xs'
+                                      : 'bg-slate-50 text-slate-600 border-slate-200'
+                                  }`}
+                                >
+                                  {isTaken ? '✓ ' : ''}{sub}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="bg-white rounded-xl shadow border border-slate-200 p-12 text-center space-y-3">

@@ -11,16 +11,21 @@ export interface LectureCourse {
 
 /**
  * 教室番号から表示エリア（最大12文字以内）に収まるコンパクト表記を生成
- * 例: 3403 -> 3号館403(男子側), 411 -> 4号館411(男子側), 124 -> 1号館124(左)
+ * 例: 3403 -> 3号館403(男子側), 411 -> 4号館411(男子側), 8B203/8B210 -> 8B203他
  */
 export function getCompactRoomLabel(room: string | undefined): string {
   if (!room) return '未定';
-  const r = room.trim();
+  const r = room.trim().replace(/88203/g, '8B203').replace(/88210/g, '8B210');
 
-  // 複合教室表記の短縮（例: 3409／3408／3304）
+  // 複合教室表記の短縮（例: 8B203/8B210, 3409／3408／3304）
   if (r.includes('／') || r.includes('/')) {
     const first = r.split(/[／/]/)[0].trim();
     return `${getCompactRoomLabel(first)}他`;
+  }
+
+  // 8号館 (8B203, 8B210, 8AB, 8号館資料館)
+  if (r.startsWith('8B') || r.startsWith('8A')) {
+    return `8号館${r}`;
   }
 
   // 3号館: 4桁（3〇〇〇）
@@ -1351,8 +1356,9 @@ export const LECTURE_DATABASE: LectureCourse[] = [
     "period": 0,
     "name": "情報可視化",
     "teacher": "矢崎裕一",
-    "room": "8B203・8B210",
-    "department": "学科専門（情報科）/集中"
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "前期"
   },
   {
     "day": "集中",
@@ -4697,5 +4703,905 @@ export const LECTURE_DATABASE: LectureCourse[] = [
     "teacher": "嶋田修之",
     "room": "研究室",
     "department": "化学科"
+  },
+  {
+    "day": "月",
+    "period": 1,
+    "name": "基礎微分積分2【再】",
+    "teacher": "竹内司",
+    "room": "3206",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "月",
+    "period": 1,
+    "name": "データ構造",
+    "teacher": "谷聖一",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "月",
+    "period": 1,
+    "name": "線形代数1",
+    "teacher": "古市茂",
+    "room": "411",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "月",
+    "period": 1,
+    "name": "情報科学研究1",
+    "teacher": "谷聖一",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "月",
+    "period": 1,
+    "name": "情報科学講究1",
+    "teacher": "谷聖一",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "月",
+    "period": 2,
+    "name": "オブジェクト指向プログラミング",
+    "teacher": "尾上洋介",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "月",
+    "period": 2,
+    "name": "情報科学研究1",
+    "teacher": "古市茂",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "月",
+    "period": 1,
+    "name": "基礎微分積分1【再】",
+    "teacher": "竹内司",
+    "room": "3303",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "月",
+    "period": 1,
+    "name": "アルゴリズム",
+    "teacher": "谷聖一",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "月",
+    "period": 1,
+    "name": "線形代数2",
+    "teacher": "古市茂",
+    "room": "411",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "月",
+    "period": 1,
+    "name": "情報科学研究2",
+    "teacher": "谷聖一",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "月",
+    "period": 1,
+    "name": "情報科学講究2",
+    "teacher": "谷聖一",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "月",
+    "period": 2,
+    "name": "コンピューティング2",
+    "teacher": "中原泳青",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "月",
+    "period": 2,
+    "name": "情報科学研究2",
+    "teacher": "古市茂",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "月",
+    "period": 5,
+    "name": "Webプログラミング",
+    "teacher": "尾上洋介",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 1,
+    "name": "情報科学講究1",
+    "teacher": "宮田章裕",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "火",
+    "period": 1,
+    "name": "離散数学",
+    "teacher": "森山園子",
+    "room": "3507",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "火",
+    "period": 1,
+    "name": "マルチメディア表現",
+    "teacher": "藤堂英樹",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "火",
+    "period": 1,
+    "name": "解析学1",
+    "teacher": "前澤俊一",
+    "room": "3403",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "火",
+    "period": 1,
+    "name": "情報科学実習3",
+    "teacher": "宮田章裕",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "火",
+    "period": 2,
+    "name": "情報科学研究1",
+    "teacher": "尾崎知伸",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "火",
+    "period": 2,
+    "name": "ヒューマンインタフェース",
+    "teacher": "宮田章裕",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "火",
+    "period": 2,
+    "name": "情報科学研究1",
+    "teacher": "前澤俊一",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "火",
+    "period": 2,
+    "name": "マルチメディア情報処理",
+    "teacher": "辻野雄大",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "火",
+    "period": 3,
+    "name": "情報科学研究1",
+    "teacher": "大澤正彦",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "火",
+    "period": 4,
+    "name": "情報科学研究1",
+    "teacher": "尾上洋介",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "火",
+    "period": 5,
+    "name": "情報科学研究1",
+    "teacher": "宮田章裕",
+    "room": "8AB",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "火",
+    "period": 1,
+    "name": "実践プログラミング2",
+    "teacher": "尾崎知伸",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 1,
+    "name": "基礎プログラミング1【再】",
+    "teacher": "森山園子",
+    "room": "8B203",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 1,
+    "name": "幾何学",
+    "teacher": "森山園子",
+    "room": "3505",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 1,
+    "name": "情報科学実習1【再】",
+    "teacher": "森山園子",
+    "room": "8B203",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 1,
+    "name": "論理と計算",
+    "teacher": "尾崎知伸",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 2,
+    "name": "情報科学講究2",
+    "teacher": "宮田章裕",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 2,
+    "name": "データベース",
+    "teacher": "尾上洋介",
+    "room": "8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 2,
+    "name": "情報科学研究2",
+    "teacher": "前澤俊一",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 2,
+    "name": "解析学2",
+    "teacher": "前澤俊一",
+    "room": "3403",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 2,
+    "name": "情報科学研究2",
+    "teacher": "大澤正彦",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 3,
+    "name": "情報科学研究2",
+    "teacher": "前澤俊一",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 3,
+    "name": "情報科学研究2",
+    "teacher": "大澤正彦",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 3,
+    "name": "情報科学研究2",
+    "teacher": "尾上洋介",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 4,
+    "name": "情報科学研究2",
+    "teacher": "尾上洋介",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "火",
+    "period": 5,
+    "name": "情報科学研究2",
+    "teacher": "宮田章裕",
+    "room": "8AB",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "水",
+    "period": 1,
+    "name": "基礎線形代数1",
+    "teacher": "柳田昌宏",
+    "room": "3303",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "水",
+    "period": 1,
+    "name": "確率論",
+    "teacher": "柳田昌宏",
+    "room": "3303",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "水",
+    "period": 1,
+    "name": "情報理論1",
+    "teacher": "古市茂",
+    "room": "3308",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "水",
+    "period": 1,
+    "name": "情報科学実習1（40組）",
+    "teacher": "中原泳青",
+    "room": "8B203",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "水",
+    "period": 1,
+    "name": "情報処理入門1",
+    "teacher": "尾上洋介",
+    "room": "3308",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "水",
+    "period": 2,
+    "name": "情報科学実習1（41組）",
+    "teacher": "田和辻可昌",
+    "room": "8B210",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "水",
+    "period": 2,
+    "name": "情報科学講究1",
+    "teacher": "中原泳青",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "水",
+    "period": 3,
+    "name": "情報科学講究1",
+    "teacher": "古市茂",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "水",
+    "period": 1,
+    "name": "基礎線形代数2",
+    "teacher": "柳田昌宏",
+    "room": "3303",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "水",
+    "period": 1,
+    "name": "学問の扉",
+    "teacher": "大澤正彦",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "水",
+    "period": 1,
+    "name": "情報処理入門2",
+    "teacher": "河合未夢",
+    "room": "3308",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "水",
+    "period": 1,
+    "name": "情報科学実習2（40組）",
+    "teacher": "河合未夢",
+    "room": "8B203",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "水",
+    "period": 1,
+    "name": "情報科学研究2",
+    "teacher": "中原泳青",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "水",
+    "period": 2,
+    "name": "情報科学研究2",
+    "teacher": "中原泳青",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "水",
+    "period": 2,
+    "name": "情報科学講究2",
+    "teacher": "中原泳青",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "水",
+    "period": 2,
+    "name": "情報理論2",
+    "teacher": "古市茂",
+    "room": "3406",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "水",
+    "period": 2,
+    "name": "情報科学実習2（41組）",
+    "teacher": "中原泳青",
+    "room": "8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "水",
+    "period": 3,
+    "name": "情報科学講究2",
+    "teacher": "古市茂",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "水",
+    "period": 3,
+    "name": "コンピューティング1",
+    "teacher": "大澤正彦",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "木",
+    "period": 1,
+    "name": "数理計画",
+    "teacher": "森山園子",
+    "room": "3307",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "木",
+    "period": 1,
+    "name": "情報科学講究1",
+    "teacher": "大澤正彦",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "木",
+    "period": 2,
+    "name": "情報科学講究1",
+    "teacher": "尾上洋介",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "木",
+    "period": 3,
+    "name": "情報科学講究1",
+    "teacher": "前澤俊一",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "木",
+    "period": 4,
+    "name": "情報科学講究1",
+    "teacher": "森山園子",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "木",
+    "period": 1,
+    "name": "発展プログラミング",
+    "teacher": "大澤正彦",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "木",
+    "period": 1,
+    "name": "情報科学講究2",
+    "teacher": "大澤正彦",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "木",
+    "period": 2,
+    "name": "情報科学講究2",
+    "teacher": "尾上洋介",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "木",
+    "period": 3,
+    "name": "情報科学講究2",
+    "teacher": "前澤俊一",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "木",
+    "period": 4,
+    "name": "情報科学講究2",
+    "teacher": "森山園子",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "金",
+    "period": 1,
+    "name": "データ科学2",
+    "teacher": "尾崎知伸",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 1,
+    "name": "基礎プログラミング1（40組）",
+    "teacher": "宮田章裕",
+    "room": "8B203",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 1,
+    "name": "基礎プログラミング2【再】",
+    "teacher": "中原泳青",
+    "room": "8B203",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 1,
+    "name": "実践プログラミング1",
+    "teacher": "尾崎知伸",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 1,
+    "name": "情報科学実習2【再】",
+    "teacher": "中原泳青",
+    "room": "8B203",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 2,
+    "name": "基礎プログラミング1（41組）",
+    "teacher": "宮城優里",
+    "room": "8B210",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 2,
+    "name": "情報科学研究1",
+    "teacher": "植村あい子",
+    "room": "8AB",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 2,
+    "name": "基礎微分積分1",
+    "teacher": "前澤俊一",
+    "room": "3505",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 3,
+    "name": "代数学",
+    "teacher": "前澤俊一",
+    "room": "431",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 3,
+    "name": "オートマトンと形式言語",
+    "teacher": "東条敏",
+    "room": "3406",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 4,
+    "name": "情報科学講究1",
+    "teacher": "尾崎知伸",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 4,
+    "name": "情報科学研究1",
+    "teacher": "中原泳青",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 5,
+    "name": "情報科学講究1",
+    "teacher": "植村あい子",
+    "room": "8AB",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 5,
+    "name": "情報科学研究1",
+    "teacher": "森山園子",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "前期"
+  },
+  {
+    "day": "金",
+    "period": 1,
+    "name": "デジタルコンテンツ",
+    "teacher": "須田拓也",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "金",
+    "period": 1,
+    "name": "情報科学実習4",
+    "teacher": "宮田章裕",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "金",
+    "period": 1,
+    "name": "基礎プログラミング2（40組）",
+    "teacher": "峯岸朋弥",
+    "room": "8B203",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "金",
+    "period": 1,
+    "name": "基礎微分積分2",
+    "teacher": "前澤俊一",
+    "room": "3206",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "金",
+    "period": 1,
+    "name": "データ科学1",
+    "teacher": "尾崎知伸",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "金",
+    "period": 2,
+    "name": "情報科学講究2",
+    "teacher": "尾崎知伸",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "金",
+    "period": 2,
+    "name": "基礎プログラミング2（41組）",
+    "teacher": "宮田章裕",
+    "room": "8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "金",
+    "period": 2,
+    "name": "オブジェクト指向プログラミング入門",
+    "teacher": "尾上洋介",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "金",
+    "period": 3,
+    "name": "情報科学講究2",
+    "teacher": "植村あい子",
+    "room": "8AB",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "金",
+    "period": 3,
+    "name": "情報科学研究2",
+    "teacher": "尾崎知伸",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "金",
+    "period": 4,
+    "name": "情報科学研究2",
+    "teacher": "植村あい子",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "金",
+    "period": 5,
+    "name": "情報科学研究2",
+    "teacher": "谷聖一",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "金",
+    "period": 5,
+    "name": "情報科学研究2",
+    "teacher": "宮田章裕",
+    "room": "8AB",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "集中",
+    "period": 0,
+    "name": "暗号理論",
+    "teacher": "定兼邦彦",
+    "room": "8B203/8B210",
+    "department": "情報科学科",
+    "semester": "後期"
+  },
+  {
+    "day": "土",
+    "period": 1,
+    "name": "情報科学研究2",
+    "teacher": "森山園子",
+    "room": "研究室",
+    "department": "情報科学科",
+    "semester": "後期"
   }
 ];

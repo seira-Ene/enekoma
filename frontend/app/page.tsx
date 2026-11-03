@@ -1127,7 +1127,7 @@ export default function UnifiedAssistantPage() {
       if (cleanedKey) {
         try {
           let directRes = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${cleanedKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${cleanedKey}`,
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1154,7 +1154,7 @@ export default function UnifiedAssistantPage() {
           );
           if (!directRes.ok) {
             directRes = await fetch(
-              `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${cleanedKey}`,
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${cleanedKey}`,
               {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1304,7 +1304,7 @@ export default function UnifiedAssistantPage() {
     if (!testSucceeded && keyToTest) {
       try {
         const directRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${keyToTest}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${keyToTest}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1316,7 +1316,7 @@ export default function UnifiedAssistantPage() {
         );
         if (directRes.ok) {
           testSucceeded = true;
-          replyModel = 'gemini-flash-lite-latest';
+          replyModel = 'Gemini 3 Flash';
         } else {
           const errData = await directRes.json().catch(() => ({}));
           const googleMsg = errData?.error?.message || `HTTP ${directRes.status}`;
@@ -1410,7 +1410,7 @@ export default function UnifiedAssistantPage() {
     if (!testSucceeded && keyToTest) {
       try {
         let directRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=${keyToTest}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${keyToTest}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1422,7 +1422,7 @@ export default function UnifiedAssistantPage() {
         );
         if (!directRes.ok) {
           directRes = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${keyToTest}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${keyToTest}`,
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1435,7 +1435,7 @@ export default function UnifiedAssistantPage() {
         }
         if (directRes.ok) {
           testSucceeded = true;
-          replyModel = 'gemini-flash-lite-latest';
+          replyModel = 'Gemini 3 Flash';
         } else {
           const errData = await directRes.json().catch(() => ({}));
           const googleMsg = errData?.error?.message || `HTTP ${directRes.status}`;

@@ -763,7 +763,7 @@ export async function GET() {
   return NextResponse.json({
     hasServerKey: serverKey.length > 0,
     serverKeyPrefix: serverKey.length > 8 ? `${serverKey.slice(0, 6)}...` : undefined,
-    availableModels: ['gemini-flash-lite-latest', 'gemini-3.5-flash-lite', 'gemini-flash-latest']
+    availableModels: ['gemini-3-flash-preview', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite']
   });
 }
 
@@ -927,71 +927,91 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // 高速軽量モデル（flash-lite）を最優先にして爆速応答を実現（約1秒で応答）
-      const CANDIDATE_MODELS = [
-        'gemini-flash-lite-latest',
-        'gemini-3.5-flash-lite',
-        'gemini-flash-latest',
-        'gemini-3.8-flash'
-      ];
+      // 高速モデル（gemini-3-flash-preview, gemini-3.5-flash）を並列レースさせて最短2〜3秒で返答
+      const outputLimit = image ? 2048 : 800;
+      const geminiPayload = {
+        systemInstruction: {
+          parts: [{ text: SYSTEM_PROMPT.trim() }]
+        },
+        contents,
+        generationConfig: {
+          temperature: 0.25,
+          maxOutputTokens: outputLimit
+        }
+      };
 
+      const fetchSingleModel = async (model: string, timeoutMs: number = 7500): Promise<{ model: string; text: string }> => {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const res = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(timeoutMs),
+          body: JSON.stringify(geminiPayload)
+        });
+        if (!res.ok) {
+          let errText = `HTTP ${res.status}`;
+          try {
+            const errJson = await res.json();
+            errText = errJson?.error?.message || errText;
+          } catch {}
+          const error: any = new Error(errText);
+          error.status = res.status;
+          throw error;
+        }
+        const data = await res.json();
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        const candidateText = parts.map((p: any) => p.text || '').filter(Boolean).join('\n');
+        if (!candidateText) {
+          throw new Error('Empty response from model');
+        }
+        return { model, text: candidateText };
+      };
+
+      let successfulResponse: { model: string; text: string } | null = null;
       let lastErrorStatus: number | null = null;
       let lastErrorMessage: string | null = null;
 
-      for (const model of CANDIDATE_MODELS) {
-        try {
-          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-          const res = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: AbortSignal.timeout(10000), // 10秒以内に応答しない場合は即座にフォールバック
-            body: JSON.stringify({
-              systemInstruction: {
-                parts: [{ text: SYSTEM_PROMPT.trim() }]
-              },
-              contents,
-              generationConfig: {
-                temperature: 0.2,
-                maxOutputTokens: 8192
-              }
-            })
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            const parts = data?.candidates?.[0]?.content?.parts || [];
-            const candidateText = parts.map((p: any) => p.text || '').filter(Boolean).join('\n');
-            if (candidateText) {
-              const profileUpdate = parseProfileUpdateFromText(candidateText, !!image);
-
-              return NextResponse.json({
-                reply: sanitizeConversationalReply(candidateText),
-                source: 'gemini',
-                model,
-                profileUpdate
-              });
-            }
-          } else {
-            lastErrorStatus = res.status;
-            try {
-              const errJson = await res.json();
-              lastErrorMessage = errJson?.error?.message || `HTTP ${res.status}`;
-            } catch {
-              lastErrorMessage = `HTTP ${res.status}`;
-            }
-            console.warn(`Gemini API call to ${model} failed with status:`, res.status, lastErrorMessage);
-            // APIキー自体の不備や認証拒否の場合は別モデルを試行せず即座に抜ける
-            if (res.status === 400 && lastErrorMessage?.toLowerCase().includes('api_key')) {
-              break;
-            }
-            if (res.status === 403) {
-              break;
-            }
+      // 1. 最速の2モデルを並列レース（最速で応答した方が即座に採用される）
+      try {
+        successfulResponse = await Promise.any([
+          fetchSingleModel('gemini-3-flash-preview', 7000),
+          fetchSingleModel('gemini-3.5-flash', 7000)
+        ]);
+      } catch (raceErr: any) {
+        if (raceErr && Array.isArray(raceErr.errors)) {
+          for (const e of raceErr.errors) {
+            if (e?.status) lastErrorStatus = e.status;
+            if (e?.message) lastErrorMessage = e.message;
           }
-        } catch (err: any) {
-          lastErrorMessage = err?.message || String(err);
-          console.warn(`Gemini API call to ${model} threw error:`, err);
         }
+      }
+
+      // 2. レースで両方エラーになった場合の順次フォールバック（APIキー不正・権限エラー時は即スキップ）
+      const isAuthError = (lastErrorStatus === 400 && lastErrorMessage?.toLowerCase().includes('api_key')) || lastErrorStatus === 403;
+      if (!successfulResponse && !isAuthError) {
+        const FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
+        for (const model of FALLBACK_MODELS) {
+          try {
+            successfulResponse = await fetchSingleModel(model, 8000);
+            if (successfulResponse) break;
+          } catch (err: any) {
+            lastErrorStatus = err?.status || lastErrorStatus;
+            lastErrorMessage = err?.message || String(err);
+            if (err?.status === 400 && lastErrorMessage?.toLowerCase().includes('api_key')) break;
+            if (err?.status === 403) break;
+          }
+        }
+      }
+
+      if (successfulResponse && successfulResponse.text) {
+        const candidateText = successfulResponse.text;
+        const profileUpdate = parseProfileUpdateFromText(candidateText, !!image);
+        return NextResponse.json({
+          reply: sanitizeConversationalReply(candidateText),
+          source: 'gemini',
+          model: successfulResponse.model,
+          profileUpdate
+        });
       }
 
       // APIキーが設定されたがGeminiがエラーになった場合のエラーメッセージ整形

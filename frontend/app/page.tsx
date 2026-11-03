@@ -32,7 +32,9 @@ import {
   setCurrentStudentId,
   authenticateStudent,
   registerNewStudent,
-  parseProfileUpdateFromText
+  parseProfileUpdateFromText,
+  extractCompletedCoursesFromText,
+  calculateGpaFromCompletedCourses
 } from '@/app/data/studentAccounts';
 
 // メッセージ型定義
@@ -149,6 +151,8 @@ export default function UnifiedAssistantPage() {
   const [profileTab, setProfileTab] = useState<'timetable' | 'completed' | 'reqCourses' | 'basic' | 'courses' | 'minors'>('timetable');
   const [reqCourseFilter, setReqCourseFilter] = useState<'all' | 'compulsory' | 'elective'>('all');
   const [profileNotification, setProfileNotification] = useState<string | null>(null);
+  const [showTranscriptPasteBox, setShowTranscriptPasteBox] = useState(false);
+  const [transcriptPasteText, setTranscriptPasteText] = useState('');
 
   // 学生アカウント管理ステート（個別アカウント対応）
   const [currentStudent, setCurrentStudent] = useState<StudentAccount | null>(null);
@@ -425,6 +429,26 @@ export default function UnifiedAssistantPage() {
     return { shortLabel, mainText };
   };
 
+  // UTF-8対応Base64デコード（日本語の文字化けを完全防止）
+  const decodeBase64Utf8 = (base64Str: string): string => {
+    try {
+      const clean = base64Str.replace(/^data:[^;]+;base64,/, '');
+      const binStr = atob(clean);
+      const bytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) {
+        bytes[i] = binStr.charCodeAt(i);
+      }
+      return new TextDecoder('utf-8').decode(bytes);
+    } catch {
+      try {
+        const clean = base64Str.replace(/^data:[^;]+;base64,/, '');
+        return decodeURIComponent(escape(atob(clean)));
+      } catch {
+        return '';
+      }
+    }
+  };
+
   // プロフィール更新処理（履修中・修得済み・成績表の確実な反映）
   const applyProfileUpdate = (update: any): boolean => {
     if (!update) return false;
@@ -481,26 +505,39 @@ export default function UnifiedAssistantPage() {
       }
     }
 
-    // 3. 成績表・成績通知書
-    if (update.action === 'transcript' || (update.totalEarnedCredits !== undefined && update.currentGpa !== undefined)) {
-      const newCredits = Number(update.totalEarnedCredits) ?? updatedProf.currentCredits;
-      const newGpa = Number(update.currentGpa) ?? updatedProf.currentGpa;
-      let newCompleted = updatedProf.completedCourses;
+    // 3. 成績表・成績通知書（科目名・単位数・評価の高精度統合）
+    if (update.action === 'transcript' || Array.isArray(update.completedCourses) || (update.totalEarnedCredits !== undefined && update.currentGpa !== undefined)) {
+      let newCompleted = updatedProf.completedCourses || [];
       if (Array.isArray(update.completedCourses) && update.completedCourses.length > 0) {
-        newCompleted = update.completedCourses.map((c: any) => ({
+        const incoming: CourseRecord[] = update.completedCourses.map((c: any) => ({
           name: String(c.name || '').trim(),
           credits: Number(c.credits) || 2,
-          grade: c.grade || 'A',
+          grade: String(c.grade || '修得').trim(),
           year: Number(c.year) || 1
-        }));
+        })).filter((c: CourseRecord) => c.name.length > 0);
+
+        // 既存科目と統合（同名科目は新しい成績・評価で更新、新規科目は追加）
+        const courseMap = new Map<string, CourseRecord>();
+        newCompleted.forEach((c) => courseMap.set(c.name, c));
+        incoming.forEach((c) => courseMap.set(c.name, c));
+        newCompleted = Array.from(courseMap.values());
       }
+
+      const calculatedCredits = newCompleted.reduce((sum, c) => sum + (c.credits || 2), 0);
+      const parsedCredits = Number(update.totalEarnedCredits);
+      const newCredits = (!isNaN(parsedCredits) && parsedCredits > 0) ? parsedCredits : (calculatedCredits > 0 ? calculatedCredits : updatedProf.currentCredits);
+
+      const parsedGpa = Number(update.currentGpa);
+      const autoGpa = calculateGpaFromCompletedCourses(newCompleted);
+      const newGpa = (!isNaN(parsedGpa) && parsedGpa >= 0) ? parsedGpa : autoGpa;
+
       updatedProf = {
         ...updatedProf,
         currentCredits: newCredits,
         currentGpa: newGpa,
         completedCourses: newCompleted
       };
-      notifs.push(`成績表から反映しました（修得 ${newCredits}単位 / GPA ${newGpa.toFixed(2)}）`);
+      notifs.push(`成績通知書から反映しました（${newCompleted.length}科目 / 修得 ${newCredits}単位 / GPA ${newGpa.toFixed(2)}）`);
       modified = true;
     }
 
@@ -663,11 +700,10 @@ export default function UnifiedAssistantPage() {
           const data = await res.json();
           let update = data.profileUpdate || parseProfileUpdateFromText(data.reply, true);
 
-          // CSV・テキストの直接解析フォールバック
-          if (!update && (mimeType === 'text/csv' || mimeType === 'text/plain')) {
+          // CSV・テキスト・TSVの直接解析フォールバック（UTF-8日本語完全対応）
+          if (!update && (mimeType === 'text/csv' || mimeType === 'text/plain' || lower.endsWith('.txt') || lower.endsWith('.csv') || lower.endsWith('.tsv'))) {
             try {
-              const b64 = dataUrl.split('base64,')[1];
-              const decoded = atob(b64);
+              const decoded = decodeBase64Utf8(dataUrl);
               update = parseProfileUpdateFromText(decoded, true);
             } catch (e) {}
           }
@@ -793,11 +829,10 @@ export default function UnifiedAssistantPage() {
             const data = await res.json();
             let update = data.profileUpdate || parseProfileUpdateFromText(data.reply, true);
 
-            // CSV/テキストファイルのクライアント側即時フォールバック
-            if (!update && (regTranscriptFile.mimeType === 'text/csv' || regTranscriptFile.mimeType === 'text/plain')) {
+            // CSV/テキストファイルのクライアント側即時フォールバック（UTF-8日本語完全対応）
+            if (!update && (regTranscriptFile.mimeType === 'text/csv' || regTranscriptFile.mimeType === 'text/plain' || regTranscriptFile.name.endsWith('.txt') || regTranscriptFile.name.endsWith('.csv') || regTranscriptFile.name.endsWith('.tsv'))) {
               try {
-                const b64 = regTranscriptFile.data.split('base64,')[1];
-                const decoded = atob(b64);
+                const decoded = decodeBase64Utf8(regTranscriptFile.data);
                 update = parseProfileUpdateFromText(decoded, true);
               } catch (e) {}
             }
@@ -1057,8 +1092,16 @@ export default function UnifiedAssistantPage() {
         updatedViaProfile = applyProfileUpdate(data.profileUpdate);
       }
 
+      // ユーザー入力テキスト自体からの直接抽出（コピペした「科目名\t単位数\t評価」や時間割）
+      if (!updatedViaProfile) {
+        const directTextUpdate = parseProfileUpdateFromText(text, !!currentFile);
+        if (directTextUpdate) {
+          updatedViaProfile = applyProfileUpdate(directTextUpdate);
+        }
+      }
+
       // サーバーで profileUpdate が解析されなかった場合でも、回答テキストからマルチステージ抽出を実行
-      if (!updatedViaProfile && (currentFile || text.includes('時間割') || text.includes('成績'))) {
+      if (!updatedViaProfile && (currentFile || text.includes('時間割') || text.includes('成績') || text.includes('単位') || text.includes('評価') || text.includes('\t'))) {
         const extracted = parseProfileUpdateFromText(rawReply, !!currentFile);
         if (extracted) {
           applyProfileUpdate(extracted);
@@ -2460,30 +2503,89 @@ export default function UnifiedAssistantPage() {
                     </div>
                   </div>
 
-                  {/* 成績通知書・過去の時間割 添付・AI一括自動登録 */}
-                  <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                    <div>
-                      <div className="text-xs font-bold text-emerald-950 flex items-center space-x-1.5">
-                        <span>📊</span>
-                        <span>成績通知書からAI一括読み込み</span>
+                  {/* 成績通知書（添付 ＆ コピペテキスト直接貼付） */}
+                  <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-xl space-y-2.5 shadow-2xs">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-bold text-emerald-950 flex items-center space-x-1.5">
+                          <span>📊</span>
+                          <span>成績通知書から自動読み込み（画像・PDF・テキスト）</span>
+                        </div>
+                        <p className="text-[11px] text-emerald-700">
+                          写真・スクリーンショット・PDF添付、またはポータルの表をコピー＆ペーストで即座に反映できます。
+                        </p>
                       </div>
-                      <p className="text-[11px] text-emerald-700">
-                        成績通知書（画像・PDF等）を添付すると、修得単位数・GPA・修得科目を自動で反映します。
-                      </p>
+                      <div className="flex items-center space-x-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setShowTranscriptPasteBox(!showTranscriptPasteBox)}
+                          className="px-2.5 py-1.5 bg-white border border-emerald-300 text-emerald-800 rounded-md text-xs font-semibold hover:bg-emerald-50 transition shadow-2xs flex items-center space-x-1"
+                        >
+                          <span>📋</span>
+                          <span>{showTranscriptPasteBox ? '貼付欄を閉じる' : 'テキスト貼付'}</span>
+                        </button>
+                        <label className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-900 text-white rounded-md text-xs font-semibold hover:bg-emerald-800 cursor-pointer transition shadow-2xs">
+                          <span>📎</span>
+                          <span>{isAnalyzingTranscript ? 'AI解析中...' : '成績表を添付'}</span>
+                          <input
+                            type="file"
+                            accept="*/*"
+                            disabled={isAnalyzingTranscript}
+                            onChange={(e) => handleProfileFileUpload(e, 'transcript')}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
                     </div>
-                    <div className="flex-shrink-0">
-                      <label className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-900 text-white rounded-md text-xs font-semibold hover:bg-emerald-800 cursor-pointer transition shadow-2xs">
-                        <span>📎</span>
-                        <span>{isAnalyzingTranscript ? 'AI解析中...' : '成績通知書を添付'}</span>
-                        <input
-                          type="file"
-                          accept="*/*"
-                          disabled={isAnalyzingTranscript}
-                          onChange={(e) => handleProfileFileUpload(e, 'transcript')}
-                          className="hidden"
+
+                    {/* コピペ用テキスト入力欄（スマホ・PC両対応） */}
+                    {showTranscriptPasteBox && (
+                      <div className="p-2.5 bg-white border border-emerald-200 rounded-lg space-y-2 mt-2">
+                        <label className="block text-[11px] font-bold text-slate-800">
+                          📋 成績テキストを貼り付け（科目名・単位数・評価）
+                        </label>
+                        <p className="text-[10px] text-slate-500">
+                          大学ポータル（NU-Web等）の成績画面からコピーしたテキスト（タブ区切り、CSV、スペース区切り等）をそのまま貼り付けてください。
+                        </p>
+                        <textarea
+                          rows={4}
+                          value={transcriptPasteText}
+                          onChange={(e) => setTranscriptPasteText(e.target.value)}
+                          placeholder={'例（ポータル表からそのままペースト）：\n科目名\t単位数\t評価\n日本語表現法\t2\tA\nキャリアデザイン\t2\tS\n情報リテラシー\t2\tB\n体育実技\t1\t合格'}
+                          className="w-full p-2 border border-slate-300 rounded-md text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-700 bg-slate-50/50"
                         />
-                      </label>
-                    </div>
+                        <div className="flex justify-end space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTranscriptPasteText('');
+                              setShowTranscriptPasteBox(false);
+                            }}
+                            className="px-2.5 py-1 text-xs text-slate-500 hover:text-slate-800"
+                          >
+                            キャンセル
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!transcriptPasteText.trim()) return;
+                              const update = parseProfileUpdateFromText(transcriptPasteText.trim(), false);
+                              if (update && Array.isArray(update.completedCourses) && update.completedCourses.length > 0) {
+                                applyProfileUpdate(update);
+                                setTranscriptPasteText('');
+                                setShowTranscriptPasteBox(false);
+                              } else {
+                                setProfileNotification('⚠️ 有効な科目名・単位数・評価を検出できませんでした。');
+                                setTimeout(() => setProfileNotification(null), 5000);
+                              }
+                            }}
+                            className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-md text-xs font-semibold shadow-2xs transition"
+                          >
+                            ✨ カルテに一括反映する
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* 進捗バー */}
@@ -2494,22 +2596,22 @@ export default function UnifiedAssistantPage() {
                     />
                   </div>
 
-                  {/* 科目テーブル */}
-                  <div className="border border-slate-200 rounded-lg overflow-hidden max-h-72 overflow-y-auto">
-                    <table className="w-full text-xs text-left border-collapse">
+                  {/* 科目テーブル（スマホ横スクロール対応・文字崩れ防止） */}
+                  <div className="border border-slate-200 rounded-lg overflow-x-auto max-h-72 overflow-y-auto">
+                    <table className="w-full text-xs text-left border-collapse min-w-[340px]">
                       <thead className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200">
                         <tr>
-                          <th className="py-2 px-2.5">科目名</th>
-                          <th className="py-2 px-2.5">単位数</th>
-                          <th className="py-2 px-2.5">評価</th>
-                          <th className="py-2 px-2.5 text-center">操作</th>
+                          <th className="py-2 px-2.5 min-w-[140px] whitespace-nowrap">科目名</th>
+                          <th className="py-2 px-2.5 whitespace-nowrap">単位数</th>
+                          <th className="py-2 px-2.5 whitespace-nowrap">評価</th>
+                          <th className="py-2 px-2.5 text-center whitespace-nowrap">操作</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {userProfile.completedCourses.map((c, i) => (
                           <tr key={i} className="hover:bg-slate-50">
-                            <td className="py-2 px-2.5 font-medium text-slate-900">{c.name}</td>
-                            <td className="py-2 px-2.5 text-slate-600">{c.credits}単位</td>
+                            <td className="py-2 px-2.5 font-medium text-slate-900 min-w-[140px]">{c.name}</td>
+                            <td className="py-2 px-2.5 text-slate-600 whitespace-nowrap">{c.credits}単位</td>
                             <td className="py-2 px-2.5 whitespace-nowrap">
                               <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
                                 c.grade === 'S' ? 'bg-purple-100 text-purple-800' :

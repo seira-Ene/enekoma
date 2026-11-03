@@ -805,7 +805,9 @@ export async function POST(req: NextRequest) {
 \`\`\``;
         } else if (isTranscript) {
           imageInstruction = `【最重要：成績通知書OCR解析】
-添付された成績通知書画像をOCR解析し、履修済み科目、評価、GPA、総修得単位数を読み取ってください。
+添付された成績通知書（スマホ画面スクリーンショット、写真、PDF、またはテキスト）を解析し、記載されているすべての履修済み科目（科目名・単位数・評価）、総修得単位数、現在GPAを1科目も漏れなく読み取ってください。
+※スマホのポータル画面（NU-Web等）のスクリーンショット等で総単位数やGPAの記載が見当たらない場合でも、画像内のすべての科目（科目名・単位数・評価）を completedCourses 配列に漏れなく出力してください（講義は2単位、体育・実験演習は1単位）。
+※評価は S/A/B/C/D/秀/優/良/可/合格/認定/修得 の形式で正確に出力してください。
 回答本文で結果を要約した上で、必ず回答末尾に以下のJSONブロックを出力してください：
 \`\`\`profile_update
 {
@@ -813,7 +815,7 @@ export async function POST(req: NextRequest) {
   "totalEarnedCredits": <総修得単位数(数値)>,
   "currentGpa": <現在GPA(数値)>,
   "completedCourses": [
-    { "name": "<科目名>", "credits": <単位数>, "grade": "<S/A/B/C/D>" }
+    { "name": "<科目名>", "credits": <単位数>, "grade": "<S/A/B/C/D/合格/認定/修得>" }
   ]
 }
 \`\`\``;

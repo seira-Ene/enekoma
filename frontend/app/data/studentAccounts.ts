@@ -1,4 +1,4 @@
-import { UserProfileData, EnrolledCourseItem } from './gakubuYoran';
+import { UserProfileData, EnrolledCourseItem, CourseRecord } from './gakubuYoran';
 
 export interface ChatMessageItem {
   id: string;
@@ -327,6 +327,138 @@ function tryCleanAndParseJson(raw: string): any {
   return null;
 }
 
+// 成績テキスト・OCR出力から科目一覧（科目名・単位数・評価）を高精度に抽出するパーサー（スマホのタブ区切り・カンマ・スペース対応）
+export function extractCompletedCoursesFromText(text: string): CourseRecord[] {
+  if (!text) return [];
+  const courses: CourseRecord[] = [];
+  const seen = new Set<string>();
+
+  const headerWords = new Set([
+    '科目名', '授業名', '講義名', '単位数', '単位', '評価', '評点', '担当教員',
+    '年度', '学期', '科目区分', '---', '===', 'no', 'コード', '合否', '判定',
+    '修得科目', '成績', '修得単位', '現在gpa', '通算gpa', '累積gpa', 'gpa'
+  ]);
+
+  const gradeMap: Record<string, string> = {
+    '秀': 'S', 'S': 'S', 's': 'S',
+    '優': 'A', 'A': 'A', 'a': 'A',
+    '良': 'B', 'B': 'B', 'b': 'B',
+    '可': 'C', 'C': 'C', 'c': 'C',
+    '不可': 'D', 'D': 'D', 'd': 'D', 'F': 'F', 'f': 'F',
+    '合格': '合格', 'P': '合格', 'p': '合格', 'PASS': '合格', 'Pass': '合格', '合': '合格',
+    '認定': '認定', '認': '認定', 'N': '認定', 'n': '認定',
+    '免除': '免除', '免': '免除',
+    '修得': '修得'
+  };
+
+  const gradeRegex = /^(?:[SABCDFabcdf秀優良可]|不可|合格|認定|[Pp認免合]|免除|修得)$/;
+
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+  for (const line of lines) {
+    if (/^[\-=\|\s\t\+:]+$/.test(line)) continue;
+
+    // トークン分割（タブ区切り最優先、次にパイプ、カンマ、空白分割）
+    let tokens: string[] = [];
+    if (line.includes('\t')) {
+      tokens = line.split('\t').map((t) => t.trim()).filter(Boolean);
+    } else if (line.includes('|')) {
+      tokens = line.split('|').map((t) => t.trim()).filter(Boolean);
+    } else if (line.includes(',')) {
+      tokens = line.split(',').map((t) => t.trim()).filter(Boolean);
+    } else {
+      tokens = line.split(/\s{2,}|\s+/).map((t) => t.trim()).filter(Boolean);
+    }
+
+    // ヘッダー行をスキップ
+    if (tokens.some((t) => ['科目名', '授業名', '単位数', '評価'].includes(t))) continue;
+
+    let foundName: string | null = null;
+    let foundCredits: number | null = null;
+    let foundGrade: string | null = null;
+
+    // 1. 単位数を探す（例: 2, 2.0, 2単位）
+    for (const t of tokens) {
+      const crM = t.match(/^([1-4](?:\.[0-9])?)\s*(?:単位)?$/);
+      if (crM && foundCredits === null) {
+        foundCredits = parseFloat(crM[1]);
+      }
+    }
+
+    // 2. 評価を探す（S/A/B/C/D, 秀/優/良/可, 合格/認定等）
+    for (const t of tokens) {
+      const cleanT = t.replace(/^[\(（\[【「『](.*)[\)）\]】」』]$/, '$1').trim();
+      if (gradeRegex.test(cleanT) && foundGrade === null) {
+        foundGrade = gradeMap[cleanT] || cleanT.toUpperCase();
+      }
+    }
+
+    // 3. 科目名を探す
+    for (const t of tokens) {
+      let cleanT = t.replace(/^[\(（\[【「『](.*)[\)）\]】」』]$/, '$1')
+                    .replace(/^科目名?[：:]\s*/, '')
+                    .replace(/^[・\-\*]\s*/, '')
+                    .trim();
+
+      if (gradeRegex.test(cleanT)) continue;
+      if (/^[0-9]+(?:\.[0-9]+)?\s*(?:単位)?$/.test(cleanT)) continue;
+      if (/^[0-9]{4}年度?$/.test(cleanT) || ['前期', '後期', '通年', '春学期', '秋学期', '必修', '選択', '選必'].includes(cleanT)) continue;
+      if (/^[0-9A-Za-z]{5,10}$/.test(cleanT)) continue; // 科目コード
+      if (headerWords.has(cleanT.toLowerCase())) continue;
+      if (cleanT.length >= 2 && !foundName) {
+        foundName = cleanT;
+      }
+    }
+
+    // 4. トークン分割で拾えなかった場合の正規表現フォールバック
+    if (!foundName || !foundGrade) {
+      const spaceM = line.match(/([^\s:：\(\)（）\d]+.*?)\s+([0-9]+(?:\.[0-9]+)?)\s*(?:単位)?\s+([SABCDFabcdf秀優良可]|不可|合格|認定|[Pp認免合]|免除|修得)\b/);
+      if (spaceM) {
+        foundName = spaceM[1].replace(/^[・\-\*\s]+/, '').replace(/^科目名?[：:]\s*/, '').trim();
+        foundCredits = parseFloat(spaceM[2]);
+        const grRaw = spaceM[3].trim();
+        foundGrade = gradeMap[grRaw] || grRaw.toUpperCase();
+      }
+    }
+
+    if (foundName && foundGrade && !headerWords.has(foundName.toLowerCase())) {
+      const cr = foundCredits !== null ? foundCredits : 2;
+      if (!seen.has(foundName)) {
+        seen.add(foundName);
+        courses.push({
+          name: foundName,
+          credits: cr,
+          grade: foundGrade,
+          year: 1
+        });
+      }
+    }
+  }
+
+  return courses;
+}
+
+// 成績科目一覧からGPAを自動算定（日大文理公式ルール準拠：S=4, A=3, B=2, C=1, D/F=0, 合格・認定は除外）
+export function calculateGpaFromCompletedCourses(courses: CourseRecord[]): number {
+  if (!courses || courses.length === 0) return 2.80;
+  let gpaPoints = 0;
+  let gpaCredits = 0;
+  for (const c of courses) {
+    const gr = (c.grade || '').toUpperCase();
+    let pt: number | null = null;
+    if (gr === 'S' || gr === '秀') pt = 4.0;
+    else if (gr === 'A' || gr === '優') pt = 3.0;
+    else if (gr === 'B' || gr === '良') pt = 2.0;
+    else if (gr === 'C' || gr === '可') pt = 1.0;
+    else if (gr === 'D' || gr === 'F' || gr === '不可') pt = 0.0;
+    if (pt !== null) {
+      gpaPoints += pt * (c.credits || 2);
+      gpaCredits += (c.credits || 2);
+    }
+  }
+  return gpaCredits > 0 ? Math.round((gpaPoints / gpaCredits) * 100) / 100 : 2.80;
+}
+
 // テキスト・OCR出力からのプロフィール更新JSON抽出ユーティリティ（クライアント・サーバー両用）
 export function parseProfileUpdateFromText(text: string, isImage: boolean = false): any {
   if (!text) return null;
@@ -336,6 +468,15 @@ export function parseProfileUpdateFromText(text: string, isImage: boolean = fals
   if (matchUpdate) {
     const parsed = tryCleanAndParseJson(matchUpdate[1]);
     if (parsed && (parsed.enrolledCourses || parsed.action || parsed.addCompletedCourses || parsed.completedCourses || parsed.totalEarnedCredits !== undefined)) {
+      if (Array.isArray(parsed.completedCourses) && parsed.completedCourses.length > 0) {
+        if (parsed.totalEarnedCredits === undefined) {
+          parsed.totalEarnedCredits = parsed.completedCourses.reduce((sum: number, c: any) => sum + (Number(c.credits) || 2), 0);
+        }
+        if (parsed.currentGpa === undefined) {
+          parsed.currentGpa = calculateGpaFromCompletedCourses(parsed.completedCourses);
+        }
+        parsed.action = parsed.action || 'transcript';
+      }
       return parsed;
     }
   }
@@ -345,6 +486,15 @@ export function parseProfileUpdateFromText(text: string, isImage: boolean = fals
   for (const blk of codeBlocks) {
     const parsed = tryCleanAndParseJson(blk[1]);
     if (parsed && (parsed.enrolledCourses || parsed.action || parsed.addCompletedCourses || parsed.completedCourses || parsed.totalEarnedCredits !== undefined)) {
+      if (Array.isArray(parsed.completedCourses) && parsed.completedCourses.length > 0) {
+        if (parsed.totalEarnedCredits === undefined) {
+          parsed.totalEarnedCredits = parsed.completedCourses.reduce((sum: number, c: any) => sum + (Number(c.credits) || 2), 0);
+        }
+        if (parsed.currentGpa === undefined) {
+          parsed.currentGpa = calculateGpaFromCompletedCourses(parsed.completedCourses);
+        }
+        parsed.action = parsed.action || 'transcript';
+      }
       return parsed;
     }
   }
@@ -354,16 +504,35 @@ export function parseProfileUpdateFromText(text: string, isImage: boolean = fals
   if (rawMatch) {
     const parsed = tryCleanAndParseJson(rawMatch[0]);
     if (parsed && (parsed.enrolledCourses || parsed.action || parsed.addCompletedCourses || parsed.completedCourses || parsed.totalEarnedCredits !== undefined)) {
+      if (Array.isArray(parsed.completedCourses) && parsed.completedCourses.length > 0) {
+        if (parsed.totalEarnedCredits === undefined) {
+          parsed.totalEarnedCredits = parsed.completedCourses.reduce((sum: number, c: any) => sum + (Number(c.credits) || 2), 0);
+        }
+        if (parsed.currentGpa === undefined) {
+          parsed.currentGpa = calculateGpaFromCompletedCourses(parsed.completedCourses);
+        }
+        parsed.action = parsed.action || 'transcript';
+      }
       return parsed;
     }
   }
 
-  // 4. 成績通知書のテキスト解析救済（単位数、GPA、修得科目の正規表現抽出）
-  const isTranscriptContext = isImage || text.includes('成績') || text.includes('GPA') || text.includes('修得単位') || text.includes('通知書');
+  // 4. 成績通知書のテキスト解析救済（タブ区切り「科目名\t単位数\t評価」、CSV、スペース区切り、マークダウン表など）
+  const isTranscriptContext = isImage ||
+    text.includes('成績') ||
+    text.includes('GPA') ||
+    text.includes('修得単位') ||
+    text.includes('通知書') ||
+    text.includes('評価') ||
+    text.includes('単位数') ||
+    (text.includes('科目名') && text.includes('単位')) ||
+    text.includes('\t') ||
+    text.includes('修得') ||
+    text.includes('合格');
+
   if (isTranscriptContext) {
     let extractedCredits: number | undefined = undefined;
     let extractedGpa: number | undefined = undefined;
-    const completedCourses: any[] = [];
 
     // 総修得単位の抽出
     const creditsMatch = text.match(/(?:総修得単位|修得単位数|修得単位合計|修得単位|合計単位|単位合計|卒業要件対象単位)[:：\s]*([0-9]{1,3})\s*(?:単位)?/i)
@@ -384,38 +553,17 @@ export function parseProfileUpdateFromText(text: string, isImage: boolean = fals
       }
     }
 
-    // 科目行の抽出 (例: "| 英語1 | 2 | A |" または "- 心理学概論 (S) 2単位" または "線形代数 2単位 A")
-    const lines = text.split('\n');
-    for (const line of lines) {
-      // パターンA: マークダウン表 "| 科目名 | 2 | S/A/B/C |"
-      const tableMatch = line.match(/\|\s*([^\|]+?)\s*\|\s*([1-4])\s*(?:単位)?\s*\|\s*([SABCDsabc]|修得|合格)\s*\|/);
-      if (tableMatch) {
-        const name = tableMatch[1].trim();
-        const cr = parseInt(tableMatch[2], 10);
-        const gr = tableMatch[3].toUpperCase().trim();
-        if (name && !['科目名', '授業名', '---'].includes(name)) {
-          completedCourses.push({ name, credits: cr || 2, grade: gr, year: 1 });
-          continue;
-        }
-      }
-
-      // パターンB: リスト "- 科目名 2単位 (A)" または "・科目名 (S) 2単位"
-      const listMatch = line.match(/^[・\-\*]\s*([^\(（:：\d]+?)(?:[\(（]([SABCDsabc]|修得|合格)[\)）])?\s*([1-4])\s*単位/);
-      if (listMatch) {
-        const name = listMatch[1].trim();
-        const gr = (listMatch[2] || '修得').toUpperCase().trim();
-        const cr = parseInt(listMatch[3], 10) || 2;
-        if (name && name.length >= 2 && !['修得科目', '成績', '単位'].includes(name)) {
-          completedCourses.push({ name, credits: cr, grade: gr, year: 1 });
-        }
-      }
-    }
+    // 高精度科目パーサーを実行
+    const completedCourses = extractCompletedCoursesFromText(text);
 
     if (extractedCredits !== undefined || extractedGpa !== undefined || completedCourses.length > 0) {
+      const finalCredits = extractedCredits ?? (completedCourses.length > 0 ? completedCourses.reduce((sum, c) => sum + (c.credits || 2), 0) : 30);
+      const finalGpa = extractedGpa ?? (completedCourses.length > 0 ? calculateGpaFromCompletedCourses(completedCourses) : 2.80);
+
       return {
         action: 'transcript',
-        totalEarnedCredits: extractedCredits ?? (completedCourses.length > 0 ? completedCourses.reduce((sum, c) => sum + (c.credits || 2), 0) : 30),
-        currentGpa: extractedGpa ?? 2.80,
+        totalEarnedCredits: finalCredits,
+        currentGpa: finalGpa,
         completedCourses
       };
     }

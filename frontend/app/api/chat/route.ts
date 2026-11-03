@@ -45,9 +45,10 @@ const SYSTEM_PROMPT = `
    ・「【】」「《》」「［］」「■」「◆」「▲」「▼」「🔹」「★」「※」「・」「*」などの記号や箇条書きマークを文章中に付けないでください。
    ・太字構文（**〇〇**）や見出し記号（###など）も使用せず、通常の自然な平文で回答してください。
    ・「表示用：」「詳細案内：」「【回答】」などのシステムタグやラベルも一切出力しないでください。
-2. **長文回答の完全防止（最重要：短く簡潔に・長文回答防止）**：
-   ・回答は原則1〜2文、長くても3文以内（80〜140文字程度）で短く要点だけを返してください。
-   ・長い前置き、不要な背景説明、過度な補足の羅列は一切禁止です。質問に対する直接の答えだけをチャットで返してください。
+2. **全文提示の義務（最重要：文章を途中で絶対に切らないこと）**：
+   ・回答は途中で文章が切れることなく、最初から最後まで完全な文章で全文を提示してください。
+   ・文末が途切れたり省略されたりする回答は厳禁です。必ず文末（「〜ですよ」「〜してくださいね」など）まで完結させてください。
+   ・質問に対して必要な情報（教室名、時限、科目名、単位数、アドバイス等）は最後まで省略せずに丁寧に回答してください。
 3. **必修と選択必修の明確な区別**：
    ・「必修科目」：卒業要件として必ず単位を取らなければならない科目（自主創造の基礎、各学科の指定専門必修など）。
    ・「選択必修科目」：指定されたグループの中から、決められた単位数以上を選んで必ず修得する科目（総合教育科目、外国語科目など）。
@@ -928,7 +929,7 @@ export async function POST(req: NextRequest) {
       }
 
       // 高速モデル（gemini-3-flash-preview, gemini-3.5-flash）を並列レースさせて最短2〜3秒で返答
-      const outputLimit = image ? 2048 : 800;
+      const outputLimit = 4096;
       const geminiPayload = {
         systemInstruction: {
           parts: [{ text: SYSTEM_PROMPT.trim() }]
@@ -974,8 +975,8 @@ export async function POST(req: NextRequest) {
       // 1. 最速の2モデルを並列レース（最速で応答した方が即座に採用される）
       try {
         successfulResponse = await Promise.any([
-          fetchSingleModel('gemini-3-flash-preview', 7000),
-          fetchSingleModel('gemini-3.5-flash', 7000)
+          fetchSingleModel('gemini-3-flash-preview', 12000),
+          fetchSingleModel('gemini-3.5-flash', 12000)
         ]);
       } catch (raceErr: any) {
         if (raceErr && Array.isArray(raceErr.errors)) {
@@ -992,7 +993,7 @@ export async function POST(req: NextRequest) {
         const FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
         for (const model of FALLBACK_MODELS) {
           try {
-            successfulResponse = await fetchSingleModel(model, 8000);
+            successfulResponse = await fetchSingleModel(model, 12000);
             if (successfulResponse) break;
           } catch (err: any) {
             lastErrorStatus = err?.status || lastErrorStatus;

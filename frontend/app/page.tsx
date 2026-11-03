@@ -401,7 +401,7 @@ export default function UnifiedAssistantPage() {
     let shortLabel: string | undefined = undefined;
     let mainText = raw || '';
 
-    mainText = mainText.replace(/```profile_update\s*[\s\S]*?```/g, '').trim();
+    mainText = mainText.replace(/```profile_update[\s\S]*?(?:```|$)/g, '').trim();
 
     const labelMatch = mainText.match(/表示用[：:]\s*([^\n\r]+)/);
     if (labelMatch) {

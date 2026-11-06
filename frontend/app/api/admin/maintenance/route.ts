@@ -1,63 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
+import { loadMaintenanceConfig, MaintenanceConfig, saveMaintenanceConfig } from './maintenanceStore';
 
-export interface MaintenanceConfig {
-  isActive: boolean;
-  startDateTime: string;
-  endDateTime: string;
-  startDisplay: string;
-  endDisplay: string;
-  targetServices: string;
-  noticeMessage?: string;
-  updatedAt?: string;
-}
-
-// デフォルトのメンテナンス設定
-const DEFAULT_CONFIG: MaintenanceConfig = {
-  isActive: false,
-  startDateTime: '2026-10-27T01:00',
-  endDateTime: '2026-10-27T06:00',
-  startDisplay: '2026年10月27日(火) 01:00',
-  endDisplay: '2026年10月27日(火) 06:00',
-  targetServices: '全サービス（時間割検索、空き教室案内、AIアシスタント、履修カルテ）',
-  noticeMessage: '現在、新機能の追加および学部要覧・時間割データの更新作業を行っております。'
-};
-
-// メモリキャッシュ
-let memoryConfig: MaintenanceConfig = { ...DEFAULT_CONFIG };
-
-// 一時ファイルパス（サーバー再起動・インスタンス間での簡易永続化用）
-const TMP_FILE = path.join(process.cwd(), '.maintenance_state.json');
-
-function loadConfig(): MaintenanceConfig {
-  try {
-    if (fs.existsSync(TMP_FILE)) {
-      const data = fs.readFileSync(TMP_FILE, 'utf-8');
-      const parsed = JSON.parse(data);
-      memoryConfig = { ...DEFAULT_CONFIG, ...parsed };
-      return memoryConfig;
-    }
-  } catch (e) {
-    // ignore
-  }
-  return memoryConfig;
-}
-
-function saveConfig(cfg: MaintenanceConfig) {
-  memoryConfig = { ...cfg, updatedAt: new Date().toISOString() };
-  try {
-    fs.writeFileSync(TMP_FILE, JSON.stringify(memoryConfig, null, 2), 'utf-8');
-  } catch (e) {
-    // serverless 環境などで書き込めない場合はメモリ上で保持
-  }
-}
+// 保存された最新の設定を毎回返す
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const config = loadConfig();
+  const { config, persistent, storageError } = await loadMaintenanceConfig();
   return NextResponse.json({
     status: 'ok',
-    maintenance: config
+    maintenance: config,
+    persistent,
+    storageError
   });
 }
 
@@ -77,16 +30,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: '管理者コードが正しくありません。' }, { status: 401 });
     }
 
+    const loaded = await loadMaintenanceConfig();
+
     if (action === 'verify') {
       return NextResponse.json({
         status: 'ok',
         isAdmin: true,
-        maintenance: loadConfig()
+        maintenance: loaded.config,
+        persistent: loaded.persistent,
+        storageError: loaded.storageError
       });
     }
 
     if (action === 'update' && config) {
-      const current = loadConfig();
+      // 読み込みに失敗した状態で上書きすると、古い値で設定を壊してしまう
+      if (loaded.storageError) {
+        return NextResponse.json({ error: '保存先に接続できないため、設定を更新できませんでした。時間をおいて再度お試しください。' }, { status: 503 });
+      }
+
+      const current = loaded.config;
       const updated: MaintenanceConfig = {
         ...current,
         isActive: Boolean(config.isActive),
@@ -97,12 +59,21 @@ export async function POST(req: NextRequest) {
         targetServices: config.targetServices || current.targetServices,
         noticeMessage: config.noticeMessage ?? current.noticeMessage
       };
-      saveConfig(updated);
+
+      let saved: MaintenanceConfig;
+      try {
+        saved = await saveMaintenanceConfig(updated);
+      } catch (error) {
+        console.error('Failed to save maintenance config:', error);
+        return NextResponse.json({ error: '設定を保存できませんでした。時間をおいて再度お試しください。' }, { status: 503 });
+      }
 
       return NextResponse.json({
         status: 'ok',
         isAdmin: true,
-        maintenance: updated,
+        maintenance: saved,
+        persistent: loaded.persistent,
+        storageError: false,
         message: 'メンテナンス設定を更新しました。'
       });
     }
@@ -112,4 +83,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error?.message || 'サーバーエラーが発生しました。' }, { status: 500 });
   }
 }
-

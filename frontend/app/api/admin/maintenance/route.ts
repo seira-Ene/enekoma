@@ -13,8 +13,6 @@ export interface MaintenanceConfig {
   updatedAt?: string;
 }
 
-const ADMIN_CODE = '@Seira04162525';
-
 // デフォルトのメンテナンス設定
 const DEFAULT_CONFIG: MaintenanceConfig = {
   isActive: false,
@@ -68,8 +66,14 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { adminCode, action, config } = body;
 
+    // 環境変数が未設定の場合は全リクエストを拒否する（undefined 同士の一致で認証を通さないため）
+    const adminSecret = process.env.ADMIN_SECRET_KEY;
+    if (!adminSecret) {
+      return NextResponse.json({ error: '管理者認証が設定されていません。' }, { status: 503 });
+    }
+
     // 管理者コード検証
-    if (adminCode !== ADMIN_CODE) {
+    if (adminCode !== adminSecret) {
       return NextResponse.json({ error: '管理者コードが正しくありません。' }, { status: 401 });
     }
 

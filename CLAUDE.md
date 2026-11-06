@@ -12,6 +12,7 @@ EneKoma(エネコマ)は、日本大学文理学部(CHS)の学生向けAIチャ�
 | 卒業・進級要件チェック | 必修・選択必修の未履修、資格コース・副専攻の進捗、不足単位を判定 | `analyzeAcademicDeficiency`(`data/gakubuYoran.ts`), `data/departmentCurriculum.ts`, `data/coursesAndMinorsCurriculum.ts` |
 | 目標GPA逆算 | 今期S・Aを何単位取れば目標GPAに届くかを提案 | `simulateGpaEngine`(`data/gakubuYoran.ts`) |
 | 空き教室・構内ナビ | 今の時限の空き教室、自販機・ゴミ箱・各課窓口を案内 | `findFreeRooms`(`data/courses.ts`), `SYSTEM_PROMPT` と `answerLocally`(`route.ts`) |
+| 履修サポート | 重複チェック、空きコマ提案、友達との空きコマ照合、必修組み込みの時間割案、移動判定、科目・教員・教室の逆引き | `answerTimetableQuery`(`data/timetableAssistant.ts`) |
 
 ## コマンド
 
@@ -23,6 +24,11 @@ npm run dev      # http://localhost:3000
 npm run build
 npm run lint
 cd frontend && npx tsc --noEmit   # 型チェック
+
+# 時間割PDFの更新時(新カリ用と旧カリ用のPDFを1つのフォルダに置く。同種は日付が新しいものを使う)
+pip install pdfplumber
+python scripts/parse_timetable.py <PDFフォルダ> --check   # 件数と要確認行だけ表示
+python scripts/parse_timetable.py <PDFフォルダ>           # timetableReiwa8*.json を更新
 
 # FastAPI(任意)
 cd backend && pip install -r requirements.txt && uvicorn main:app --reload --port 8000
@@ -49,6 +55,15 @@ cd backend && pip install -r requirements.txt && uvicorn main:app --reload --por
 
 モデル名は `route.ts` と `page.tsx`(直接呼び出しとキーのテスト)の両方にハードコードされているので、変更時は両方を更新する。
 
+### 時間割の回答
+
+Geminiに時間割の事実を推測させない。`answerTimetableQuery` が質問を振り分けて実データを検索し、その結果を次の2通りで使う。
+
+- `answerLocally`: 最初に呼び、結果があればそのまま返す。
+- Gemini: `buildTimetableContext` が検索結果と現在日時をプロンプトに追加し、`SYSTEM_PROMPT` の規則でその内容以外を答えないように制限する。
+
+時刻は `getCampusClock` で日本時間に変換する(Vercelのサーバーは日本時間ではない)。4〜9月を前期、10〜3月を後期とし、祝日・休講・行事は扱わない。教室の空き判定は入学年度に関係なく、全カリキュラムの授業を合わせて行う。
+
 ### `profile_update` の契約
 
 AIの回答末尾に置く ` ```profile_update ` JSONブロックでプロフィールを更新する。`action` は `enroll_current_timetable`(今期の時間割)、`add_completed_timetable`(過去の時間割)、`transcript`(成績表)の3種類。
@@ -71,13 +86,18 @@ AIの回答末尾に置く ` ```profile_update ` JSONブロックでプロフィ
 
 ### カリキュラムの分岐
 
-`admissionYear` が `reiwa6_or_earlier` か `reiwa7_or_later` かで参照する時間割が変わる。`getLectureDatabase(curriculum)` を経由し、`courses.ts` と `coursesReiwa6.ts` を直接使い分けない。
+`admissionYear` が `reiwa6_or_earlier` か `reiwa7_or_later` かで参照する時間割が変わる。`getLectureDatabase(curriculum)` を経由する。
+
+- `reiwa7_or_later`: `timetableReiwa8.json`
+- `reiwa6_or_earlier`: `timetableReiwa8Legacy.json`
+
+どちらも `scripts/parse_timetable.py` の生成物なので直接編集しない。修正はパーサーを直して再生成する。
 
 ### Python側とデプロイ構成
 
 - `backend/main.py`: FastAPI版。空き教室、卒業判定、チャットなどのAPIを持つが、フロントエンドからは呼ばれていない。
 - `frontend/api/index.py`: `backend/main.py` のほぼ複製。`api/index.py` は `backend/main.py` を読み込むだけの薄いラッパー。
-- `chs_courses*.py`: `backend/`、`api/`、`frontend/api/` に同一のコピーがある。TS版の時間割データ(`courses.ts`, `coursesReiwa6.ts`)とも別管理なので、時間割の修正時は同期が必要。
+- `chs_courses*.py`: `backend/`、`api/`、`frontend/api/` に同一のコピーがある。TS側の時間割データとは別管理で、令和8年度の更新は反映していない。
 
 `vercel.json` では全リクエスト(`/api/*` を含む)を `frontend` サービスへ流すので、APIの実装先はNextのRoute Handler(`frontend/app/api/`)。`backend` サービスの定義は残っているが、公開ルートはない。
 

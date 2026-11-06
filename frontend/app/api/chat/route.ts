@@ -19,16 +19,7 @@ import {
   simulateGpaEngine,
   UserProfileData
 } from '@/app/data/gakubuYoran';
-import {
-  findFreeRooms,
-  checkCourseConflicts,
-  suggestCoursesForFreePeriod,
-  proposeAutomaticSchedule,
-  calculateTransitOptimization,
-  getRoomDailySchedule,
-  getLectureDatabase,
-  getCompactRoomLabel
-} from '@/app/data/courses';
+import { answerTimetableQuery, buildTimetableContext } from '@/app/data/timetableAssistant';
 import { parseProfileUpdateFromText } from '@/app/data/studentAccounts';
 
 const SYSTEM_PROMPT = `
@@ -59,6 +50,7 @@ const SYSTEM_PROMPT = `
 ---
 
 ## 【動作ルール】
+0. 時間割データの厳守：授業、教員、教室、時限、空き教室についての事実は、質問と一緒に渡される「時間割の参照データ」だけを根拠にしてください。参照データにない授業名、教員名、教室番号、時限を作らないでください。データがないときは推測せず、「時間割データでは確認できませんでした」と伝えるか、曜日や時限、科目名を聞き返してください。
 1. 要覧準拠の回答義務：履修・単位・卒業要件に関する相談は、文理学部要覧の基準に基づいて回答してください。
 2. 4桁教室番号の正確な保持：「3306」「3505」等の教室番号は省略せず「3号館3306教室」のように自然に案内してください。
 3. 画像や時間割表の読み込み時：
@@ -374,6 +366,10 @@ function answerLocally(query: string, userProfile?: UserProfileData): string {
   const q = query.trim();
   const qLower = q.toLowerCase();
 
+  // 時間割に関する質問は実データから回答する
+  const timetableAnswer = answerTimetableQuery(q, userProfile);
+  if (timetableAnswer) return timetableAnswer;
+
   // 0. 各学科の必修科目・選択必修科目・単位数の完全回答（12学科対応）
   const depts = [
     '社会学科', '社会福祉学科', '教育学科', '体育学科', '心理学科',
@@ -439,37 +435,6 @@ function answerLocally(query: string, userProfile?: UserProfileData): string {
     return '必修科目は卒業のために絶対に修得しなければならない科目（自主創造の基礎や専門必修など）で、落とすと卒業できません。選択必修科目は指定されたグループの中から規定単位数以上を選んで必ず修得する科目ですよ。どちらも卒業に関わる重要科目なので、優先して履修してくださいね！';
   }
 
-  // 0.1 曜日・時限・教室・教員・講義の逆引き検索（チャット式回答）
-  const roomQueryMatch = q.match(/([1-4]\d{2,3}[a-zA-Z]?|8B\d{3}|88\d{3})/i);
-  let dayInQuery: string | undefined = undefined;
-  for (const d of ['月', '火', '水', '木', '金', '土']) {
-    if (q.includes(`${d}曜`) || (q.length <= 15 && q.includes(d))) {
-      dayInQuery = d;
-      break;
-    }
-  }
-  let periodInQuery: number | undefined = undefined;
-  const pmq = q.match(/([1-5])\s*(?:限|コマ)/);
-  if (pmq) periodInQuery = parseInt(pmq[1], 10);
-
-  if (roomQueryMatch && (dayInQuery || periodInQuery || q.includes('授業') || q.includes('誰') || q.includes('何') || q.includes('先生') || q.includes('講義'))) {
-    const rawR = roomQueryMatch[1].toUpperCase().replace('88', '8B');
-    const db = getLectureDatabase(userProfile?.admissionYear);
-    const hits = db.filter((c) => {
-      const roomHit = c.room.toUpperCase().includes(rawR);
-      const dayHit = dayInQuery ? c.day === dayInQuery : true;
-      const periodHit = periodInQuery ? c.period === periodInQuery : true;
-      return roomHit && dayHit && periodHit;
-    });
-
-    if (hits.length > 0) {
-      const h = hits[0];
-      const typeStr = h.type ? `（${h.type}）` : '';
-      const whenStr = h.day && h.period ? `${h.day}曜${h.period}限` : '';
-      return `${whenStr ? `${whenStr}の` : ''}${getCompactRoomLabel(rawR)}は、${h.teacher}先生の『${h.name}${typeStr}』が行われていますよ。${h.department ? `対象は${h.department}です。` : ''}`;
-    }
-  }
-
   // 1. CAP制・年間履修上限についての質問
   if (['上限', 'cap', '何単位まで履修', '年間単位', '履修登録上限', '40単位'].some((k) => qLower.includes(k))) {
     return (
@@ -499,117 +464,6 @@ function answerLocally(query: string, userProfile?: UserProfileData): string {
       `成績表や時間割の画像・ファイルを送っていただければ、履修科目やGPA、評価を自動で読み取ってプロフィールに反映できますよ！\n\n` +
       `右上のAPI設定からGemini APIキーを入れておくと自動解析がスムーズに動きます。もしAPIキーがなくても、右上のプロフィールから手動で単位数やGPAを設定すれば、いつでも不足単位の判定やGPAシミュレーションが使えますので安心してくださいね。`
     );
-  }
-
-  // 5. 指定日時・時限・現在の空き教室・自習スポット検索
-  const isRoomFreeQuery =
-    ['空き教室', '空いてる教室', '空いている教室', '自習室', '自習スポット', '自習できる', 'いま空い', '今空い', 'どこ空い', '教室空い', '空き部屋', '空いてる場所', '使える教室'].some((k) => qLower.includes(k)) ||
-    (/(月|火|水|木|金|土)曜?[^。、！？\n]*([1-5]限|[1-5]コマ|\d{1,2}時)/.test(qLower));
-
-  if (isRoomFreeQuery) {
-    let dayMatch: string | undefined = undefined;
-    for (const d of ['月', '火', '水', '木', '金', '土']) {
-      if (q.includes(`${d}曜`) || q.includes(`${d}曜日`)) {
-        dayMatch = d;
-        break;
-      }
-    }
-    if (!dayMatch) {
-      const dm = q.match(/(月|火|水|木|金|土)(?=[の\s\d限])/);
-      if (dm) dayMatch = dm[1];
-    }
-
-    let periodMatch: number | undefined = undefined;
-    const pm = q.match(/([1-5])\s*(?:限|コマ)/);
-    if (pm) {
-      periodMatch = parseInt(pm[1], 10);
-    } else {
-      const tm = q.match(/(\d{1,2})(?:[:：](\d{2}))?\s*(?:時|分|頃|から)?/);
-      if (tm) {
-        const h = parseInt(tm[1], 10);
-        const m = tm[2] ? parseInt(tm[2], 10) : 0;
-        const total = h * 60 + m;
-        if (h >= 8 && h <= 19) {
-          if (total < 10 * 60 + 35) periodMatch = 1;
-          else if (total < 12 * 60 + 10) periodMatch = 2;
-          else if (total < 13 * 60) periodMatch = 2;
-          else if (total < 14 * 60 + 35) periodMatch = 3;
-          else if (total < 16 * 60 + 15) periodMatch = 4;
-          else periodMatch = 5;
-        }
-      }
-    }
-
-    let buildingMatch: string | undefined = undefined;
-    const bm = q.match(/([1-4])\s*号館/);
-    if (bm) {
-      buildingMatch = `${bm[1]}号館`;
-    }
-
-    return findFreeRooms(dayMatch, periodMatch, buildingMatch, userProfile?.admissionYear).formattedReport;
-  }
-
-  // 6. キャンパス移動・10分休みの最適化ナビ
-  if (['移動', '10分休み', '間に合う', 'から', 'ルート', '行き方'].some((k) => qLower.includes(k))) {
-    const rooms = q.match(/([1-4]\d{2,3}[a-zA-Z]?)/g);
-    if (rooms && rooms.length >= 2) {
-      return calculateTransitOptimization(rooms[0], rooms[1]);
-    }
-  }
-
-  // 7. 教室の利用スケジュール・何限に使われているか
-  if (['何限に使われ', '何限', '教室の予定', '教室の利用', '利用状況', '使われてる', '使用スケジュール'].some((k) => qLower.includes(k))) {
-    const mRoom = q.match(/([1-4]\d{2,3}[a-zA-Z]?)/);
-    if (mRoom) {
-      const dayMatch = ['月', '火', '水', '木', '金', '土'].find((d) => q.includes(`${d}曜`) || q.includes(d));
-      return getRoomDailySchedule(mRoom[1], dayMatch, userProfile?.admissionYear);
-    }
-  }
-
-  // 8. 履修登録サポート＆「空きコマ」活用提案
-  if (['空きコマ', '空いてるコマ', 'コマを埋め', '埋めたい', 'おすすめの総合', 'コマに入る'].some((k) => qLower.includes(k))) {
-    const dayMatch = ['月', '火', '水', '木', '金', '土'].find((d) => q.includes(`${d}曜`) || q.includes(d)) || '火';
-    const periodMatch = [1, 2, 3, 4, 5].find((p) => q.includes(`${p}限`) || q.includes(`${p}コマ`)) || 3;
-    const cat = q.includes('総合') ? '総合' : q.includes('外国語') ? '外国語' : q.includes('基礎') ? '基礎' : '';
-    return suggestCoursesForFreePeriod(dayMatch, periodMatch, cat, userProfile?.admissionYear);
-  }
-
-  // 9. 時間割重複（バッティング）チェック
-  if (['被っ', '重複', 'バッティング', '重なって'].some((k) => qLower.includes(k))) {
-    const db = getLectureDatabase(userProfile?.admissionYear);
-    const candidateCourses: string[] = [];
-    db.forEach((c) => {
-      if (q.includes(c.name) && !candidateCourses.includes(c.name)) {
-        candidateCourses.push(c.name);
-      }
-    });
-    if (candidateCourses.length >= 2) {
-      return checkCourseConflicts(candidateCourses, userProfile?.admissionYear).formattedReport;
-    }
-  }
-
-  // 10. 学部要覧連動「必修組み込み済みの自動スケジュール提案」
-  if (['時間割作って', '時間割提案', 'スケジュール作って', 'おすすめの時間割', '必修時間割', '基本時間割', '時間割を組んで'].some((k) => qLower.includes(k))) {
-    const dept = userProfile?.department || '情報科学科';
-    const grade = userProfile?.grade || 1;
-    const reqs = GAKUBU_YORAN_DEPARTMENTS[dept]?.requiredCourses.map((c) => c.name) || [];
-    return proposeAutomaticSchedule(dept, grade, userProfile?.admissionYear, reqs);
-  }
-
-  // 11. 講義・教員名の逆引き検索
-  const db = getLectureDatabase(userProfile?.admissionYear);
-  if (q.length >= 2 && ['先生', '教授', '講義', '授業', '開講', '何曜'].some((k) => q.includes(k))) {
-    const cleanQ = q.replace(/(先生|教授|講義|授業|って|何曜|何限|いつ|どこ|教えて|の)/g, '').trim();
-    if (cleanQ.length >= 2) {
-      const hits = db.filter((c) => c.name.includes(cleanQ) || c.teacher.includes(cleanQ));
-      if (hits.length > 0) {
-        const lines = [`${cleanQ}についての講義をお調べしました！`, ''];
-        hits.slice(0, 5).forEach((h) => {
-          lines.push(`${h.name}（担当：${h.teacher}先生）は、${h.day}曜${h.period}限に${getCompactRoomLabel(h.room)}で開講されていますよ。`);
-        });
-        return lines.join('\n');
-      }
-    }
   }
 
   // 12. 教室番号直接入力判定（「3306」「3505」「421」「124」等の直打ち・質問）
@@ -854,8 +708,10 @@ export async function POST(req: NextRequest) {
           `・修得済み科目数: ${(userProfile.completedCourses || []).length}科目\n\n`
         : '';
 
+      // 時間割の事実はAIに推測させず、検索した実データを渡す（画像解析では不要）
+      const timetableContext = image ? '' : buildTimetableContext(query, userProfile);
       const currentTurnParts: any[] = [
-        { text: `${profileContext}${userPromptText}` }
+        { text: `${profileContext}${timetableContext}${userPromptText}` }
       ];
 
       if (image && image.data) {

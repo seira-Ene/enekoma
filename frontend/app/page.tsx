@@ -2249,10 +2249,11 @@ export default function UnifiedAssistantPage() {
           学生履修プロフィールモーダル（Web履修ポータル風）
       ======================================================== */}
       {showProfileModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-2xs">
-          <div className="bg-white rounded-xl shadow-lg max-w-2xl w-full max-h-[90vh] flex flex-col border border-slate-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-2 sm:p-4 backdrop-blur-2xs">
+          {/* タブを切り替えても位置が動かないよう高さを固定する */}
+          <div className="bg-white rounded-xl shadow-lg max-w-2xl w-full h-[96dvh] sm:h-[90dvh] flex flex-col border border-slate-200">
             {/* ヘッダー */}
-            <div className="flex items-center justify-between p-4 border-b border-slate-200">
+            <div className="shrink-0 flex items-center justify-between px-4 py-2.5 sm:py-4 border-b border-slate-200">
               <div>
                 <h3 className="text-base font-bold text-slate-900">学生履修プロフィール</h3>
                 <p className="text-xs text-slate-500">
@@ -2267,72 +2268,36 @@ export default function UnifiedAssistantPage() {
               </button>
             </div>
 
-            {/* タブ切り替え */}
-            <div className="flex border-b border-slate-200 bg-slate-50 px-3 pt-2 space-x-1 overflow-x-auto no-scrollbar">
-              <button
-                onClick={() => setProfileTab('timetable')}
-                className={`px-3 py-1.5 text-xs font-semibold border-b-2 whitespace-nowrap transition ${
-                  profileTab === 'timetable'
-                    ? 'border-slate-800 text-slate-900 bg-white rounded-t'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                📅 今期履修中 ({userProfile.semesterCredits}単位)
-              </button>
-              <button
-                onClick={() => setProfileTab('completed')}
-                className={`px-3 py-1.5 text-xs font-semibold border-b-2 whitespace-nowrap transition ${
-                  profileTab === 'completed'
-                    ? 'border-slate-800 text-slate-900 bg-white rounded-t'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                📜 修得済み科目 ({userProfile.completedCourses.length}件)
-              </button>
-              <button
-                onClick={() => setProfileTab('reqCourses')}
-                className={`px-3 py-1.5 text-xs font-semibold border-b-2 whitespace-nowrap transition ${
-                  profileTab === 'reqCourses'
-                    ? 'border-slate-800 text-slate-900 bg-white rounded-t'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                📌 学科必修チェック ({liveDeficiency.missingMajorReqs.length === 0 ? '完修' : `残${liveDeficiency.missingMajorReqs.length}`})
-              </button>
-              <button
-                onClick={() => setProfileTab('basic')}
-                className={`px-3 py-1.5 text-xs font-semibold border-b-2 whitespace-nowrap transition ${
-                  profileTab === 'basic'
-                    ? 'border-slate-800 text-slate-900 bg-white rounded-t'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                ⚙️ 基本設定・GPA
-              </button>
-              <button
-                onClick={() => setProfileTab('courses')}
-                className={`px-3 py-1.5 text-xs font-semibold border-b-2 whitespace-nowrap transition ${
-                  profileTab === 'courses'
-                    ? 'border-slate-800 text-slate-900 bg-white rounded-t'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                🏅 資格コース
-              </button>
-              <button
-                onClick={() => setProfileTab('minors')}
-                className={`px-3 py-1.5 text-xs font-semibold border-b-2 whitespace-nowrap transition ${
-                  profileTab === 'minors'
-                    ? 'border-slate-800 text-slate-900 bg-white rounded-t'
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                🌐 副専攻 (24種)
-              </button>
+            {/* タブ切り替え（縮めず、横スクロールなしで全タブを常に表示する） */}
+            <div role="tablist" aria-label="学生履修プロフィールの項目" className="shrink-0 grid grid-cols-3 sm:grid-cols-6 border-b border-slate-200 bg-slate-50">
+              {[
+                { id: 'timetable', label: '📅 今期履修中', detail: `${userProfile.semesterCredits}単位` },
+                { id: 'completed', label: '📜 修得済み科目', detail: `${userProfile.completedCourses.length}件` },
+                { id: 'reqCourses', label: '📌 学科必修​チェック', detail: liveDeficiency.missingMajorReqs.length === 0 ? '完修' : `残${liveDeficiency.missingMajorReqs.length}` },
+                { id: 'basic', label: '⚙️ 基本設定・GPA' },
+                { id: 'courses', label: '🏅 資格コース' },
+                { id: 'minors', label: '🌐 副専攻', detail: '24種' }
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={profileTab === tab.id}
+                  onClick={() => setProfileTab(tab.id as typeof profileTab)}
+                  className={`min-h-11 px-1 py-1.5 text-[11px] leading-tight break-keep font-semibold border-b-2 flex flex-col items-center justify-center text-center transition ${
+                    profileTab === tab.id
+                      ? 'border-slate-800 text-slate-900 bg-white'
+                      : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-100'
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  {tab.detail && <span className="font-normal text-[10px]">{tab.detail}</span>}
+                </button>
+              ))}
             </div>
 
-            {/* モーダル本文 */}
-            <div className="p-4 overflow-y-auto space-y-4 text-xs sm:text-sm text-slate-700">
+            {/* モーダル本文（タブごとに作り直して、切り替え時に先頭へ戻す） */}
+            <div key={profileTab} role="tabpanel" className="flex-1 min-h-0 p-4 overflow-y-auto space-y-4 text-xs sm:text-sm text-slate-700">
               {/* TAB 1: 今期履修中（時間割） */}
               {profileTab === 'timetable' && (
                 <div className="space-y-3">
@@ -2583,7 +2548,7 @@ export default function UnifiedAssistantPage() {
                   </div>
 
                   {/* 科目テーブル（スマホ横スクロール対応・文字崩れ防止） */}
-                  <div className="border border-slate-200 rounded-lg overflow-x-auto max-h-72 overflow-y-auto">
+                  <div className="border border-slate-200 rounded-lg overflow-x-auto">
                     <table className="w-full text-xs text-left border-collapse min-w-[340px]">
                       <thead className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200">
                         <tr>
@@ -2714,7 +2679,7 @@ export default function UnifiedAssistantPage() {
                     </div>
 
                     {/* 科目一覧リスト */}
-                    <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden max-h-80 overflow-y-auto">
+                    <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden">
                       {displayedList.length === 0 ? (
                         <div className="p-4 text-center text-xs text-slate-400">該当する科目がありません</div>
                       ) : (
@@ -3020,7 +2985,7 @@ export default function UnifiedAssistantPage() {
                                 <span className="text-slate-400 text-[10px]">クリックで修得済みに登録</span>
                               </div>
 
-                              <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-80 sm:max-h-96 overflow-y-auto text-xs">
+                              <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg text-xs">
                                 {/* 必修科目 */}
                                 {cDetail.requiredCourses.map((req) => {
                                   const isComp = userProfile.completedCourses.some((x) => x.name === req.name);
@@ -3175,7 +3140,7 @@ export default function UnifiedAssistantPage() {
                                 <span className="text-slate-400 text-[10px]">クリックで修得済みに登録</span>
                               </div>
 
-                              <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg max-h-48 overflow-y-auto text-xs">
+                              <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg text-xs">
                                 {/* 必修科目 */}
                                 {mDetail.requiredCourses.map((req) => {
                                   const isComp = userProfile.completedCourses.some((x) => x.name === req.name);
@@ -3243,7 +3208,7 @@ export default function UnifiedAssistantPage() {
             </div>
 
             {/* フッター */}
-            <div className="p-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs">
+            <div className="shrink-0 px-3 py-2 sm:py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs">
               <span className="text-slate-500">変更内容は自動保存されます</span>
               <button
                 onClick={() => setShowProfileModal(false)}

@@ -248,7 +248,7 @@ export default function UnifiedAssistantPage() {
         .catch(() => {});
 
       // 0. 管理者認証状態のセッション復元
-      if (sessionStorage.getItem('enekoma_admin_auth') === 'true') {
+      if (sessionStorage.getItem('enekoma_admin_auth') === 'true' && sessionStorage.getItem('enekoma_admin_code')) {
         setIsAdmin(true);
       }
 
@@ -593,19 +593,6 @@ export default function UnifiedAssistantPage() {
     if (e) e.preventDefault();
     setAuthError(null);
 
-    // 管理者コードの直接ログイン判定
-    if (loginId.trim() === '@Seira04162525' || loginPassword.trim() === '@Seira04162525') {
-      setIsAdmin(true);
-      sessionStorage.setItem('enekoma_admin_auth', 'true');
-      setShowAuthModal(false);
-      setShowAdminControlModal(true);
-      setLoginId('');
-      setLoginPassword('');
-      setProfileNotification('✓ 管理者コードを確認しました。管理者画面を開きました。');
-      setTimeout(() => setProfileNotification(null), 5000);
-      return;
-    }
-
     if (!loginId.trim()) {
       setAuthError('学籍番号またはIDを入力してください。');
       return;
@@ -930,6 +917,7 @@ export default function UnifiedAssistantPage() {
       }
       setIsAdmin(true);
       sessionStorage.setItem('enekoma_admin_auth', 'true');
+      sessionStorage.setItem('enekoma_admin_code', adminCodeInput);
       setShowAdminLoginModal(false);
       setAdminCodeInput('');
       if (data.maintenance) {
@@ -950,6 +938,7 @@ export default function UnifiedAssistantPage() {
     if (confirm('管理者モードを終了しますか？')) {
       setIsAdmin(false);
       sessionStorage.removeItem('enekoma_admin_auth');
+      sessionStorage.removeItem('enekoma_admin_code');
       setShowAdminControlModal(false);
     }
   };
@@ -971,7 +960,7 @@ export default function UnifiedAssistantPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          adminCode: '@Seira04162525',
+          adminCode: sessionStorage.getItem('enekoma_admin_code') || '',
           action: 'update',
           config: updatedConfig
         })
@@ -995,29 +984,10 @@ export default function UnifiedAssistantPage() {
   const handleSend = async (queryToSend?: string, overrideImageType?: 'current_timetable' | 'past_timetable' | 'transcript' | 'auto') => {
     const text = (queryToSend ?? inputText).trim();
 
-    // チャット内での管理者コード判定
     if (text === 'APIキーの取得方法と設定を教えて' || text === 'APIキー取得' || text === 'APIキー' || text === 'API設定') {
       setShowApiModal(true);
     }
 
-    if (text === '@Seira04162525') {
-      setInputText('');
-      setIsAdmin(true);
-      sessionStorage.setItem('enekoma_admin_auth', 'true');
-      setShowAdminControlModal(true);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `admin_${Date.now()}`,
-          sender: 'assistant',
-          text: '管理者権限を確認しました。管理者コントロールパネルを開きました。メンテナンスモードの切り替えや日時設定を行えます。',
-          shortLabel: '管理者認証',
-          source: 'local',
-          timestamp: new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
-        }
-      ]);
-      return;
-    }
     const currentFile = attachedFile;
     const finalImageType = overrideImageType || currentFile?.imageType || 'auto';
 

@@ -38,6 +38,7 @@ import {
   extractCompletedCoursesFromText,
   calculateGpaFromCompletedCourses
 } from '@/app/data/studentAccounts';
+import { prepareFileForUpload } from '@/app/data/imageUpload';
 
 // メッセージ型定義
 interface ChatMessage {
@@ -73,6 +74,20 @@ const DEFAULT_PROFILE: UserProfile = {
 };
 
 // メンテナンス設定型
+// 画像データを履歴に含めると保存容量（約5MB）をすぐ超えるので、保存時は取り除く
+function withoutImagePreviews<T>(messages: T[]): T[] {
+  return messages.map((message) => ({ ...message, imagePreview: undefined }));
+}
+
+// 保存に失敗しても画面を落とさない（履歴が残らないだけで利用は続けられる）
+function saveChatHistory(messages: unknown[]): void {
+  try {
+    localStorage.setItem('enekoma_chat_history', JSON.stringify(messages));
+  } catch (error) {
+    console.warn('Failed to save chat history:', error);
+  }
+}
+
 // メンテナンス設定の保存先に問題があるときに管理者へ伝える文言
 function describeMaintenanceStorage(data: { persistent?: boolean; storageError?: boolean }): string | null {
   if (data.storageError) return '保存先に接続できません。表示中の設定は最新でない可能性があり、更新もできません。';
@@ -332,11 +347,12 @@ export default function UnifiedAssistantPage() {
   // 履歴保存（個別学生アカウントにも自動同期）
   useEffect(() => {
     if (typeof window !== 'undefined' && messages.length > 0) {
-      localStorage.setItem('enekoma_chat_history', JSON.stringify(messages));
+      const storableMessages = withoutImagePreviews(messages);
+      saveChatHistory(storableMessages);
       if (currentStudent) {
         const updatedStudent: StudentAccount = {
           ...currentStudent,
-          chatHistory: messages
+          chatHistory: storableMessages
         };
         saveStudentAccount(updatedStudent);
       }
@@ -391,21 +407,23 @@ export default function UnifiedAssistantPage() {
       mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      setAttachedFile({
-        name: fileName,
-        size: file.size,
-        mimeType,
-        data: result,
-        previewUrl: fileType === 'image' ? result : undefined,
-        fileType,
-        imageType: 'current_timetable' // 初期値：今期の時間割
-      });
-    };
-    reader.readAsDataURL(file);
     e.target.value = '';
+    prepareFileForUpload(file, mimeType)
+      .then((prepared) => {
+        setAttachedFile({
+          name: fileName,
+          size: file.size,
+          mimeType: prepared.mimeType,
+          data: prepared.data,
+          previewUrl: fileType === 'image' ? prepared.data : undefined,
+          fileType,
+          imageType: 'current_timetable' // 初期値：今期の時間割
+        });
+      })
+      .catch(() => {
+        setProfileNotification('⚠️ ファイルを読み込めませんでした。');
+        setTimeout(() => setProfileNotification(null), 5000);
+      });
   };
 
   // レスポンス整形（チャットUI向けに記号や装飾を除去し自然な言葉遣いに）
@@ -581,7 +599,7 @@ export default function UnifiedAssistantPage() {
     if (account.chatHistory && account.chatHistory.length > 0) {
       setMessages(account.chatHistory);
       if (typeof window !== 'undefined') {
-        localStorage.setItem('enekoma_chat_history', JSON.stringify(account.chatHistory));
+        saveChatHistory(withoutImagePreviews(account.chatHistory));
       }
     } else {
       setMessages([
@@ -638,22 +656,24 @@ export default function UnifiedAssistantPage() {
       mimeType = 'text/plain';
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const item = {
-        name: file.name,
-        size: file.size,
-        mimeType,
-        data: reader.result as string
-      };
-      if (target === 'timetable') {
-        setRegTimetableFile(item);
-      } else {
-        setRegTranscriptFile(item);
-      }
-    };
-    reader.readAsDataURL(file);
     e.target.value = '';
+    prepareFileForUpload(file, mimeType)
+      .then((prepared) => {
+        const item = {
+          name: file.name,
+          size: file.size,
+          mimeType: prepared.mimeType,
+          data: prepared.data
+        };
+        if (target === 'timetable') {
+          setRegTimetableFile(item);
+        } else {
+          setRegTranscriptFile(item);
+        }
+      })
+      .catch(() => {
+        setAuthError('ファイルを読み込めませんでした。');
+      });
   };
 
   // 学生履修プロフィールモーダル内からの直接ファイル添付・AI一括読み込み
@@ -679,59 +699,55 @@ export default function UnifiedAssistantPage() {
       mimeType = 'text/plain';
     }
 
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const dataUrl = reader.result as string;
-        const res = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query: isTimetable
-              ? `【学生履修プロフィール：時間割登録】添付ファイル（${file.name}）を解析し、今期履修中科目のenrolledCourses配列のJSONを出力してください。`
-              : `【学生履修プロフィール：成績通知書登録】添付ファイル（${file.name}）を解析し、totalEarnedCredits、currentGpa、completedCourses配列のJSONを出力してください。`,
-            apiKey: apiKey.trim(),
-            image: { mimeType, data: dataUrl },
-            imageType: isTimetable ? 'current_timetable' : 'transcript',
-            userProfile
-          })
-        });
+    e.target.value = '';
+    try {
+      const { data: dataUrl, mimeType: uploadMimeType } = await prepareFileForUpload(file, mimeType);
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: isTimetable
+            ? `【学生履修プロフィール：時間割登録】添付ファイル（${file.name}）を解析し、今期履修中科目のenrolledCourses配列のJSONを出力してください。`
+            : `【学生履修プロフィール：成績通知書登録】添付ファイル（${file.name}）を解析し、totalEarnedCredits、currentGpa、completedCourses配列のJSONを出力してください。`,
+          apiKey: apiKey.trim(),
+          image: { mimeType: uploadMimeType, data: dataUrl },
+          imageType: isTimetable ? 'current_timetable' : 'transcript',
+          userProfile
+        })
+      });
 
-        if (res.ok) {
-          const data = await res.json();
-          let update = data.profileUpdate || parseProfileUpdateFromText(data.reply, true);
+      if (res.ok) {
+        const data = await res.json();
+        let update = data.profileUpdate || parseProfileUpdateFromText(data.reply, true);
 
-          // CSV・テキスト・TSVの直接解析フォールバック（UTF-8日本語完全対応）
-          if (!update && (mimeType === 'text/csv' || mimeType === 'text/plain' || lower.endsWith('.txt') || lower.endsWith('.csv') || lower.endsWith('.tsv'))) {
-            try {
-              const decoded = decodeBase64Utf8(dataUrl);
-              update = parseProfileUpdateFromText(decoded, true);
-            } catch (e) {}
-          }
+        // CSV・テキスト・TSVの直接解析フォールバック（UTF-8日本語完全対応）
+        if (!update && (mimeType === 'text/csv' || mimeType === 'text/plain' || lower.endsWith('.txt') || lower.endsWith('.csv') || lower.endsWith('.tsv'))) {
+          try {
+            const decoded = decodeBase64Utf8(dataUrl);
+            update = parseProfileUpdateFromText(decoded, true);
+          } catch (e) {}
+        }
 
-          if (update) {
-            const applied = applyProfileUpdate(update);
-            if (applied) {
-              setProfileNotification(isTimetable ? '✓ 時間割を読み込み、履修中科目・今期単位数を更新しました！' : '✓ 成績通知書を読み込み、修得単位・GPAを更新しました！');
-              setTimeout(() => setProfileNotification(null), 6000);
-            } else {
-              setProfileNotification('⚠️ 解析結果をカルテに反映できませんでした。');
-            }
+        if (update) {
+          const applied = applyProfileUpdate(update);
+          if (applied) {
+            setProfileNotification(isTimetable ? '✓ 時間割を読み込み、履修中科目・今期単位数を更新しました！' : '✓ 成績通知書を読み込み、修得単位・GPAを更新しました！');
+            setTimeout(() => setProfileNotification(null), 6000);
           } else {
-            setProfileNotification('⚠️ ファイルから科目を読み取れませんでした。画像や文字が鮮明かご確認ください。');
+            setProfileNotification('⚠️ 解析結果をカルテに反映できませんでした。');
           }
         } else {
-          setProfileNotification('⚠️ 解析サーバーとの通信に失敗しました。');
+          setProfileNotification('⚠️ ファイルから科目を読み取れませんでした。画像や文字が鮮明かご確認ください。');
         }
-      } catch (err: any) {
-        setProfileNotification(`⚠️ 解析エラー: ${err?.message || '不明なエラー'}`);
-      } finally {
-        if (isTimetable) setIsAnalyzingTimetable(false);
-        else setIsAnalyzingTranscript(false);
+      } else {
+        setProfileNotification('⚠️ 解析サーバーとの通信に失敗しました。');
       }
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+    } catch (err: any) {
+      setProfileNotification(`⚠️ 解析エラー: ${err?.message || '不明なエラー'}`);
+    } finally {
+      if (isTimetable) setIsAnalyzingTimetable(false);
+      else setIsAnalyzingTranscript(false);
+    }
   };
 
   // 新規登録フォーム送信（時間割・成績表の自動解析付き）

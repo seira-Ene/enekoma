@@ -37,6 +37,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# ローカル開発用のメンテナンス設定
+.maintenance_state.json
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

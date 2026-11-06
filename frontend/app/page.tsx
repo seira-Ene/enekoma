@@ -30,6 +30,8 @@ import {
   saveStudentAccount,
   getCurrentStudent,
   setCurrentStudentId,
+  rememberLogin,
+  REMEMBER_LOGIN_DAYS,
   authenticateStudent,
   registerNewStudent,
   parseProfileUpdateFromText,
@@ -71,6 +73,13 @@ const DEFAULT_PROFILE: UserProfile = {
 };
 
 // メンテナンス設定型
+// メンテナンス設定の保存先に問題があるときに管理者へ伝える文言
+function describeMaintenanceStorage(data: { persistent?: boolean; storageError?: boolean }): string | null {
+  if (data.storageError) return '保存先に接続できません。表示中の設定は最新でない可能性があり、更新もできません。';
+  if (data.persistent === false) return '保存先が未設定です。この設定は再デプロイやサーバーの再起動で元に戻ります。';
+  return null;
+}
+
 interface MaintenanceConfig {
   isActive: boolean;
   startDateTime: string;
@@ -163,6 +172,7 @@ export default function UnifiedAssistantPage() {
   // ログインフォーム入力
   const [loginId, setLoginId] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [keepLoggedIn, setKeepLoggedIn] = useState(false);
 
   // 新規登録フォーム入力
   const [regApiKey, setRegApiKey] = useState('');
@@ -205,6 +215,7 @@ export default function UnifiedAssistantPage() {
   const [adminAuthError, setAdminAuthError] = useState<string | null>(null);
   const [showAdminControlModal, setShowAdminControlModal] = useState<boolean>(false);
   const [isSavingMaintenance, setIsSavingMaintenance] = useState<boolean>(false);
+  const [maintenanceStorageWarning, setMaintenanceStorageWarning] = useState<string | null>(null);
   const [editMaintActive, setEditMaintActive] = useState<boolean>(false);
   const [editMaintStart, setEditMaintStart] = useState<string>('2026年10月27日(火) 01:00');
   const [editMaintEnd, setEditMaintEnd] = useState<string>('2026年10月27日(火) 06:00');
@@ -257,6 +268,7 @@ export default function UnifiedAssistantPage() {
         .then((res) => res.json())
         .then((data) => {
           if (data?.maintenance) {
+            setMaintenanceStorageWarning(describeMaintenanceStorage(data));
             setMaintenanceConfig(data.maintenance);
             setEditMaintActive(!!data.maintenance.isActive);
             if (data.maintenance.startDisplay) setEditMaintStart(data.maintenance.startDisplay);
@@ -603,8 +615,10 @@ export default function UnifiedAssistantPage() {
       return;
     }
     handleSwitchToStudent(acc);
+    if (keepLoggedIn) rememberLogin(acc.id);
     setLoginId('');
     setLoginPassword('');
+    setKeepLoggedIn(false);
   };
 
   // 新規登録時の添付ファイル選択
@@ -921,6 +935,7 @@ export default function UnifiedAssistantPage() {
       setShowAdminLoginModal(false);
       setAdminCodeInput('');
       if (data.maintenance) {
+        setMaintenanceStorageWarning(describeMaintenanceStorage(data));
         setMaintenanceConfig(data.maintenance);
         setEditMaintActive(!!data.maintenance.isActive);
         if (data.maintenance.startDisplay) setEditMaintStart(data.maintenance.startDisplay);
@@ -967,6 +982,7 @@ export default function UnifiedAssistantPage() {
       });
       const data = await res.json();
       if (res.ok && data.maintenance) {
+        setMaintenanceStorageWarning(describeMaintenanceStorage(data));
         setMaintenanceConfig(data.maintenance);
         setShowAdminControlModal(false);
         alert(editMaintActive ? 'メンテナンスモードを【開始（画面表示中）】に設定しました。' : 'メンテナンスモードを【解除（通常稼働）】に設定しました。');
@@ -3640,6 +3656,18 @@ export default function UnifiedAssistantPage() {
                         className="w-full px-3 py-2 border border-slate-300 rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-slate-800"
                       />
                     </div>
+                    <label className="flex items-start gap-2 text-xs text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={keepLoggedIn}
+                        onChange={(e) => setKeepLoggedIn(e.target.checked)}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        ログイン状態を保持する（{REMEMBER_LOGIN_DAYS}日間）
+                        <span className="block text-[11px] text-slate-500">共用のパソコンではチェックしないでください</span>
+                      </span>
+                    </label>
                     <button
                       type="submit"
                       className="w-full py-2 bg-slate-900 text-white rounded-md text-xs font-medium hover:bg-slate-800 transition"
@@ -4328,6 +4356,12 @@ export default function UnifiedAssistantPage() {
             </div>
 
             <div className="mt-4 space-y-4 text-xs max-h-[80vh] overflow-y-auto pr-1">
+              {maintenanceStorageWarning && (
+                <div className="p-3 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 font-medium">
+                  ⚠️ {maintenanceStorageWarning}
+                </div>
+              )}
+
               {/* メンテナンストグルと状態表示 */}
               <div className={`p-4 rounded-xl border transition ${editMaintActive ? 'bg-rose-50 border-rose-300 text-rose-950' : 'bg-emerald-50 border-emerald-300 text-emerald-950'}`}>
                 <div className="flex items-center justify-between mb-2">

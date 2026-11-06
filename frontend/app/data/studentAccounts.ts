@@ -122,6 +122,8 @@ export const INITIAL_DEMO_ACCOUNTS: Record<string, StudentAccount> = {
 
 const STORAGE_KEY_ACCOUNTS = 'enekoma_accounts_db';
 const STORAGE_KEY_CURRENT_ID = 'enekoma_current_student_id';
+const STORAGE_KEY_REMEMBERED_LOGIN = 'enekoma_remembered_login';
+export const REMEMBER_LOGIN_DAYS = 30;
 
 // アカウント一覧の取得（未初期化時はデモアカウントを投入）
 export function loadAllAccounts(): Record<string, StudentAccount> {
@@ -158,15 +160,49 @@ export function saveStudentAccount(account: StudentAccount): void {
   }
 }
 
+// 「ログイン状態を保持する」を選んだときだけ、IDと有効期限をこの端末に残す（パスワードは残さない）
+export function rememberLogin(id: string, now: number = Date.now()): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const expiresAt = now + REMEMBER_LOGIN_DAYS * 24 * 60 * 60 * 1000;
+    localStorage.setItem(STORAGE_KEY_REMEMBERED_LOGIN, JSON.stringify({ id, expiresAt }));
+  } catch (e) {
+    console.error('Failed to remember login:', e);
+  }
+}
+
+function forgetLogin(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY_REMEMBERED_LOGIN);
+  } catch {
+    // 保存領域が使えないときは残っていないので何もしない
+  }
+}
+
+function readRememberedLogin(now: number = Date.now()): string | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_REMEMBERED_LOGIN);
+    if (!raw) return null;
+    const { id, expiresAt } = JSON.parse(raw);
+    if (typeof id === 'string' && typeof expiresAt === 'number' && now < expiresAt) return id;
+  } catch {
+    // 壊れた値は無効として消す
+  }
+  forgetLogin();
+  return null;
+}
+
 // 現在ログイン中のアカウントID
 export function getCurrentStudentId(): string | null {
   if (typeof window === 'undefined') return null;
-  // セッション単位でのみログインを保持（再アクセス・他者のアクセス時は必ず初期ゲスト状態）
-  return sessionStorage.getItem(STORAGE_KEY_CURRENT_ID) || null;
+  // 保持を選んでいなければセッション単位（再アクセス・他者のアクセス時は必ず初期ゲスト状態）
+  return sessionStorage.getItem(STORAGE_KEY_CURRENT_ID) || readRememberedLogin();
 }
 
 export function setCurrentStudentId(id: string | null): void {
   if (typeof window === 'undefined') return;
+  // ログアウトや別アカウントへの切り替えで、保持していた前のログインを引き継がない
+  if (id !== readRememberedLogin()) forgetLogin();
   if (id) {
     sessionStorage.setItem(STORAGE_KEY_CURRENT_ID, id);
     // 旧バージョンのlocalStorage永続キーがあれば削除
@@ -182,7 +218,10 @@ export function getCurrentStudent(): StudentAccount | null {
   const currentId = getCurrentStudentId();
   if (!currentId) return null;
   const accounts = loadAllAccounts();
-  return accounts[currentId] || null;
+  const account = accounts[currentId] || null;
+  // 保持していたアカウントが端末から消えていたら、保持も解除する
+  if (!account) setCurrentStudentId(null);
+  return account;
 }
 
 // 認証（ログイン）

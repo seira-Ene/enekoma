@@ -266,6 +266,18 @@ const SYSTEM_PROMPT = `
   - 土曜日: 10:00 - 13:00
 `;
 
+// 速いモデルから順に試す
+const GEMINI_MODEL_ORDER = ['gemini-3-flash-preview', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
+// 思考を最小にすると応答が2〜3倍速くなる（実測）。チャットの事実は検索結果から渡すので精度への影響が小さい
+const CHAT_THINKING_CONFIG = { thinkingConfig: { thinkingLevel: 'minimal' } };
+// 画像は読み取り精度を確認できるまで既定の思考量のままにする
+const IMAGE_THINKING_CONFIG = {};
+const CHAT_REQUEST_TIMEOUT_MS = 10000;
+const CHAT_TOTAL_TIMEOUT_MS = 25000;
+// 科目の多い画像は出力が長いので、途中で打ち切ってやり直さないよう長めに待つ
+const IMAGE_REQUEST_TIMEOUT_MS = 30000;
+const IMAGE_TOTAL_TIMEOUT_MS = 50000;
+
 // 人間の自然なチャット言葉遣いにするための統一サニタイザー（記号・装飾・太字の完全排除）
 function sanitizeConversationalReply(text: string): string {
   if (!text) return '';
@@ -784,8 +796,9 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // 高速モデル（gemini-3-flash-preview, gemini-3.5-flash）を並列レースさせて最短2〜3秒で返答
-      const outputLimit = 4096;
+      const isImageRequest = !!(image && image.data);
+      // 思考も出力上限に含まれる。科目の多い画像で回答が途中で切れないよう余裕を持たせる
+      const outputLimit = isImageRequest ? 8192 : 4096;
       const geminiPayload = {
         systemInstruction: {
           parts: [{ text: SYSTEM_PROMPT.trim() }]
@@ -793,7 +806,8 @@ export async function POST(req: NextRequest) {
         contents,
         generationConfig: {
           temperature: 0.25,
-          maxOutputTokens: outputLimit
+          maxOutputTokens: outputLimit,
+          ...(isImageRequest ? IMAGE_THINKING_CONFIG : CHAT_THINKING_CONFIG)
         }
       };
 
@@ -828,35 +842,20 @@ export async function POST(req: NextRequest) {
       let lastErrorStatus: number | null = null;
       let lastErrorMessage: string | null = null;
 
-      // 1. 最速の2モデルを並列レース（最速で応答した方が即座に採用される）
-      try {
-        successfulResponse = await Promise.any([
-          fetchSingleModel('gemini-3-flash-preview', 12000),
-          fetchSingleModel('gemini-3.5-flash', 12000)
-        ]);
-      } catch (raceErr: any) {
-        if (raceErr && Array.isArray(raceErr.errors)) {
-          for (const e of raceErr.errors) {
-            if (e?.status) lastErrorStatus = e.status;
-            if (e?.message) lastErrorMessage = e.message;
-          }
-        }
-      }
-
-      // 2. レースで両方エラーになった場合の順次フォールバック（APIキー不正・権限エラー時は即スキップ）
-      const isAuthError = (lastErrorStatus === 400 && lastErrorMessage?.toLowerCase().includes('api_key')) || lastErrorStatus === 403;
-      if (!successfulResponse && !isAuthError) {
-        const FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
-        for (const model of FALLBACK_MODELS) {
-          try {
-            successfulResponse = await fetchSingleModel(model, 12000);
-            if (successfulResponse) break;
-          } catch (err: any) {
-            lastErrorStatus = err?.status || lastErrorStatus;
-            lastErrorMessage = err?.message || String(err);
-            if (err?.status === 400 && lastErrorMessage?.toLowerCase().includes('api_key')) break;
-            if (err?.status === 403) break;
-          }
+      // 速いモデルから順に試す。同時に呼ぶと無料枠を2倍使うので1つずつ呼ぶ（APIキー不正・権限エラー時は打ち切る）
+      const requestTimeout = isImageRequest ? IMAGE_REQUEST_TIMEOUT_MS : CHAT_REQUEST_TIMEOUT_MS;
+      const deadline = Date.now() + (isImageRequest ? IMAGE_TOTAL_TIMEOUT_MS : CHAT_TOTAL_TIMEOUT_MS);
+      for (const model of GEMINI_MODEL_ORDER) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        try {
+          successfulResponse = await fetchSingleModel(model, Math.min(requestTimeout, remaining));
+          break;
+        } catch (err: any) {
+          lastErrorStatus = err?.status || lastErrorStatus;
+          lastErrorMessage = err?.message || String(err);
+          if (err?.status === 400 && lastErrorMessage?.toLowerCase().includes('api_key')) break;
+          if (err?.status === 403) break;
         }
       }
 

@@ -50,10 +50,12 @@ cd backend && pip install -r requirements.txt && uvicorn main:app --reload --por
 ### チャットの流れ
 
 1. `page.tsx` が質問、APIキー、直近6件の履歴、添付ファイル、プロフィールを `POST /api/chat` に送る。
-2. `route.ts` が2モデルを `Promise.any` で競わせ、両方失敗すると順次フォールバックする。それも失敗すれば `answerLocally` で応答する。
+2. `route.ts` が `GEMINI_MODEL_ORDER` の順に1モデルずつ試す。すべて失敗すれば `answerLocally` で応答する。同時に呼ぶと無料枠を2倍使うので並列にしない。チャットは思考を最小にして速くしている。画像は読み取り精度を確認できていないので既定のまま。
 3. サーバー通信自体が失敗すると、`page.tsx` がブラウザからGeminiを直接呼ぶ。
 
 モデル名は `route.ts` と `page.tsx`(直接呼び出しとキーのテスト)の両方にハードコードされているので、変更時は両方を更新する。
+
+添付画像は `data/imageUpload.ts` の `prepareFileForUpload` を通す。1MBを超える画像だけを縮小し、小さくならなければ元のまま送る。チャット履歴を `localStorage` に保存するときは画像データを除く(`withoutImagePreviews`)。含めると容量を超えて画面全体が落ちる。
 
 ### 時間割の回答
 

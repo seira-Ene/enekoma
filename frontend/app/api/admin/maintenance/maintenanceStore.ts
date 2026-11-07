@@ -1,6 +1,7 @@
 // メンテナンス設定の保存先。Redisが設定されていれば再デプロイやインスタンスの違いに影響されない
 import fs from 'fs';
 import path from 'path';
+import { deploymentEnv, redisCommand, redisSettings } from '../../_lib/redis';
 
 export interface MaintenanceConfig {
   isActive: boolean;
@@ -35,31 +36,9 @@ let memoryConfig: MaintenanceConfig = { ...DEFAULT_CONFIG };
 // Redis未設定のローカル開発用
 const TMP_FILE = path.join(process.cwd(), '.maintenance_state.json');
 
-function redisSettings(): { url: string; token: string } | null {
-  // Vercel Marketplaceの連携方法によって変数名が異なるので両方を受け付ける
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-  return url && token ? { url: url.replace(/\/+$/, ''), token } : null;
-}
-
 // Previewでの操作が本番に影響しないよう、環境ごとにキーを分ける
 function redisKey(): string {
-  return `enekoma:maintenance:${process.env.VERCEL_ENV || 'local'}`;
-}
-
-async function redisCommand(settings: { url: string; token: string }, command: string[]): Promise<unknown> {
-  const response = await fetch(settings.url, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${settings.token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(command),
-    cache: 'no-store',
-    signal: AbortSignal.timeout(3000)
-  });
-  const data = await response.json();
-  if (!response.ok || data.error) {
-    throw new Error(`Redis error: ${response.status}`);
-  }
-  return data.result;
+  return `enekoma:maintenance:${deploymentEnv()}`;
 }
 
 export async function loadMaintenanceConfig(): Promise<LoadedMaintenanceConfig> {

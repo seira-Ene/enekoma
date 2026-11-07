@@ -33,6 +33,28 @@ export function isMailConfigured(): boolean {
   return provider() !== 'none';
 }
 
+// ---- 送信結果のログ（1通につき1行。本文・リンク・パスワードは出さない） ----
+/** 宛先のユーザー名部分を伏せる（例: taro.yamada@example.com → ta***@example.com）。ドメインは配送の切り分けに使うので残す */
+export function maskEmail(address: string): string {
+  const at = address.lastIndexOf('@');
+  if (at <= 0) return '***';
+  const local = address.slice(0, at);
+  return `${local.slice(0, Math.min(2, local.length - 1))}***${address.slice(at)}`;
+}
+
+function jstTimestamp(date = new Date()): string {
+  return new Date(date.getTime() + 9 * 60 * 60 * 1000).toISOString().replace('Z', '+09:00');
+}
+
+// ログの値に改行が入ると1行にならないので、空白にまとめる
+const oneLine = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
+
+export function logMailResult(entry: { provider: string; to: string; subject: string; ok: boolean; response?: unknown; detail?: unknown }) {
+  const line = `[mail] ${entry.ok ? 'sent' : 'failed'} at=${jstTimestamp()} provider=${entry.provider} to=${maskEmail(entry.to)} subject="${oneLine(entry.subject)}" response="${oneLine(entry.response)}"${entry.detail ? ` detail="${oneLine(entry.detail)}"` : ''}`;
+  if (entry.ok) console.info(line);
+  else console.error(line);
+}
+
 // ---- Gmail（SMTP） ----
 let gmailTransport: Transporter | null = null;
 let gmailTransportKey = '';
@@ -74,16 +96,32 @@ function gmailFrom(): string {
 
 async function sendWithGmail(message: MailMessage): Promise<MailResult> {
   try {
-    await getGmailTransport().sendMail({ from: gmailFrom(), to: message.to, subject: message.subject, text: message.text });
-    return { sent: true };
+    const info = await getGmailTransport().sendMail({ from: gmailFrom(), to: message.to, subject: message.subject, text: message.text });
+    // response は Gmail の応答（例: 250 2.0.0 OK ... - gsmtp）。宛先を断られたら rejected に入る
+    const rejected = (info.rejected || []).length;
+    logMailResult({
+      provider: 'gmail',
+      to: message.to,
+      subject: message.subject,
+      ok: rejected === 0,
+      response: info.response,
+      detail: `messageId=${info.messageId || ''}${rejected ? ` rejected=${rejected}` : ''}`
+    });
+    return rejected === 0 ? { sent: true } : { sent: false, reason: 'failed' };
   } catch (error) {
-    const e = error as { code?: string; responseCode?: number; message?: string };
-    // 認証エラーは設定の誤りなので分かるように残す（パスワードそのものはログに出さない）
-    if (e.code === 'EAUTH' || e.responseCode === 535) {
-      console.error('Gmail authentication failed. Check GMAIL_USER and GMAIL_APP_PASSWORD (an app password, not the normal Google password).');
-    } else {
-      console.error('Gmail send failed:', e.code || '', e.responseCode || '', e.message || error);
-    }
+    const e = error as { code?: string; responseCode?: number; response?: string; message?: string };
+    const isAuthError = e.code === 'EAUTH' || e.responseCode === 535;
+    logMailResult({
+      provider: 'gmail',
+      to: message.to,
+      subject: message.subject,
+      ok: false,
+      response: e.response || e.message,
+      // 認証エラーは設定の誤りなので分かるように残す（パスワードそのものはログに出さない）
+      detail: isAuthError
+        ? 'Gmail authentication failed. Check GMAIL_USER and GMAIL_APP_PASSWORD (an app password, not the normal Google password).'
+        : `code=${e.code || ''} responseCode=${e.responseCode || ''}`
+    });
     gmailTransport = null;
     return { sent: false, reason: 'failed' };
   }
@@ -98,13 +136,11 @@ async function sendWithResend(message: MailMessage): Promise<MailResult> {
       body: JSON.stringify({ from: process.env.MAIL_FROM, to: [message.to], subject: message.subject, text: message.text }),
       signal: AbortSignal.timeout(8000)
     });
-    if (!response.ok) {
-      console.error('Mail send failed:', response.status, await response.text().catch(() => ''));
-      return { sent: false, reason: 'failed' };
-    }
-    return { sent: true };
+    const body = await response.text().catch(() => '');
+    logMailResult({ provider: 'resend', to: message.to, subject: message.subject, ok: response.ok, response: `${response.status} ${body}` });
+    return response.ok ? { sent: true } : { sent: false, reason: 'failed' };
   } catch (error) {
-    console.error('Mail send failed:', error);
+    logMailResult({ provider: 'resend', to: message.to, subject: message.subject, ok: false, response: (error as Error)?.message || error });
     return { sent: false, reason: 'failed' };
   }
 }

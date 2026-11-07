@@ -1,11 +1,26 @@
-// 日本大学文理学部 資格6コース・全24副専攻 公式必修・選択必修科目完全ナレッジベース
+// 日本大学文理学部『学部要覧（令和7年度）』p.144-192 のコース科目（資格コース）と副専攻の修了要件
+// 科目名・単位数・必修/選択必修/選択の区別・科目群の条件は要覧の表どおり。教職の教科専門科目は teachingLicenseCurriculum.ts
 
 export interface CourseOrMinorItem {
   name: string;
   credits: number;
-  category: '必修' | '選択必修';
+  // 必修: 全科目の修得が必要 / 選択必修: 指定の群から条件を満たす / 選択: 合計単位に数える
+  category: '必修' | '選択必修' | '選択';
+  // 画面に出す群の名前。groupRules の group と対応する
   group?: string;
   note?: string;
+  // 学科によって読み替える科目（教育学科は「教育心理学」など）
+  aliases?: string[];
+}
+
+// 科目群の条件。minCredits/minCourses のどちらか、または alternatives（A又はBの選択必修）を使う
+export interface GroupRule {
+  group: string;
+  label: string;
+  minCredits?: number;
+  minCourses?: number;
+  // いずれか1つの組の科目をすべて修得すれば満たす
+  alternatives?: { label: string; courses: string[] }[];
 }
 
 export interface CourseCurriculumDef {
@@ -17,6 +32,8 @@ export interface CourseCurriculumDef {
   description: string;
   requiredCourses: CourseOrMinorItem[];
   electiveRequiredCourses: CourseOrMinorItem[];
+  groupRules?: GroupRule[];
+  notes?: string[];
 }
 
 export interface MinorCurriculumDef {
@@ -29,4383 +46,467 @@ export interface MinorCurriculumDef {
   description: string;
   requiredCourses: CourseOrMinorItem[];
   electiveRequiredCourses: CourseOrMinorItem[];
+  groupRules?: GroupRule[];
+  notes?: string[];
 }
 
+// ---- 表を書き写すための小さな関数 ----
+// 「思想史1〜8」のような連番を展開する
+export function seq(prefix: string, from: number, to: number, suffix = ''): string[] {
+  return Array.from({ length: to - from + 1 }, (_, i) => `${prefix}${from + i}${suffix}`);
+}
+function items(category: CourseOrMinorItem['category'], credits: number, names: string[], group?: string, note?: string): CourseOrMinorItem[] {
+  return names.map((name) => ({ name, credits, category, ...(group ? { group } : {}), ...(note ? { note } : {}) }));
+}
+export const req = (credits: number, ...names: string[]) => items('必修', credits, names);
+export const pick = (group: string, credits: number, ...names: string[]) => items('選択必修', credits, names, group);
+export const opt = (credits: number, ...names: string[]) => items('選択', credits, names, '選択');
+const optIn = (group: string, credits: number, ...names: string[]) => items('選択', credits, names, group);
+const sumCredits = (list: CourseOrMinorItem[]) => list.reduce((s, c) => s + c.credits, 0);
+
+// =========================================================================
+// 資格コース（教職は教科ごとの表があるため teachingLicenseCurriculum.ts も参照）
+// =========================================================================
+const KYOSHOKU_REQUIRED: CourseOrMinorItem[] = [
+  // 免許法施行規則第66条の6に定める科目
+  ...req(2, '憲法', '健康・スポーツ教育論', '情報リテラシー'),
+  ...req(1, '健康・スポーツ教育実習1'),
+  // 教育の基礎的理解に関する科目等
+  ...req(2, '現代教職論'),
+  { name: '教育原論', credits: 2, category: '必修', aliases: ['教育の理念と歴史'], note: '教育学科は「教育の理念と歴史」を履修' },
+  { name: '発達と学習', credits: 2, category: '必修', aliases: ['教育心理学'], note: '教育学科は「教育心理学」を履修' },
+  ...req(1, '特別支援教育概論'),
+  ...req(2, '教育課程論'),
+  { name: '教育方法・ICT活用論', credits: 2, category: '必修', aliases: ['教授学習論'], note: '教育学科は「教授学習論」を履修' },
+  { name: '道徳教育の理論と方法', credits: 2, category: '必修', note: '中学校一種の場合は必修' },
+  ...req(2, '特別活動・総合的な学習の時間の指導法', '生徒指導・進路指導論', '教育相談'),
+  ...req(1, '教育実習事前・事後指導'),
+  ...req(2, '教職実践演習（中・高）')
+];
+
 export const VERIFIED_COURSES_CURRICULUM: Record<string, CourseCurriculumDef> = {
-  "司書教諭コース": {
-    "name": "司書教諭コース",
-    "requiredCredits": 10,
-    "target": "全学科生（教職課程履修者が対象）",
-    "window": "教務課 資格窓口",
-    "page": "p.142",
-    "description": "5科目・計10単位すべて必修です。",
-    "requiredCourses": [
-      {
-        "name": "学校経営と学校図書館",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "学校図書館メディアの構成",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "学習指導と学校図書館",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "読書と豊かな人間性",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "情報メディアの活用",
-        "credits": 2,
-        "category": "必修"
-      }
+  教職コース: {
+    name: '教職コース',
+    // 共通の必修＋教育制度論等1科目＋外国語2単位＋教育実習（Ⅱの2単位で数える）。教科専門と教科教育法は含めない
+    requiredCredits: sumCredits(KYOSHOKU_REQUIRED) + 2 + 2 + 2,
+    target: '中学校・高等学校教諭一種免許状（全学科共通）',
+    window: '教職センター',
+    page: 'p.144-159',
+    description:
+      '全学科共通の教職科目（教育の基礎的理解・教育実践など）に加えて、教科ごとの「教科及び教科の指導法に関する科目」（中学校一種28単位・高等学校一種36単位）と各教科教育法が必要です',
+    requiredCourses: KYOSHOKU_REQUIRED,
+    electiveRequiredCourses: [
+      ...pick('教育制度論・教育の社会学から1科目', 2, '教育制度論', '教育の社会学'),
+      ...pick('教育実習（中学校一種はⅠ）', 4, '教育実習Ⅰ'),
+      ...pick('教育実習（中学校一種はⅠ）', 2, '教育実習Ⅱ'),
+      ...pick('外国語コミュニケーション（同一言語2単位）', 1, '英語1', '英語2', ...seq('フランス語コミュニカティフ', 1, 6), '中国語3', '中国語4', '中国語7', '中国語8', '中国語スピーキング1', '中国語スピーキング2', ...seq('ドイツ語コミュニケーション', 1, 4))
     ],
-    "electiveRequiredCourses": []
-  },
-  "司書コース": {
-    "name": "司書コース",
-    "requiredCredits": 26,
-    "target": "全学科生",
-    "window": "教務課 資格窓口",
-    "page": "p.146",
-    "description": "必修22単位＋選択必修4単位＝計26単位以上が必要です。",
-    "requiredCourses": [
-      {
-        "name": "生涯学習論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "読書と豊かな人間性",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "図書館情報学概論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "図書館制度・経営論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "図書館情報技術論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "図書館サービス概論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "図書館情報資源概論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "情報サービス論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "情報資源組織論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "図書館基礎特論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "情報サービス演習1",
-        "credits": 1,
-        "category": "必修"
-      },
-      {
-        "name": "情報サービス演習2",
-        "credits": 1,
-        "category": "必修"
-      },
-      {
-        "name": "情報資源組織演習1",
-        "credits": 1,
-        "category": "必修"
-      },
-      {
-        "name": "情報資源組織演習2",
-        "credits": 1,
-        "category": "必修"
-      }
+    groupRules: [
+      { group: '教育制度論・教育の社会学から1科目', label: '教育制度論・教育の社会学から1科目', minCourses: 1 },
+      { group: '教育実習（中学校一種はⅠ）', label: '教育実習Ⅰ（4単位）又はⅡ（2単位）。中学校一種はⅠが必修', minCourses: 1 },
+      { group: '外国語コミュニケーション（同一言語2単位）', label: '同一種類の言語の外国語コミュニケーション2単位', minCredits: 2 }
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "図書館サービス特論",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "図書館情報資源特論",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "児童サービス論",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "情報検索演習",
-        "credits": 2,
-        "category": "選択必修"
-      }
+    notes: [
+      '教職コース履修届を教職センターに提出し、許可を得て履修した教職コース科目は卒業単位に算入できます。ただし各教科教育法Ⅰ〜Ⅳ、教育実習事前・事後指導、教育実習Ⅰ・Ⅱ、教職実践演習（中・高）は除きます（要覧 p.144、p.33）',
+      '各教科教育法Ⅰ・Ⅱは必修、Ⅲ・Ⅳは中学校免許で必修・高等学校免許で選択です（英語は中高ともⅠ〜Ⅳ必修、社会は8単位必修）',
+      'その他に介護等体験（特別支援学校2日間・社会福祉施設5日間）が必要です'
     ]
   },
-  "学芸員コース": {
-    "name": "学芸員コース",
-    "requiredCredits": 38,
-    "target": "全学科生",
-    "window": "教務課 資格窓口 / 史学科事務室",
-    "page": "p.150",
-    "description": "必修22単位＋選択科目16単位以上＝計38単位以上が必要です。",
-    "requiredCourses": [
-      {
-        "name": "博物館概論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "博物館経営論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "博物館資料論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "博物館資料保存論1",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "博物館資料保存論2",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "博物館情報・メディア論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "博物館展示論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "博物館教育論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "博物館実習1（学内）",
-        "credits": 1,
-        "category": "必修"
-      },
-      {
-        "name": "博物館実習2（学内）",
-        "credits": 1,
-        "category": "必修"
-      },
-      {
-        "name": "博物館実習3（見学）",
-        "credits": 1,
-        "category": "必修"
-      },
-      {
-        "name": "博物館実習4（館務）",
-        "credits": 1,
-        "category": "必修"
-      }
+  特別支援学校教諭免許状: {
+    name: '特別支援学校教諭免許状',
+    requiredCredits: 30,
+    target: '特別支援学校教諭一種免許状（知的障害者・肢体不自由者・病弱者）。教育学科で開講',
+    window: '教職センター',
+    page: 'p.160-163',
+    description: '中学校・高等学校教諭免許状（基礎免許状）の取得を前提に、特別支援教育に関する科目30単位がすべて必要です',
+    requiredCourses: [
+      ...req(2, '特別支援教育総論', '特別ニーズ教育の原理と歴史', '知的障害者の心理・生理・病理', '肢体不自由者の心理・生理・病理', '病弱者の心理・生理・病理', '知的障害教育論', '肢体不自由教育論', '病弱教育論', '国際特別ニーズ教育論', '特別支援教育課程論'),
+      ...req(1, '特別支援教育演習'),
+      ...req(2, '発達障害者の心理・生理・病理', '発達障害教育論'),
+      ...req(1, '視覚障害教育総論', '聴覚障害教育総論', '教育実習（特別支援学校）事前・事後指導'),
+      ...req(2, '教育実習（特別支援学校）')
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "考古学概論1",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "考古学概論2",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "美術史概論1",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "美術史概論2",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "文化人類学概論1",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "文化人類学概論2",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "自然科学史",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "民俗学概論1",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "民俗学概論2",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "保存科学概論",
-        "credits": 2,
-        "category": "選択必修"
-      }
+    electiveRequiredCourses: [],
+    notes: [
+      '特別支援教育演習・教育実習（特別支援学校）事前・事後指導・教育実習（特別支援学校）は履修制限選考試験の合格者のみ履修できます。選考は原則2年次前学期終了時に志望書を提出します',
+      '選考の条件：2年次前学期終了時に卒業に係る修得単位62単位以上かつ累積GPA1.5以上、「特別支援教育総論」又は「特別ニーズ教育の原理と歴史」を含む特別支援教育に関する科目6単位以上、基礎免許状の「教育の基礎的理解に関する科目等」1年次配当4単位の修得',
+      '教育実習（特別支援学校）の条件：4年進級時に卒業見込、基礎免許状の教育実習の条件を満たす、特別支援教育に関する科目26単位以上、事前・事後指導の3年次後期分に合格',
+      '事前・事後指導と教育実習（特別支援学校）はセットで、どちらか一方を落とすと両方とも修得できません',
+      '教育学科以外の学生も教育学科の他学科聴講で取得できる可能性があります（教職コースガイダンスで確認）。小学校教員養成プログラムとの並行履修は原則できません'
     ]
   },
-  "社会教育主事コース": {
-    "name": "社会教育主事コース",
-    "requiredCredits": 25,
-    "target": "全学科生（社会教育士称号取得）",
-    "window": "教務課 資格窓口 / 教育学科事務室",
-    "page": "p.156",
-    "description": "必修17単位＋選択科目8単位以上＝計25単位以上が必要です。",
-    "requiredCourses": [
-      {
-        "name": "生涯学習論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "生涯学習支援論1",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "生涯学習支援論2",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "社会教育経営論1",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "社会教育経営論2",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "社会教育演習1",
-        "credits": 1,
-        "category": "必修"
-      },
-      {
-        "name": "社会教育演習2",
-        "credits": 1,
-        "category": "必修"
-      },
-      {
-        "name": "社会教育実習",
-        "credits": 1,
-        "category": "必修"
-      },
-      {
-        "name": "社会教育論",
-        "credits": 2,
-        "category": "必修"
-      }
-    ],
-    "electiveRequiredCourses": [
-      {
-        "name": "地域社会論",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "行政学",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "福祉社会論",
-        "credits": 2,
-        "category": "選択必修"
-      },
-      {
-        "name": "情報社会論",
-        "credits": 2,
-        "category": "選択必修"
-      }
+  司書教諭コース: {
+    name: '司書教諭コース',
+    requiredCredits: 10,
+    target: '学校図書館の司書教諭（教員免許状の取得が前提）',
+    window: '教職センター',
+    page: 'p.164',
+    description: '5科目10単位がすべて必修です',
+    requiredCourses: req(2, '学校経営と学校図書館', '学校図書館メディアの構成', '学習指導と学校図書館', '読書と豊かな人間性', '情報メディアの活用'),
+    electiveRequiredCourses: [],
+    notes: [
+      '教職コースと並行して受講します（教員免許の種類・教科は問いません）',
+      '申請は大学での修得単位62単位以上の人に限られます。卒業時に修了証書を受け取るには、3年次後学期までに5科目10単位と62単位以上を修得し、4年次の5月頃に申請します'
     ]
   },
-  "日本語教育コース": {
-    "name": "日本語教育コース",
-    "requiredCredits": 26,
-    "target": "全学科生",
-    "window": "国文学科事務室 / 教務課",
-    "page": "p.162",
-    "description": "必修11単位＋選択必修2単位＋選択科目13単位以上＝計26単位以上が必要です。",
-    "requiredCourses": [
-      {
-        "name": "日本語教育学概論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "日本語教育のための日本語学",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "日本語教授法",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "社会言語学",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "日本語教育実習",
-        "credits": 3,
-        "category": "必修"
-      }
+  司書コース: {
+    name: '司書コース',
+    requiredCredits: 26,
+    target: '公共図書館などの司書',
+    window: '教務課',
+    page: 'p.165',
+    description: '必修13科目22単位と、選択必修3科目から2科目4単位の計26単位で資格が得られます（国家試験はありません）',
+    requiredCourses: [
+      ...req(2, '生涯学習論', '読書と豊かな人間性', '図書館情報学概論', '図書館制度・経営論', '図書館情報技術論', '図書館サービス概論', '図書館情報資源概論', '情報サービス論', '情報資源組織論'),
+      ...req(1, '情報サービス演習1', '情報サービス演習2', '情報資源組織演習1', '情報資源組織演習2')
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "多言語・多文化社会と日本語教育",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択必修（2単位）"
-      },
-      {
-        "name": "異文化理解と日本語学習",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択必修（2単位）"
-      },
-      {
-        "name": "日本語文法論1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "日本語文法論2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "日本語音声学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "対照言語学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "第二言語習得論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      }
+    electiveRequiredCourses: pick('選択必修（2科目4単位）', 2, '図書館基礎特論', '図書館サービス特論', '図書館情報資源特論'),
+    groupRules: [{ group: '選択必修（2科目4単位）', label: '図書館基礎特論・図書館サービス特論・図書館情報資源特論から2科目4単位', minCredits: 4 }],
+    notes: ['情報資源組織演習1・2は「情報資源組織論」、情報サービス演習1・2は「情報サービス論」を修得した人だけが履修できます（3・4年次）']
+  },
+  学芸員コース: {
+    name: '学芸員コース',
+    requiredCredits: 38,
+    target: '博物館・美術館などの学芸員',
+    window: '教務課（学芸員課程研究室）',
+    page: 'p.166-167',
+    description: '必修22単位と選択16単位以上の計38単位が必要です',
+    requiredCourses: [
+      ...req(2, '博物館概論', '博物館経営論', '博物館資料論', '博物館資料保存論1', '博物館資料保存論2', '博物館情報・メディア論', '博物館展示論', '博物館教育論', '生涯学習論'),
+      ...req(1, '博物館実習1（学内）', '博物館実習2（学内）', '博物館実習3（見学）', '博物館実習4（館務）')
+    ],
+    electiveRequiredCourses: optIn('選択（16単位以上）', 2,
+      '科学史', '人類の進化', '日本の歴史・社会・文化', '地球環境の変動と生命史', '美術史', 'アジアの歴史・社会・文化',
+      '日本考古学概説1', '日本考古学概説2', '日本史概説', '日本史講究', '考古学実地研究1', '考古学実地研究2', ...seq('古文書・古記録学', 1, 4), '歴史民俗学1', '歴史民俗学2',
+      '文献資料研究', '文化人類学', '社会教育論', '社会教育経営論1', '社会教育経営論2', '教育と環境', '教育とメディア',
+      '生物地理学', '環境地質学', '歴史地理学', '生態史論', '自然資源論', 'ツーリズム論', 'エスニック論',
+      '地圏科学', '岩石・鉱物学', '地球物理学1', '古生物・古生態学', '同位体地球科学', '地球史', '環境生物学',
+      '物理学概論1', '物理学概論2', '化学概論1', '化学概論2', '生物学概論1', '生物学概論2', '地学概論1', '地学概論2'),
+    groupRules: [{ group: '選択（16単位以上）', label: '選択科目から16単位以上', minCredits: 16 }],
+    notes: [
+      '1・2年次に「博物館概論」「博物館経営論」を修得し、2年次の学芸員コース選考試験に合格すると、3年次に博物館実習1〜3を受講できます',
+      '博物館実習4（館務）は博物館実習1〜3を修得した4年生が対象です。博物館実習1〜4は再履修できません',
+      '実習費：博物館実習1・2・4が各10,000円、博物館実習3（見学）は実費20,000〜25,000円程度',
+      '必修科目は必ず指定年次に履修してください'
     ]
   },
-  "特別支援学校教諭免許状": {
-    "name": "特別支援学校教諭免許状",
-    "requiredCredits": 30,
-    "target": "教育学科生対象",
-    "window": "教育学科事務室 / 教務課",
-    "page": "p.170",
-    "description": "必修科目30単位が必要です。",
-    "requiredCourses": [
-      {
-        "name": "特別支援教育総論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "特別ニーズ教育の原理と歴史",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "知的障害者の心理・生理・病理",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "肢体不自由者の心理・生理・病理",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "病弱者の心理・生理・病理",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "知的障害教育論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "肢体不自由教育論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "病弱教育論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "特別支援教育演習",
-        "credits": 1,
-        "category": "必修"
-      },
-      {
-        "name": "教育実習（特別支援学校）事前・事後指導",
-        "credits": 1,
-        "category": "必修"
-      },
-      {
-        "name": "教育実習（特別支援学校）",
-        "credits": 2,
-        "category": "必修"
-      }
+  社会教育主事コース: {
+    name: '社会教育主事コース',
+    requiredCredits: 25,
+    target: '社会教育主事の任用資格・社会教育士の称号',
+    window: '教務課',
+    page: 'p.168-169',
+    description: '必修17単位と選択必修8単位以上の計25単位が必要です。大学に2年以上在学し62単位以上を修得していることも条件です',
+    requiredCourses: [
+      ...req(1, '社会教育実習'),
+      ...req(2, '生涯学習支援論1', '生涯学習支援論2'),
+      ...req(1, '社会教育演習1', '社会教育演習2', '社会教育課題研究1', '社会教育課題研究2'),
+      ...req(2, '生涯学習論', '社会教育論', '社会教育経営論1', '社会教育経営論2')
     ],
-    "electiveRequiredCourses": []
+    electiveRequiredCourses: pick('選択必修（8単位以上）', 2,
+      '教育と多様性', '青少年教育論', '地域教育論', '教育と環境', '教育心理学', '教育課程論', '教授学習論', '教育行政論', 'ジェンダーと教育', '教育とグローバル社会', '発達と認知',
+      '特別活動・総合的な学習の時間の指導法', '比較教育論', '国際理解教育論', '野外教育論（含実習）',
+      '図書館情報学概論', '図書館サービス概論', '博物館概論', '教育学', '教育と人間理解', '宗教学概論', '宗教学講究',
+      '文化財学1', '文化財学2', '歴史民俗学1', '歴史民俗学2', '社会心理学', '差別の社会学', 'マス・コミュニケーション論', 'ジャーナリズム論', 'マス・メディア論',
+      '体育学概論', '保健学概論', 'スポーツ社会学', 'スポーツプロモーション論'),
+    groupRules: [{ group: '選択必修（8単位以上）', label: '選択必修科目から8単位以上', minCredits: 8 }],
+    notes: [
+      '社会教育実習の条件（①②は前年度終了時まで）：①生涯学習支援論1・2、社会教育経営論1・2のうち2科目4単位以上 ②社会教育演習1・2の2単位又は社会教育課題研究1・2の2単位以上 ③事前指導の受講 ④期間内の実習希望届の提出',
+      '社会教育実習には実習費5,000円と交通費がかかります'
+    ]
+  },
+  日本語教育コース: {
+    name: '日本語教育コース',
+    requiredCredits: 26,
+    target: '登録日本語教員（経過措置Cルート）。修了者は日本語教員試験の基礎試験と実践研修が免除',
+    window: '教務課',
+    page: 'p.170-171',
+    description: '必修5科目11単位と選択必修1科目2単位を含め、計26単位以上が必要です',
+    requiredCourses: [
+      ...req(2, '日本語教育学概論', '日本語教育のための日本語学', '日本語教授法', '社会言語学'),
+      ...req(3, '日本語教育実習')
+    ],
+    electiveRequiredCourses: [
+      ...pick('選択必修（1科目2単位）', 2, '多言語・多文化社会と日本語教育', '異文化理解と日本語学習'),
+      ...opt(2, '日本の歴史・社会・文化', '多文化共生社会を生きる', '日本文学入門1', '日本文学入門2', '上代文学史', '中古文学史', '中世文学史', '近世文学史', '近代文学史', '現代文学史', '日常生活文化論',
+        '日本語の意味と語彙', '国際理解教育論', '異文化間コミュニケーション論'),
+      ...opt(1, '応用言語学演習1', '応用言語学演習2'),
+      ...opt(2, '社会心理学', '教育心理学', '発達と認知', '発達と学習', '教育学', '情報とコミュニケーション', '異文化間コミュニケーション概論1', '異文化間コミュニケーション概論2',
+        '教育の理念と歴史', '教授学習論', '授業開発論', '比較教育論', '教育方法・ICT活用論', '教育原論', '言語学', '言語学から見た世界', 'アカデミック・ライティング（日本語）1', 'アカデミック・ライティング（日本語）2',
+        '日本語学入門1', '日本語学入門2', '日本語表記・音韻史', '日本語語彙・文体史', '日本語音声学', '日本語文法論', '日本語文法史', '現代日本語学の方法', '方言の研究')
+    ],
+    groupRules: [{ group: '選択必修（1科目2単位）', label: '「多言語・多文化社会と日本語教育」「異文化理解と日本語学習」のいずれか1科目', minCourses: 1 }],
+    notes: [
+      '日本語教育実習を履修するには、日本語教育学概論・日本語教育のための日本語学・日本語教授法・選択必修1科目の4科目8単位を含む20単位以上の修得が必要です。希望者が多い場合は小テストや抽選で決まるので、1回目の授業に出席してください',
+      '日本語教育実習は夏季休暇中に外部の日本語教育機関で教壇実習を行い、実習費がかかります',
+      '「教育心理学」「教授学習論」「教育の理念と歴史」は教育学科の学生のみ履修できます。「日常生活文化論」は社会学科、「応用言語学演習1・2」は英文学科の学生が優先です'
+    ]
   }
 };
 
-export const VERIFIED_MINORS_CURRICULUM: Record<string, MinorCurriculumDef> = {
-  "哲学副専攻": {
-    "name": "哲学副専攻",
-    "type": "department",
-    "targetDept": "哲学科",
-    "creditsReq": 16,
-    "window": "哲学科事務室 / 教務課",
-    "page": "p.180",
-    "description": "a群から4単位以上、b群から2単位以上を含み、計16単位以上修得。",
-    "requiredCourses": [],
-    "electiveRequiredCourses": [
-      {
-        "name": "思想史1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "思想史2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "思想史3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "思想史4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "思想史5",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "思想史6",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "思想史7",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "思想史8",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "美学史1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "美学史2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "美学史3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "美学史4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "宗教史1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "宗教史2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "宗教史3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "宗教史4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "記号論理1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "記号論理2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "古典語・古典学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "古典語・古典学2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "古典語・古典学3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "古典語・古典学4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "古典語・古典学5",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "古典語・古典学6",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "古典語・古典学7",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "古典語・古典学8",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "哲学講読1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "哲学講読2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "哲学講読3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "哲学講読4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "哲学講読5",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "哲学講読6",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "哲学講読7",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "哲学講読8",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "倫理学講読1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "倫理学講読2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "倫理学講読3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "倫理学講読4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "美学講読1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "美学講読2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "美学講読3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "美学講読4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "美学講読5",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "美学講読6",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "美学講読7",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "美学講読8",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "宗教学講読1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "宗教学講読2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "宗教学講読3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "宗教学講読4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "哲学特殊講義1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "哲学特殊講義2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "哲学特殊講義3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "哲学特殊講義4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "哲学特殊講義5",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "哲学特殊講義6",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "哲学特殊講義7",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "哲学特殊講義8",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "倫理学特殊講義1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "倫理学特殊講義2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "倫理学特殊講義3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "倫理学特殊講義4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "倫理学特殊講義5",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "倫理学特殊講義6",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "倫理学特殊講義7",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "倫理学特殊講義8",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "美学特殊講義1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "美学特殊講義2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "美学特殊講義3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "美学特殊講義4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "美学特殊講義5",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "美学特殊講義6",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "美学特殊講義7",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "美学特殊講義8",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "宗教学特殊講義1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "宗教学特殊講義2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "宗教学特殊講義3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "宗教学特殊講義4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "宗教学特殊講義5",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "宗教学特殊講義6",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "宗教学特殊講義7",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "宗教学特殊講義8",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "教理学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      },
-      {
-        "name": "教理学2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群"
-      }
-    ]
-  },
-  "史学副専攻": {
-    "name": "史学副専攻",
-    "type": "department",
-    "targetDept": "史学科",
-    "creditsReq": 16,
-    "window": "史学科事務室 / 教務課",
-    "page": "p.181",
-    "description": "研究法入門・講究・特講などの指定科目から計16単位以上修得。",
-    "requiredCourses": [],
-    "electiveRequiredCourses": [
-      {
-        "name": "日本史研究法入門",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "東洋史研究法入門",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "西洋史研究法入門",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "考古学研究法入門",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "日本史講究",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "東洋史講究",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "西洋史講究",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "日本史特講1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "日本史特講2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "日本史特講3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "日本史特講4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "東洋史特講1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "東洋史特講2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "東洋史特講3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "東洋史特講4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "西洋史特講1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "西洋史特講2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "西洋史特講3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "西洋史特講4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "考古学特講1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "考古学特講2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "考古学特講3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "考古学特講4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      }
-    ]
-  },
-  "日本語日本文学副専攻": {
-    "name": "日本語日本文学副専攻",
-    "type": "department",
-    "targetDept": "国文学科",
-    "creditsReq": 16,
-    "window": "国文学科事務室 / 教務課",
-    "page": "p.181",
-    "description": "必修4科目8単位＋選択8単位以上＝計16単位以上修得。",
-    "requiredCourses": [
-      {
-        "name": "日本語学入門1",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "日本語学入門2",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "日本文学入門1",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "日本文学入門2",
-        "credits": 2,
-        "category": "必修"
-      }
+// =========================================================================
+// 副専攻（全24種・要覧 p.180-192）。修了認定は卒業が条件で、所属学科と同じ学科副専攻は認定されない
+// =========================================================================
+type MinorInput = Omit<MinorCurriculumDef, 'window' | 'creditsReq'> & { creditsReq?: number };
+function minor(def: MinorInput): MinorCurriculumDef {
+  return {
+    creditsReq: 16,
+    window: def.type === 'department' ? `${def.targetDept}事務室` : '教務課',
+    ...def
+  };
+}
+const dept = (name: string, targetDept: string, page: string, description: string, rest: Pick<MinorCurriculumDef, 'requiredCourses' | 'electiveRequiredCourses'> & Partial<MinorCurriculumDef>) =>
+  minor({ name, type: 'department', targetDept, page, description, ...rest });
+const inter = (name: string, committee: string, page: string, description: string, rest: Pick<MinorCurriculumDef, 'requiredCourses' | 'electiveRequiredCourses'> & Partial<MinorCurriculumDef>) =>
+  minor({ name, type: 'interdisciplinary', targetDept: '学際', page, description, ...rest, window: `教務課（${committee}）` } as MinorInput);
+
+const MINOR_LIST: MinorCurriculumDef[] = [
+  dept('哲学副専攻', '哲学科', 'p.182', 'a群とc群からそれぞれ4単位以上、b群から2単位以上を含め、16単位以上を修得します', {
+    requiredCourses: [],
+    electiveRequiredCourses: [
+      ...pick('a群', 2, ...seq('思想史', 1, 8), ...seq('美学史', 1, 4), ...seq('宗教史', 1, 4), ...seq('記号論理', 1, 2), ...seq('古典語・古典学', 1, 8)),
+      ...pick('b群', 1, ...seq('哲学講読', 1, 8), ...seq('倫理学講読', 1, 4), ...seq('美学講読', 1, 8), ...seq('宗教学講読', 1, 4)),
+      ...pick('c群', 2, ...seq('哲学特殊講義', 1, 8), ...seq('倫理学特殊講義', 1, 8), ...seq('美学特殊講義', 1, 8), ...seq('宗教学特殊講義', 1, 8), ...seq('教理学', 1, 2))
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "日本語文法論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "日本語文法史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "日本語表記・音韻史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "日本語語彙・文体史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "日本語音声学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "社会言語学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "日本語の意味と語彙",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "日本語学史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "上代文学史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "中古文学史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "中世文学史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "近世文学史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "近代文学史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "現代文学史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "上代文学講義",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "中古文学講義",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "中世文学講義",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "近世文学講義",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "近代文学講義",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "現代文学講義",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "書学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "文字文化研究",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      }
+    groupRules: [
+      { group: 'a群', label: 'a群（思想史・美学史・宗教史・記号論理・古典語・古典学）から4単位以上', minCredits: 4 },
+      { group: 'b群', label: 'b群（各講読）から2単位以上', minCredits: 2 },
+      { group: 'c群', label: 'c群（各特殊講義・教理学）から4単位以上', minCredits: 4 }
     ]
-  },
-  "現代文化副専攻": {
-    "name": "現代文化副専攻",
-    "type": "department",
-    "targetDept": "国文学科",
-    "creditsReq": 16,
-    "window": "国文学科事務室 / 教務課",
-    "page": "p.182",
-    "description": "必修2科目4単位＋選択12単位以上＝計16単位以上修得。",
-    "requiredCourses": [
-      {
-        "name": "文学とサブカルチャー",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "現代文学講義",
-        "credits": 2,
-        "category": "必修"
-      }
+  }),
+  dept('史学副専攻', '史学科', 'p.182', '指定科目から16単位以上を修得します', {
+    requiredCourses: [],
+    electiveRequiredCourses: opt(2, '日本史研究法入門', '東洋史研究法入門', '西洋史研究法入門', '考古学研究法入門', '日本史講究', '東洋史講究', '西洋史講究',
+      ...seq('日本史特講', 1, 4), ...seq('東洋史特講', 1, 4), ...seq('西洋史特講', 1, 4), ...seq('考古学特講', 1, 4))
+  }),
+  dept('日本語日本文学副専攻', '国文学科', 'p.182', '必修8単位を含め、16単位以上を修得します', {
+    requiredCourses: req(2, '日本語学入門1', '日本語学入門2', '日本文学入門1', '日本文学入門2'),
+    electiveRequiredCourses: opt(2, '日本語文法論', '日本語文法史', '日本語表記・音韻史', '日本語語彙・文体史', '日本語音声学', '社会言語学', '日本語の意味と語彙', '日本語学史',
+      '上代文学史', '中古文学史', '中世文学史', '近世文学史', '近代文学史', '現代文学史', '上代文学講義', '中古文学講義', '中世文学講義', '近世文学講義', '近代文学講義', '現代文学講義', '書学', '文字文化研究')
+  }),
+  dept('現代文化副専攻', '国文学科', 'p.183', '必修4単位を含め、16単位以上を修得します', {
+    requiredCourses: req(2, '文学とサブカルチャー', '現代文学講義'),
+    electiveRequiredCourses: opt(2, '日本マンガ文化研究', '大衆文化論', 'アダプテーション研究', '出版文化研究', '芸能文化研究', '児童文学・ライトノベル研究', 'ホラー・ミステリ研究', '批評理論', '社会言語学',
+      '言語学から見た世界', 'メディア論', 'ジェンダー論', '演劇論', '映像文化論', '文学', '文化人類学')
+  }),
+  dept('中国言語文化副専攻', '中国語中国文化学科', 'p.183', 'a群から6単位以上、b群から4単位以上を含め、16単位以上を修得します', {
+    requiredCourses: [],
+    electiveRequiredCourses: [
+      ...pick('a群', 1, ...seq('中国語', 1, 14)),
+      ...pick('b群', 2, ...seq('中国学入門', 1, 4), '中国文化論1', '中国文化論2', '中国社会論1', '中国社会論2'),
+      ...opt(2, '中国ジェンダー論', 'アジアの文化と社会1', 'アジアの文化と社会2', 'アジアの表象文化1', 'アジアの表象文化2', '映像文化論', 'アジアの歴史・社会・文化', '異文化間コミュニケーション論', '海外語学研修（中国語）')
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "日本マンガ文化研究",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "大衆文化論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "アダプテーション研究",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "出版文化研究",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "芸能文化研究",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "児童文学・ライトノベル研究",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "ホラー・ミステリ研究",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "批評理論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "社会言語学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "言語学から見た世界",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "メディア論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "ジェンダー論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "演劇論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "映像文化論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "文学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "文化人類学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      }
-    ]
-  },
-  "中国言語文化副専攻": {
-    "name": "中国言語文化副専攻",
-    "type": "department",
-    "targetDept": "中国語中国文化学科",
-    "creditsReq": 16,
-    "window": "中国語中国文化学科事務室 / 教務課",
-    "page": "p.182",
-    "description": "a群から6単位以上、b群から4単位以上を含み、計16単位以上修得。",
-    "requiredCourses": [],
-    "electiveRequiredCourses": [
-      {
-        "name": "中国語1",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国語2",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国語3",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国語4",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国語5",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国語6",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国語7",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国語8",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国語9",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国語10",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国語11",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国語12",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国語13",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国語14",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "中国学入門1",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "中国学入門2",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "中国学入門3",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "中国学入門4",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "中国文化論1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "中国文化論2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "中国社会論1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "中国社会論2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "中国ジェンダー論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "アジアの文化と社会1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "アジアの文化と社会2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "アジアの表象文化1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "アジアの表象文化2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "映像文化論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "アジアの歴史・社会・文化",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "異文化間コミュニケーション論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "海外語学研修(中国語)",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      }
-    ]
-  },
-  "英語英文学副専攻": {
-    "name": "英語英文学副専攻",
-    "type": "department",
-    "targetDept": "英文学科",
-    "creditsReq": 16,
-    "window": "英文学科事務室 / 教務課",
-    "page": "p.183",
-    "description": "a群から4単位、b群から4単位、c群から4単位を含み、計16単位以上修得。",
-    "requiredCourses": [],
-    "electiveRequiredCourses": [
-      {
-        "name": "異文化間コミュニケーション概論1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位）"
-      },
-      {
-        "name": "異文化間コミュニケーション概論2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位）"
-      },
-      {
-        "name": "イギリス社会論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位）"
-      },
-      {
-        "name": "アメリカ社会論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位）"
-      },
-      {
-        "name": "英語プレゼンテーション1",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "a群（4単位）"
-      },
-      {
-        "name": "英語プレゼンテーション2",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "a群（4単位）"
-      },
-      {
-        "name": "多読多聴英語1",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "a群（4単位）"
-      },
-      {
-        "name": "多読多聴英語2",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "a群（4単位）"
-      },
-      {
-        "name": "英語学概説1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位）"
-      },
-      {
-        "name": "英語学概説2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位）"
-      },
-      {
-        "name": "英文法1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位）"
-      },
-      {
-        "name": "英文法2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位）"
-      },
-      {
-        "name": "英語音声学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位）"
-      },
-      {
-        "name": "英語音声学2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位）"
-      },
-      {
-        "name": "英語史1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位）"
-      },
-      {
-        "name": "英語史2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位）"
-      },
-      {
-        "name": "英語文学概説1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（4単位）"
-      },
-      {
-        "name": "英語文学概説2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（4単位）"
-      },
-      {
-        "name": "イギリス文学史1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（4単位）"
-      },
-      {
-        "name": "イギリス文学史2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（4単位）"
-      },
-      {
-        "name": "イギリス文学史3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（4単位）"
-      },
-      {
-        "name": "イギリス文学史4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（4単位）"
-      },
-      {
-        "name": "アメリカ文学史1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（4単位）"
-      },
-      {
-        "name": "アメリカ文学史2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（4単位）"
-      },
-      {
-        "name": "文学・文化批評理論1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（4単位）"
-      },
-      {
-        "name": "文学・文化批評理論2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（4単位）"
-      }
-    ]
-  },
-  "ドイツ語ヨーロッパ文化副専攻": {
-    "name": "ドイツ語ヨーロッパ文化副専攻",
-    "type": "department",
-    "targetDept": "ドイツ文学科",
-    "creditsReq": 16,
-    "window": "ドイツ文学科事務室 / 教務課",
-    "page": "p.183",
-    "description": "外国語教育科目から4単位、ドイツ文学科専門科目から12単位を含み、計16単位以上修得。",
-    "requiredCourses": [],
-    "electiveRequiredCourses": [
-      {
-        "name": "ドイツ語1",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ語2",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ語3",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ語4",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ語5",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ語6",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ語7",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ語8",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ語9",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ語10",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ語コミュニケーション1",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ語コミュニケーション2",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ語コミュニケーション3",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ語コミュニケーション4",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "海外語学研修(ドイツ語)",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "外国語教育科目（4単位以上）"
-      },
-      {
-        "name": "ドイツ文学史講義3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "ドイツ文学史講義4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "ドイツ語学講義3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "ドイツ語学講義4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "ヨーロッパ・ドイツ文化講義3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "ヨーロッパ・ドイツ文化講義4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "時事ドイツ語リーディング1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "時事ドイツ語リーディング2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "ドイツ文学専門講義1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "ドイツ文学専門講義2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "ドイツ語学専門講義1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "ドイツ語学専門講義2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "ヨーロッパ・ドイツ語圏の文化と社会1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "ヨーロッパ・ドイツ語圏の文化と社会2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "ドイツ語表現演習インテンシヴ1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      },
-      {
-        "name": "ドイツ語表現演習インテンシヴ2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "専門科目（12単位以上）"
-      }
-    ]
-  },
-  "社会学副専攻": {
-    "name": "社会学副専攻",
-    "type": "department",
-    "targetDept": "社会学科",
-    "creditsReq": 16,
-    "window": "社会学科事務室 / 教務課",
-    "page": "p.184",
-    "description": "基本科目・展開科目などの指定科目から計16単位以上修得。",
-    "requiredCourses": [],
-    "electiveRequiredCourses": [
-      {
-        "name": "社会変動論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "マス・コミュニケーション論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "文化人類学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "現代家族論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "都市と地域の社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "企業と働き方の社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "社会問題論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "国際社会論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "社会病理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "ジャーナリズム論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "流行の社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "メディアとファッションの社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "産業社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "経営戦略とビジネスモデルの社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "東京と東京人の社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "福祉社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "データサイエンス入門",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "スポーツの社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      }
-    ]
-  },
-  "福祉社会システム副専攻": {
-    "name": "福祉社会システム副専攻",
-    "type": "department",
-    "targetDept": "社会福祉学科",
-    "creditsReq": 16,
-    "window": "社会福祉学科事務室 / 教務課",
-    "page": "p.184",
-    "description": "必修1科目2単位＋選択14単位以上＝計16単位以上修得。",
-    "requiredCourses": [
-      {
-        "name": "ソーシャルワークの理論と方法1",
-        "credits": 2,
-        "category": "必修"
-      }
+    groupRules: [
+      { group: 'a群', label: 'a群（中国語1〜14）から6単位以上', minCredits: 6 },
+      { group: 'b群', label: 'b群（中国学入門・中国文化論・中国社会論）から4単位以上', minCredits: 4 }
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "ソーシャルワークの理論と方法2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "障害者の理解",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "社会福祉法制",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "貧困に対する支援",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "スクールソーシャルワーク論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "国際社会福祉1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "国際社会福祉2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "地域福祉の理論と方法1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "福祉政策論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "社会事業史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "市民社会組織論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "家庭支援論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      }
-    ]
-  },
-  "特別ニーズ教育副専攻": {
-    "name": "特別ニーズ教育副専攻",
-    "type": "department",
-    "targetDept": "教育学科",
-    "creditsReq": 16,
-    "window": "教育学科事務室 / 教務課",
-    "page": "p.185",
-    "description": "必修1科目2単位＋選択14単位以上＝計16単位以上修得。",
-    "requiredCourses": [
-      {
-        "name": "特別ニーズ教育の原理と歴史",
-        "credits": 2,
-        "category": "必修"
-      }
+    notes: ['中国語9〜14は、中国語1〜8のうち6単位以上を修得済みの人が履修できます']
+  }),
+  dept('英語英文学副専攻', '英文学科', 'p.184', 'a群・b群・c群からそれぞれ4単位以上を含め、16単位以上を修得します', {
+    requiredCourses: [],
+    electiveRequiredCourses: [
+      ...pick('a群', 2, '異文化間コミュニケーション概論1', '異文化間コミュニケーション概論2', 'イギリス社会論', 'アメリカ社会論'),
+      ...pick('a群', 1, '英語プレゼンテーション1', '英語プレゼンテーション2', '多読多聴英語1', '多読多聴英語2'),
+      ...pick('b群', 2, '英語学概説1', '英語学概説2', '英文法1', '英文法2', '英語音声学1', '英語音声学2', '英語史1', '英語史2'),
+      ...pick('c群', 2, '英語文学概説1', '英語文学概説2', ...seq('イギリス文学史', 1, 4), 'アメリカ文学史1', 'アメリカ文学史2', '文学・文化批評理論1', '文学・文化批評理論2')
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "知的障害者の心理・生理・病理",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "肢体不自由者の心理・生理・病理",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "病弱者の心理・生理・病理",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "知的障害教育論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "肢体不自由教育論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "病弱教育論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "発達障害教育論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "発達障害者の心理・生理・病理",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "視覚障害教育総論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "聴覚障害教育総論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      }
+    groupRules: [
+      { group: 'a群', label: 'a群（異文化・社会論・英語プレゼンテーション・多読多聴英語）から4単位以上', minCredits: 4 },
+      { group: 'b群', label: 'b群（英語学）から4単位以上', minCredits: 4 },
+      { group: 'c群', label: 'c群（英語文学）から4単位以上', minCredits: 4 }
     ]
-  },
-  "体育学副専攻": {
-    "name": "体育学副専攻",
-    "type": "department",
-    "targetDept": "体育学科",
-    "creditsReq": 16,
-    "window": "体育学科事務室 / 教務課",
-    "page": "p.185",
-    "description": "体育学科専門指定科目から計16単位以上修得。",
-    "requiredCourses": [],
-    "electiveRequiredCourses": [
-      {
-        "name": "体育学概論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "保健学概論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "トレーニング理論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "スポーツバイオメカニクス",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "スポーツ運動学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "解剖学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "生理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "衛生学及び公衆衛生学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "コーチ論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "スポーツ教育学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "スポーツ社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "体育・スポーツ史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "オリンピック・パラリンピック",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "スポーツ心理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "機能解剖学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "運動生理学(基礎)",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "スポーツリハビリテーション",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "スポーツ栄養学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "救急処置",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "測定評価",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "体育・スポーツ制度及び行政",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "体育経営管理",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "スポーツ医学(内科)",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      },
-      {
-        "name": "スポーツ医学(外科)",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "指定科目"
-      }
+  }),
+  dept('ドイツ語ヨーロッパ文化副専攻', 'ドイツ文学科', 'p.184', '必修4単位を含め、16単位以上を修得します', {
+    requiredCourses: req(1, ...seq('ドイツ語', 1, 4)),
+    electiveRequiredCourses: [
+      ...opt(1, ...seq('ドイツ語', 5, 10), ...seq('ドイツ語コミュニケーション', 1, 4)),
+      ...opt(2, '海外語学研修（ドイツ語）', 'ドイツ文学史講義3', 'ドイツ文学史講義4', 'ドイツ語学講義3', 'ドイツ語学講義4', 'ヨーロッパ・ドイツ文化講義3', 'ヨーロッパ・ドイツ文化講義4'),
+      ...opt(1, '時事ドイツ語リーディング1', '時事ドイツ語リーディング2'),
+      ...opt(2, 'ドイツ文学専門講義1', 'ドイツ文学専門講義2', 'ドイツ語学専門講義1', 'ドイツ語学専門講義2', 'ヨーロッパ・ドイツ語圏の文化と社会1', 'ヨーロッパ・ドイツ語圏の文化と社会2'),
+      ...opt(1, 'ドイツ語表現演習インテンシヴ1', 'ドイツ語表現演習インテンシヴ2')
     ]
-  },
-  "心理学副専攻": {
-    "name": "心理学副専攻",
-    "type": "department",
-    "targetDept": "心理学科",
-    "creditsReq": 16,
-    "window": "心理学科事務室 / 教務課",
-    "page": "p.186",
-    "description": "必修4単位＋a群から4単位以上＋b群から8単位以上＝計16単位以上修得。",
-    "requiredCourses": [
-      {
-        "name": "心理学",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "心の健康",
-        "credits": 2,
-        "category": "必修"
-      }
+  }),
+  dept('社会学副専攻', '社会学科', 'p.185', '指定科目から16単位以上を修得します', {
+    requiredCourses: [],
+    electiveRequiredCourses: opt(2, '社会変動論', 'マス・コミュニケーション論', '文化人類学', '現代家族論', '都市と地域の社会学', '企業と働き方の社会学', '社会問題論', '国際社会論', '社会病理学',
+      'ジャーナリズム論', '流行の社会学', 'メディアとファッションの社会学', '産業社会学', '経営戦略とビジネスモデルの社会学', '東京と東京人の社会学', '福祉社会学', 'データサイエンス入門', 'スポーツの社会学')
+  }),
+  dept('福祉社会システム副専攻', '社会福祉学科', 'p.185', '必修2単位を含め、16単位以上を修得します', {
+    requiredCourses: req(2, 'ソーシャルワークの理論と方法1'),
+    electiveRequiredCourses: opt(2, 'ソーシャルワークの理論と方法2', '障害者の理解', '社会福祉法制', '貧困に対する支援', 'スクールソーシャルワーク論', '国際社会福祉1', '国際社会福祉2',
+      '地域福祉の理論と方法1', '福祉政策論', '社会事業史', '市民社会組織論', '家庭支援論')
+  }),
+  dept('特別ニーズ教育副専攻', '教育学科', 'p.185', '必修2単位を含め、16単位以上を修得します', {
+    requiredCourses: req(2, '特別ニーズ教育の原理と歴史'),
+    electiveRequiredCourses: [
+      ...opt(2, '発達障害教育論', '知的障害者の心理・生理・病理', '肢体不自由者の心理・生理・病理', '病弱者の心理・生理・病理', '知的障害教育論', '肢体不自由教育論', '病弱教育論', '発達障害者の心理・生理・病理'),
+      ...opt(1, '視覚障害教育総論', '聴覚障害教育総論')
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "発達心理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "社会・集団・家族心理学A",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "社会・集団・家族心理学B",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "感情・人格心理学A",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "感情・人格心理学B",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "知覚・認知心理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "学習・言語心理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "神経・生理心理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "司法・犯罪心理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "産業・組織心理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "教育・学校心理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "精神疾患とその治療",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "臨床心理学特講",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "カウンセリング特講",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "心理面接特講",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "認知心理学特講",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "社会心理学特講",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "生理心理学特講",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "環境心理学特講",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "健康心理学特講",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "臨床社会心理学特講",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "老年心理学特講",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      }
-    ]
-  },
-  "地理学副専攻": {
-    "name": "地理学副専攻",
-    "type": "department",
-    "targetDept": "地理学科",
-    "creditsReq": 16,
-    "window": "地理学科事務室 / 教務課",
-    "page": "p.186",
-    "description": "必修10単位＋a群から2単位以上＋b群から4単位以上＝計16単位以上修得。",
-    "requiredCourses": [
-      {
-        "name": "自然地理学の基礎1",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "自然地理学の基礎2",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "人文地理学の基礎1",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "人文地理学の基礎2",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "地図学",
-        "credits": 2,
-        "category": "必修"
-      }
+    notes: ['この副専攻を修了しても特別支援学校の免許状は取得できません']
+  }),
+  dept('体育学副専攻', '体育学科', 'p.186', '指定科目から16単位以上を修得します', {
+    requiredCourses: [],
+    electiveRequiredCourses: opt(2, '体育学概論', '保健学概論', 'トレーニング理論', 'スポーツバイオメカニクス', 'スポーツ運動学', '解剖学', '生理学', '衛生学及び公衆衛生学', 'コーチ論', 'スポーツ教育学', 'スポーツ社会学', '体育・スポーツ史',
+      'オリンピック・パラリンピック論', 'スポーツ心理学', '機能解剖学', '運動生理学（基礎）', 'スポーツリハビリテーション', 'スポーツ栄養学', '救急処置', '測定評価', '体育・スポーツ制度及び行政', '体育経営管理', 'スポーツ医学（内科）', 'スポーツ医学（外科）')
+  }),
+  dept('心理学副専攻', '心理学科', 'p.186', '必修4単位を含め、a群から2年次に2科目4単位、b群から3年次と4年次に各2科目4単位を修得し、16単位以上を修得します', {
+    requiredCourses: req(2, '心理学', '心の健康'),
+    electiveRequiredCourses: [
+      ...pick('a群', 2, '発達心理学', '社会・集団・家族心理学A（社会心理学）', '社会・集団・家族心理学B（家族心理学）', '感情・人格心理学A（パーソナリティ心理学）', '感情・人格心理学B（感情心理学）',
+        '知覚・認知心理学', '学習・言語心理学', '神経・生理心理学', '司法・犯罪心理学', '産業・組織心理学', '教育・学校心理学', '精神疾患とその治療'),
+      ...pick('b群', 2, '臨床心理学特講', 'カウンセリング特講', '心理面接特講', '認知心理学特講', '社会心理学特講', '生理心理学特講', '環境心理学特講', '健康心理学特講', '臨床社会心理学特講', '老年心理学特講')
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "地理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（2単位以上）"
-      },
-      {
-        "name": "気象と環境変化",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（2単位以上）"
-      },
-      {
-        "name": "日本の自然と災害",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（2単位以上）"
-      },
-      {
-        "name": "経済地理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "社会地理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "文化地理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "地形学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "気候学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "生物地理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      }
-    ]
-  },
-  "地球科学副専攻": {
-    "name": "地球科学副専攻",
-    "type": "department",
-    "targetDept": "地球科学科",
-    "creditsReq": 16,
-    "window": "地球科学科事務室 / 教務課",
-    "page": "p.187",
-    "description": "a群から4単位以上、b群から4単位以上を含み、計16単位以上修得。",
-    "requiredCourses": [],
-    "electiveRequiredCourses": [
-      {
-        "name": "地球科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "宇宙科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "地球環境の変動と生命史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "地学概論1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "地学概論2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "古生物・古生態学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "水圏科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "環境化学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "環境地球科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "地球科学特講2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（4単位以上）"
-      },
-      {
-        "name": "地圏科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "地球物理学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "地球物理学2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "火山学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "岩石・鉱物学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      },
-      {
-        "name": "気圏科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（4単位以上）"
-      }
-    ]
-  },
-  "数学副専攻": {
-    "name": "数学副専攻",
-    "type": "department",
-    "targetDept": "数学科",
-    "creditsReq": 16,
-    "window": "数学科事務室 / 教務課",
-    "page": "p.187",
-    "description": "必修2科目6単位＋選択10単位以上＝計16単位以上修得。",
-    "requiredCourses": [
-      {
-        "name": "線形代数1(含演習)",
-        "credits": 3,
-        "category": "必修"
-      },
-      {
-        "name": "微分積分学1(含演習)",
-        "credits": 3,
-        "category": "必修"
-      }
+    groupRules: [
+      { group: 'a群', label: 'a群から2年次に2科目4単位', minCredits: 4 },
+      { group: 'b群', label: 'b群から3年次に2科目4単位、4年次に2科目4単位（計8単位）', minCredits: 8 }
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "線形代数2(含演習)",
-        "credits": 3,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "微分積分学2(含演習)",
-        "credits": 3,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "常微分方程式入門",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "初等整数論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "距離と位相",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "微分積分学続論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "群論入門",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "環論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "ガロア理論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "曲線と曲面",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "幾何構造",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "離散構造",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "複素解析学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "数理統計",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "数学教育学概論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "数学教育実践論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "統計学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "数学を楽しむ",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "生活の中の数学",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "選択科目"
-      }
+    notes: [
+      '選択科目は必修科目の単位を修得した後、2年次以降に履修します',
+      '選択科目は1科目あたり副専攻受講者と聴講生の合計が最大20名で、超えた場合は抽選です',
+      '教職コースの「教育相談」を履修した（する予定の）人は、a群の「教育・学校心理学」を履修できません'
     ]
-  },
-  "情報科学副専攻": {
-    "name": "情報科学副専攻",
-    "type": "department",
-    "targetDept": "情報科学科",
-    "creditsReq": 16,
-    "window": "情報科学科事務室 / 教務課",
-    "page": "p.188",
-    "description": "必修4科目6単位＋選択10単位以上＝計16単位以上修得。",
-    "requiredCourses": [
-      {
-        "name": "基礎プログラミング1",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "基礎プログラミング2",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "情報科学実習1",
-        "credits": 1,
-        "category": "必修"
-      },
-      {
-        "name": "情報科学実習2",
-        "credits": 1,
-        "category": "必修"
-      }
+  }),
+  dept('地理学副専攻', '地理学科', 'p.187', '必修10単位を含め、a群から2単位、b群から4単位以上を含み、16単位以上を修得します', {
+    requiredCourses: req(2, '自然地理学の基礎1', '自然地理学の基礎2', '人文地理学の基礎1', '人文地理学の基礎2', '地図学'),
+    electiveRequiredCourses: [
+      ...pick('a群', 2, '地理学', '気象と環境変化', '日本の自然と災害'),
+      ...pick('b群', 2, '経済地理学', '社会地理学', '文化地理学', '地形学', '気候学', '生物地理学')
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "情報科学実習3",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "情報科学実習4",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "実践プログラミング1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "実践プログラミング2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "ソフトウェアクリエイション1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "ソフトウェアクリエイション2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "マルチメディア表現",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "データ科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "次世代社会コミュニティ情報科学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "情報処理入門1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "情報処理入門2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "データベース",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "情報と社会",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "情報と数理",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "地域振興と情報発信",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      }
-    ]
-  },
-  "物理学副専攻": {
-    "name": "物理学副専攻",
-    "type": "department",
-    "targetDept": "物理学科",
-    "creditsReq": 16,
-    "window": "物理学科事務室 / 教務課",
-    "page": "p.188",
-    "description": "必修4科目8単位＋選択8単位以上＝計16単位以上修得。",
-    "requiredCourses": [
-      {
-        "name": "力学入門",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "電磁気学入門",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "力学1",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "力学2",
-        "credits": 2,
-        "category": "必修"
-      }
+    groupRules: [
+      { group: 'a群', label: 'a群（総合教育科目）から2単位以上', minCredits: 2 },
+      { group: 'b群', label: 'b群から4単位以上（必修科目の修得後に履修）', minCredits: 4 }
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "量子力学入門",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "熱力学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "振動と波動",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "電磁気学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "電磁気学2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "物性物理学入門",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "量子力学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "統計力学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "物性物理学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "相対性理論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "量子光学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "宇宙物理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "超伝導の科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "物理学概論1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "物理学概論2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      }
-    ]
-  },
-  "生命科学副専攻": {
-    "name": "生命科学副専攻",
-    "type": "department",
-    "targetDept": "生命科学科",
-    "creditsReq": 16,
-    "window": "生命科学科事務室 / 教務課",
-    "page": "p.189",
-    "description": "選択必修2単位＋選択14単位以上＝計16単位以上修得。",
-    "requiredCourses": [],
-    "electiveRequiredCourses": [
-      {
-        "name": "生命科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択必修（いずれか1科目）"
-      },
-      {
-        "name": "生物学概論1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択必修（いずれか1科目）"
-      },
-      {
-        "name": "生命科学概論1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択必修（いずれか1科目）"
-      },
-      {
-        "name": "身のまわりの生命現象",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "環境と生命のつながり",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "ゲノム改変と私たちの生活",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "生命科学概論2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "進化系統学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "生化学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "分子生物学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "分子生物学2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "細胞生物学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "細胞生物学2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "生体エネルギー科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "遺伝学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "微生物学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "生態学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "植物生態学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "植物機能学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "ゲノム科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "代謝生理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "細胞内ダイナミクス",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "構造生物学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "バイオインフォマティクス1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "バイオインフォマティクス2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "発生生物学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "発生生物学2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "植物生理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "生物物理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "脳神経科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "生命医科学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "生命医科学2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "免疫学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "環境保全生態学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "生命科学特別講義1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "生命科学特別講義2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "生命科学特別講義3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "生命科学特別講義4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      }
-    ]
-  },
-  "化学副専攻": {
-    "name": "化学副専攻",
-    "type": "department",
-    "targetDept": "化学科",
-    "creditsReq": 16,
-    "window": "化学科事務室 / 教務課",
-    "page": "p.189",
-    "description": "a群から8単位以上、b群から8単位以上を含み、計16単位以上修得。",
-    "requiredCourses": [],
-    "electiveRequiredCourses": [
-      {
-        "name": "基礎化学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（8単位以上）"
-      },
-      {
-        "name": "有機化学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（8単位以上）"
-      },
-      {
-        "name": "有機化学2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（8単位以上）"
-      },
-      {
-        "name": "無機化学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（8単位以上）"
-      },
-      {
-        "name": "無機化学2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（8単位以上）"
-      },
-      {
-        "name": "分析化学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（8単位以上）"
-      },
-      {
-        "name": "分析化学2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（8単位以上）"
-      },
-      {
-        "name": "物理化学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（8単位以上）"
-      },
-      {
-        "name": "物理化学2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（8単位以上）"
-      },
-      {
-        "name": "有機化学3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "無機化学3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "分析化学3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "物理化学3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "化学数学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "周期表の化学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "発展無機化学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "応用無機化学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "有機反応化学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "有機構造化学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "最前線の化学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      },
-      {
-        "name": "現代社会を支える化学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（8単位以上）"
-      }
-    ]
-  },
-  "グローバル・コミュニケーション副専攻": {
-    "name": "グローバル・コミュニケーション副専攻",
-    "type": "interdisciplinary",
-    "targetDept": "学際",
-    "creditsReq": 16,
-    "window": "教務課・国際交流委員会",
-    "page": "p.190",
-    "description": "a群6単位以上、b群2単位以上、c群2単位以上、d群2単位以上を含み、計16単位以上修得。",
-    "requiredCourses": [],
-    "electiveRequiredCourses": [
-      {
-        "name": "Frontier of Knowledge 1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "Frontier of Knowledge 2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "多言語・多文化社会と日本語教育",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "異文化理解と日本語学習",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "欧米の歴史・社会・文化",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "アジアの歴史・社会・文化",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "イスラム圏の歴史・社会・文化",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "国際情勢",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "国際経済論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "アジアの文化と社会2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "イギリス社会論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "アメリカ社会論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "ヨーロッパ・ドイツ文化講義3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "国際社会論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "国際社会福祉1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（6単位以上）"
-      },
-      {
-        "name": "多読多聴英語1",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "多読多聴英語2",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "ドイツ語コミュニケーション1",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "ドイツ語コミュニケーション2",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "フランス語コミュニカティフ1",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "フランス語コミュニカティフ2",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "中国語7",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "中国語8",
-        "credits": 1,
-        "category": "選択必修",
-        "group": "b群（2単位以上）"
-      },
-      {
-        "name": "History of Japan 1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（2単位以上）"
-      },
-      {
-        "name": "Japanese Society 1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（2単位以上）"
-      },
-      {
-        "name": "Japanese Literature 1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（2単位以上）"
-      },
-      {
-        "name": "Japanese Culture 1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（2単位以上）"
-      },
-      {
-        "name": "Japan in the World 1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（2単位以上）"
-      },
-      {
-        "name": "World Literature and Japan 1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（2単位以上）"
-      },
-      {
-        "name": "海外語学研修",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "d群（2単位以上）"
-      },
-      {
-        "name": "海外文化交流",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "d群（2単位以上）"
-      },
-      {
-        "name": "総合研究1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "d群（2単位以上）"
-      },
-      {
-        "name": "総合研究2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "d群（2単位以上）"
-      },
-      {
-        "name": "総合研究3",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "d群（2単位以上）"
-      },
-      {
-        "name": "総合研究4",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "d群（2単位以上）"
-      },
-      {
-        "name": "総合研究5",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "d群（2単位以上）"
-      },
-      {
-        "name": "総合研究6",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "d群（2単位以上）"
-      },
-      {
-        "name": "総合研究7",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "d群（2単位以上）"
-      },
-      {
-        "name": "総合研究8",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "d群（2単位以上）"
-      }
-    ]
-  },
-  "ダイバーシティ副専攻": {
-    "name": "ダイバーシティ副専攻",
-    "type": "interdisciplinary",
-    "targetDept": "学際",
-    "creditsReq": 16,
-    "window": "教務課・ダイバーシティ推進委員会",
-    "page": "p.191",
-    "description": "必修4科目8単位＋選択8単位以上＝計16単位以上修得。",
-    "requiredCourses": [
-      {
-        "name": "ジェンダー論",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "ダイバーシティ＆インクルージョン",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "「障害」の科学",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "多文化共生社会を生きる",
-        "credits": 2,
-        "category": "必修"
-      }
+    notes: ['教職科目の「自然地理学概論」「自然地理学詳論」の修得で自然地理学の基礎1・2を、「人文地理学概論」「人文地理学詳論」の修得で人文地理学の基礎1・2を、それぞれ一括して読み替えられます']
+  }),
+  dept('地球科学副専攻', '地球科学科', 'p.187', 'a群・b群からそれぞれ4単位以上を含み、16単位以上を修得します', {
+    requiredCourses: [],
+    electiveRequiredCourses: [
+      ...opt(2, '地球科学', '宇宙科学', '地球環境の変動と生命史', '地学概論1', '地学概論2'),
+      ...pick('a群', 2, '気圏科学', '水圏科学', '環境化学', '環境地球科学', '地球科学特講2'),
+      ...pick('b群', 2, '地圏科学', '地球物理学1', '地球物理学2', '火山学', '岩石・鉱物学', '古生物・古生態学')
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "LGBTQを知る",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "Japanese Culture 1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "Japanese Culture 2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "Japanese Society 1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "Japanese Society 2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "国際社会論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "東京と東京人の社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "差別の社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "中国ジェンダー論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "国際社会福祉1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "ジェンダーと教育",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "教育と開発",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      }
+    groupRules: [
+      { group: 'a群', label: 'a群（気圏・水圏・環境）から4単位以上', minCredits: 4 },
+      { group: 'b群', label: 'b群（地圏・地球物理・岩石・古生物）から4単位以上', minCredits: 4 }
     ]
-  },
-  "データサイエンス副専攻": {
-    "name": "データサイエンス副専攻",
-    "type": "interdisciplinary",
-    "targetDept": "学際",
-    "creditsReq": 16,
-    "window": "教務課・データサイエンス教育委員会",
-    "page": "p.191",
-    "description": "必修4科目8単位＋a群1科目以上＋b群1科目以上＋c群1科目以上を含み、計16単位以上修得。",
-    "requiredCourses": [
-      {
-        "name": "情報リテラシー",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "データ処理基礎",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "ビッグデータサイエンス",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "アルゴリズムとデータ構造",
-        "credits": 2,
-        "category": "必修"
-      }
+  }),
+  dept('数学副専攻', '数学科', 'p.188', '必修6単位を含め、16単位以上を修得します', {
+    requiredCourses: req(3, '線形代数1（含演習）', '微分積分学1（含演習）'),
+    electiveRequiredCourses: [
+      ...opt(3, '線形代数2（含演習）', '微分積分学2（含演習）'),
+      ...opt(2, '数理統計', '初等整数論', '距離と位相', '微分積分学続論', '群論入門', '環論', 'ガロア理論', '曲線と曲面', '幾何構造', '離散構造', '複素解析学', '常微分方程式入門', '数学教育学概論', '数学教育実践論',
+        '数学', '統計学', '数学を楽しむ', '生活の中の数学')
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "統計学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（統計・数理/1科目以上）"
-      },
-      {
-        "name": "データアナリティクス",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（統計・数理/1科目以上）"
-      },
-      {
-        "name": "データと対話するための統計学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（統計・数理/1科目以上）"
-      },
-      {
-        "name": "地理統計の基礎",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（統計・数理/1科目以上）"
-      },
-      {
-        "name": "地球環境統計学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（統計・数理/1科目以上）"
-      },
-      {
-        "name": "データ科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（統計・数理/1科目以上）"
-      },
-      {
-        "name": "確率論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（統計・数理/1科目以上）"
-      },
-      {
-        "name": "生物統計学基礎",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（統計・数理/1科目以上）"
-      },
-      {
-        "name": "生物統計学実践",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（統計・数理/1科目以上）"
-      },
-      {
-        "name": "数理統計",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（統計・数理/1科目以上）"
-      },
-      {
-        "name": "応用空間分析法(含実習)",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（計算・プログラミング/1科目以上）"
-      },
-      {
-        "name": "情報処理入門1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（計算・プログラミング/1科目以上）"
-      },
-      {
-        "name": "情報処理入門2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（計算・プログラミング/1科目以上）"
-      },
-      {
-        "name": "数値計算入門1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（計算・プログラミング/1科目以上）"
-      },
-      {
-        "name": "数値計算入門2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（計算・プログラミング/1科目以上）"
-      },
-      {
-        "name": "物理学における情報処理",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（計算・プログラミング/1科目以上）"
-      },
-      {
-        "name": "生命科学のためのプログラミングと計算",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（計算・プログラミング/1科目以上）"
-      },
-      {
-        "name": "デジタル産業革命と社会の変容",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（基盤・社会応用/1科目以上）"
-      },
-      {
-        "name": "情報倫理・情報セキュリティ",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（基盤・社会応用/1科目以上）"
-      },
-      {
-        "name": "次世代情報基盤構築応用",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（基盤・社会応用/1科目以上）"
-      },
-      {
-        "name": "仮想情報基盤構築基礎",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（基盤・社会応用/1科目以上）"
-      },
-      {
-        "name": "地理情報システム(含実習)",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（基盤・社会応用/1科目以上）"
-      },
-      {
-        "name": "マルチメディア表現",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（基盤・社会応用/1科目以上）"
-      }
+    notes: [
+      '必修の2科目は原則として再履修クラスを受講し、1年後期から受講できます。「線形代数2（含演習）」「微分積分学2（含演習）」も原則として再履修クラスを受講します',
+      '数学科専門科目の選択科目は、必修の2科目を履修した後に履修します。総合教育科目（理学）の4科目は1年前期から受講できます'
     ]
-  },
-  "科学リテラシー副専攻": {
-    "name": "科学リテラシー副専攻",
-    "type": "interdisciplinary",
-    "targetDept": "学際",
-    "creditsReq": 16,
-    "window": "教務課・自然科学教育委員会",
-    "page": "p.192",
-    "description": "a群〜d群各分野から各2単位以上を含み、計16単位以上修得。※理系6学科所属生は修了認定不可。",
-    "requiredCourses": [],
-    "electiveRequiredCourses": [
-      {
-        "name": "気象と環境変化",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（地球科学/2単位以上）"
-      },
-      {
-        "name": "日本の自然と災害",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（地球科学/2単位以上）"
-      },
-      {
-        "name": "宇宙科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（地球科学/2単位以上）"
-      },
-      {
-        "name": "地球環境の変動と生命史",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "a群（地球科学/2単位以上）"
-      },
-      {
-        "name": "原子の世界",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（物質科学/2単位以上）"
-      },
-      {
-        "name": "現代社会を支える科学技術",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（物質科学/2単位以上）"
-      },
-      {
-        "name": "化学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（物質科学/2単位以上）"
-      },
-      {
-        "name": "現代社会を支える化学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "b群（物質科学/2単位以上）"
-      },
-      {
-        "name": "生命科学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（生命科学/2単位以上）"
-      },
-      {
-        "name": "身のまわりの生命現象",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（生命科学/2単位以上）"
-      },
-      {
-        "name": "環境と生命のつながり",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（生命科学/2単位以上）"
-      },
-      {
-        "name": "ゲノム改変と私たちの生活",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "c群（生命科学/2単位以上）"
-      },
-      {
-        "name": "数学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "d群（数学・情報/2単位以上）"
-      },
-      {
-        "name": "データと対話するための統計学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "d群（数学・情報/2単位以上）"
-      },
-      {
-        "name": "プログラミング入門",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "d群（数学・情報/2単位以上）"
-      }
+  }),
+  dept('情報科学副専攻', '情報科学科', 'p.188', '必修6単位を含め、16単位以上を修得します', {
+    requiredCourses: [...req(2, '基礎プログラミング1', '基礎プログラミング2'), ...req(1, '情報科学実習1', '情報科学実習2')],
+    electiveRequiredCourses: [
+      ...opt(1, '情報科学実習3', '情報科学実習4'),
+      ...opt(2, '実践プログラミング1', '実践プログラミング2', 'ソフトウェアクリエイション1', 'ソフトウェアクリエイション2', 'マルチメディア表現', 'データ科学', '次世代社会コミュニティ情報科学1',
+        '情報処理入門1', '情報処理入門2', 'データベース', '情報と社会', '情報と数理', '地域振興と情報発信')
     ]
-  },
-  "地域デザイン副専攻": {
-    "name": "地域デザイン副専攻",
-    "type": "interdisciplinary",
-    "targetDept": "学際",
-    "creditsReq": 16,
-    "window": "教務課・地域連携教育委員会",
-    "page": "p.192",
-    "description": "必修3科目6単位＋選択10単位以上＝計16単位以上修得。",
-    "requiredCourses": [
-      {
-        "name": "地域資源の活用と地域連携",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "多文化共生社会を生きる",
-        "credits": 2,
-        "category": "必修"
-      },
-      {
-        "name": "現代社会におけるケア",
-        "credits": 2,
-        "category": "必修"
-      }
+  }),
+  dept('物理学副専攻', '物理学科', 'p.189', '必修8単位を含め、16単位以上を修得します', {
+    requiredCourses: req(2, '力学入門', '電磁気学入門', '量子力学入門', '熱力学'),
+    electiveRequiredCourses: opt(2, '力学1', '力学2', '振動と波動', '電磁気学1', '電磁気学2', '物性物理学入門', '量子力学1', '統計力学1', '物性物理学1', '相対性理論', '量子光学', '宇宙物理学', '超伝導の科学', '物理学概論1', '物理学概論2'),
+    notes: ['備考欄に科目がある科目は、その科目を履修済みであることが望ましい（例：力学1は力学入門、相対性理論は力学2・電磁気学2）']
+  }),
+  dept('生命科学副専攻', '生命科学科', 'p.189', '選択必修2単位を含め、16単位以上を修得します', {
+    requiredCourses: [],
+    electiveRequiredCourses: [
+      ...pick('選択必修', 2, '生命科学', '生物学概論1', '生命科学概論2'),
+      ...opt(2, '身のまわりの生命現象', '環境と生命のつながり', 'ゲノム改変と私たちの生活', '生命科学概論1', '進化系統学', '生化学', '分子生物学1', '分子生物学2', '細胞生物学1', '細胞生物学2',
+        '生体エネルギー科学', '遺伝学', '微生物学', '生態学', '植物生態学', '植物機能学', 'ゲノム科学', '代謝生理学', '細胞内ダイナミクス', '構造生物学', 'バイオインフォマティクス1', 'バイオインフォマティクス2',
+        '発生生物学1', '発生生物学2', '植物生理学', '生物物理学', '脳神経科学', '生命医科学1', '生命医科学2', '免疫学', '環境保全生態学',
+        '生命科学特別講義1（バイオテクノロジー）', '生命科学特別講義2（食品科学）', '生命科学特別講義3（健康美容科学）', '生命科学特別講義4（創薬）')
     ],
-    "electiveRequiredCourses": [
-      {
-        "name": "法学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "憲法",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "経済学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "地理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "日本の自然と災害",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "キャリアデザイン(公務員志望者)",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "インターンシップ(公務員志望者)",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "日本考古学概説1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "文化財学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "社会言語学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "方言の研究",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "中国文化1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "ヨーロッパ・ドイツ語圏の文化と社会1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "都市と地域の社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "東京と東京人の社会学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "福祉政策運営管理",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "地域福祉の理論と方法2",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "教育経営論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "地域教育論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "社会教育論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "体育・スポーツ制度及び行政",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "産業・組織心理学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "老年心理学特講",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "地域政策論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "ツーリズム論",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "環境保全生態学",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      },
-      {
-        "name": "生命医科学1",
-        "credits": 2,
-        "category": "選択必修",
-        "group": "選択科目"
-      }
+    groupRules: [{ group: '選択必修', label: '「生命科学」「生物学概論1」「生命科学概論2」から2単位', minCredits: 2 }]
+  }),
+  dept('化学副専攻', '化学科', 'p.190', 'a群・b群からそれぞれ8単位以上を含め、16単位以上を修得します', {
+    requiredCourses: [],
+    electiveRequiredCourses: [
+      ...pick('a群', 2, '基礎化学', '有機化学1', '有機化学2', '無機化学1', '無機化学2', '分析化学1', '分析化学2', '物理化学1', '物理化学2'),
+      ...pick('b群', 2, '有機化学3', '無機化学3', '分析化学3', '物理化学3', '化学数学', '周期表の化学', '発展無機化学', '応用無機化学', '有機反応化学', '有機構造化学', '最前線の化学', '現代社会を支える化学')
+    ],
+    groupRules: [
+      { group: 'a群', label: 'a群（基礎・各化学1・2）から8単位以上', minCredits: 8 },
+      { group: 'b群', label: 'b群から8単位以上（a群で8単位を修得した後に履修）', minCredits: 8 }
     ]
-  }
-};
+  }),
+  inter('グローバル・コミュニケーション副専攻', '国際交流委員会', 'p.190', 'a群6単位、b群2単位、c群2単位、d群2単位を含み、16単位以上を修得します', {
+    requiredCourses: [],
+    electiveRequiredCourses: [
+      ...pick('a群', 2, 'Frontier of Knowledge 1', 'Frontier of Knowledge 2', '多言語・多文化社会と日本語教育', '異文化理解と日本語学習', '欧米の歴史・社会・文化', 'アジアの歴史・社会・文化', 'イスラム圏の歴史・社会・文化',
+        '国際情勢', '国際経済論', 'アジアの文化と社会2', 'イギリス社会論', 'アメリカ社会論', 'ヨーロッパ・ドイツ文化講義3', '国際社会論', '国際社会福祉1'),
+      ...pick('b群', 1, '多読多聴英語1', '多読多聴英語2', 'ドイツ語コミュニケーション1', 'ドイツ語コミュニケーション2', 'フランス語コミュニカティフ1', 'フランス語コミュニカティフ2', '中国語7', '中国語8'),
+      ...pick('c群', 2, 'History of Japan 1', 'Japanese Society 1', 'Japanese Literature 1', 'Japanese Culture 1', 'Japan in the World 1', 'World Literature and Japan 1'),
+      ...pick('d群', 2, '海外語学研修', '海外文化交流', ...seq('総合研究', 1, 8, '（International Workshop Program）'))
+    ],
+    groupRules: [
+      { group: 'a群', label: 'a群から6単位', minCredits: 6 },
+      { group: 'b群', label: 'b群（外国語）から2単位', minCredits: 2 },
+      { group: 'c群', label: 'c群（英語で学ぶ日本）から2単位', minCredits: 2 },
+      { group: 'd群', label: 'd群（海外研修・交流）から2単位', minCredits: 2 }
+    ],
+    notes: ['中国語7は中国語3・4、中国語8は中国語7を修得済みであることが条件です']
+  }),
+  inter('ダイバーシティ副専攻', 'ダイバーシティ推進委員会', 'p.191', '必修8単位を含み、16単位以上を修得します', {
+    requiredCourses: req(2, 'ジェンダー論', 'ダイバーシティ&インクルージョン', '「障害」の科学', '国際社会論'),
+    electiveRequiredCourses: opt(2, '多文化共生社会を生きる', 'Japanese Culture 1', 'Japanese Culture 2', 'Japanese Society 1', 'Japanese Society 2', 'LGBTQを知る', '東京と東京人の社会学', '差別の社会学', '中国ジェンダー論', '国際社会福祉1', 'ジェンダーと教育', '教育と開発')
+  }),
+  inter('データサイエンス副専攻', 'コンピュータセンター運営委員会', 'p.191', '必修8単位と、a〜c群それぞれ1科目以上を含み、16単位以上を修得します', {
+    requiredCourses: req(2, '情報リテラシー', 'データ処理基礎', 'ビッグデータサイエンス', 'アルゴリズムとデータ構造'),
+    electiveRequiredCourses: [
+      ...pick('a群', 2, '統計学', 'データアナリティクス', 'データと対話するための統計学', '地理統計の基礎', '地球環境統計学'),
+      ...pick('a群', 3, '数理統計'),
+      ...pick('a群', 2, 'データ科学', '確率論', '生物統計学基礎', '生物統計学実践'),
+      ...pick('b群', 2, '応用空間分析法（含実習）', '情報処理入門1', '情報処理入門2', '数値計算入門1', '数値計算入門2', '計算物理学'),
+      ...pick('b群', 1, '生命科学のためのプログラミング'),
+      ...pick('c群', 2, 'デジタル産業革命と社会の変容', '情報倫理・情報セキュリティ', '仮想情報基盤構築基礎', '次世代情報基盤構築応用', '地理情報システム（含実習）', 'マルチメディア表現')
+    ],
+    groupRules: [
+      { group: 'a群', label: 'a群（統計・数理）から1科目以上', minCourses: 1 },
+      { group: 'b群', label: 'b群（プログラミング・数値計算）から1科目以上', minCourses: 1 },
+      { group: 'c群', label: 'c群（情報基盤・社会）から1科目以上', minCourses: 1 }
+    ]
+  }),
+  inter('科学リテラシー副専攻', '理系6学科', 'p.192', 'a群（地球科学）・b群（物質科学）・c群（生命科学）・d群（数学・情報）からそれぞれ2単位以上を含み、16単位以上を修得します。理系学科（地球科・数・情報科・物理・生命科・化学科）の学生は修了認定を受けられません', {
+    requiredCourses: [],
+    electiveRequiredCourses: [
+      ...pick('a群', 2, '気象と環境変化', '日本の自然と災害', '宇宙科学', '地球環境の変動と生命史'),
+      ...pick('b群', 2, '原子の世界', '現代社会を支える科学技術', '化学', '現代社会を支える化学'),
+      ...pick('c群', 2, '生命科学', '身のまわりの生命現象', '環境と生命のつながり', 'ゲノム改変と私たちの生活'),
+      ...pick('d群', 2, '数学', 'データと対話するための統計学', 'プログラミング入門')
+    ],
+    groupRules: [
+      { group: 'a群', label: 'a群（地球科学）から2単位以上', minCredits: 2 },
+      { group: 'b群', label: 'b群（物質科学）から2単位以上', minCredits: 2 },
+      { group: 'c群', label: 'c群（生命科学）から2単位以上', minCredits: 2 },
+      { group: 'd群', label: 'd群（数学・情報）から2単位以上', minCredits: 2 }
+    ]
+  }),
+  inter('地域デザイン副専攻', '地域連携推進委員会', 'p.192', '必修6単位を含め、16単位以上を修得します', {
+    requiredCourses: req(2, '地域資源の活用と地域連携', '多文化共生社会を生きる', 'キャリアデザイン（公務員志望者）'),
+    electiveRequiredCourses: opt(2, '現代社会におけるケア', '法学', '憲法', '経済学', '地理学', '日本の自然と災害', 'インターンシップ（公務員志望者）', '日本考古学概説1', '文化財学1', '社会言語学', '方言の研究', '中国文化論1',
+      'ヨーロッパ・ドイツ語圏の文化と社会1', '都市と地域の社会学', '東京と東京人の社会学', '福祉政策運営管理', '地域福祉の理論と方法2', '教育経営論', '地域教育論', '社会教育論', '体育・スポーツ制度及び行政', '産業・組織心理学',
+      '老年心理学特講', '地域政策論', 'ツーリズム論', '環境保全生態学', '生命医科学1')
+  })
+];
+
+export const VERIFIED_MINORS_CURRICULUM: Record<string, MinorCurriculumDef> = Object.fromEntries(MINOR_LIST.map((m) => [m.name, m]));
+
+// 副専攻制度の共通ルール（要覧 p.180-181）
+export const MINOR_SYSTEM_RULES = [
+  '各副専攻の指定科目から16単位以上を修得し、教務課を通じて申請すると、卒業時に修了証書が発行されます。事前の登録はありません',
+  '修了認定は所属学科の卒業が条件で、所属学科と同じ学科副専攻は修了認定を受けられません（学際副専攻はどの学科からでも可）',
+  '卒業前に要件を満たした場合は、各学期の期日までに申請すると「単位修得証明書」（有料）が発行され、就職活動などに使えます。修了証書は卒業予定学期に改めて申請が必要です',
+  '他学科の科目も所定の範囲で自由選択科目として卒業要件に算入できますが、年間の履修登録上限に含まれます',
+  '要件は入学年度の学部要覧が適用されます。相談窓口は、制度全体と学際副専攻が教務課、学科副専攻が各学科事務室です'
+];
 
 export function getCourseCurriculum(courseName: string): CourseCurriculumDef | undefined {
   return VERIFIED_COURSES_CURRICULUM[courseName];

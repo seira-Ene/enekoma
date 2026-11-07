@@ -39,7 +39,8 @@ import {
 } from '@/app/data/studentAccounts';
 import { prepareFileForUpload } from '@/app/data/imageUpload';
 import { THEMES, ThemeId, applyTheme, readStoredTheme, saveTheme } from '@/app/data/themes';
-import { calculateGpa, isEarnedGrade, isFailingGrade, normalizeGrade, resolveRetakes, sumEarnedCredits, toCourseRecord } from '@/app/data/courseGrades';
+import { calculateGpa, isEarnedGrade, isFailingGrade, isSameCourseName, normalizeGrade, resolveRetakes, sumEarnedCredits, toCourseRecord } from '@/app/data/courseGrades';
+import type { GroupStatus } from '@/app/data/programProgress';
 
 // メッセージ型定義
 interface ChatMessage {
@@ -108,6 +109,34 @@ interface MaintenanceConfig {
 }
 
 const CHS_DEPARTMENTS = Object.keys(GAKUBU_YORAN_DEPARTMENTS);
+
+// コース・副専攻の科目群（a群から4単位以上、A又はB など）の達成状況
+function RequirementGroups({ groups }: { groups: GroupStatus[] }) {
+  if (groups.length === 0) return null;
+  return (
+    <ul className="space-y-1 text-[11px]">
+      {groups.map((g) => (
+        <li key={g.label} className={`flex items-start gap-1.5 ${g.met ? 'text-emerald-700' : 'text-amber-900'}`}>
+          <span aria-hidden="true">{g.met ? '✓' : '・'}</span>
+          <span>
+            {g.label}
+            {!g.met && g.shortfall && <span className="ml-1 font-bold">（{g.shortfall}）</span>}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// 要覧の注意書き
+function RequirementNotes({ notes }: { notes?: string[] }) {
+  if (!notes || notes.length === 0) return null;
+  return (
+    <ul className="space-y-1 text-[10px] leading-relaxed text-slate-500 list-disc pl-4">
+      {notes.map((n) => <li key={n}>{n}</li>)}
+    </ul>
+  );
+}
 
 // 質問クイックチップ
 interface QuickChip {
@@ -1528,22 +1557,25 @@ export default function UnifiedAssistantPage() {
     });
   };
 
-  // 修得済み科目のトグル
+  // 要覧の科目を修得済みか（不合格は除き、全角半角・Ⅰと1・（含演習）の違いは同じ科目とみなす）
+  const hasEarnedCourse = (courseName: string, aliases: string[] = []) =>
+    userProfile.completedCourses.some((c) => isEarnedGrade(c.grade) && [courseName, ...aliases].some((n) => isSameCourseName(c.name, n)));
+
+  // 修得済み科目のトグル（チェックで追加する科目は成績が分からないので評価は「修得」にし、GPAに影響させない）
   const toggleCourseCompleted = (courseName: string, credits: number, year: number) => {
-    const isCompleted = userProfile.completedCourses.some((c) => c.name === courseName);
+    const isCompleted = hasEarnedCourse(courseName);
     let updated: CourseRecord[];
-    let deltaCredits = 0;
 
     if (isCompleted) {
-      updated = userProfile.completedCourses.filter((c) => c.name !== courseName);
-      deltaCredits = sumEarnedCredits(updated) - sumEarnedCredits(userProfile.completedCourses);
+      // 合格の記録だけを外す（不合格の記録は成績表の履歴として残す）
+      updated = userProfile.completedCourses.filter((c) => !(isEarnedGrade(c.grade) && isSameCourseName(c.name, courseName)));
     } else {
-      updated = [
+      updated = resolveRetakes([
         ...userProfile.completedCourses,
-        { name: courseName, credits, grade: 'A', year }
-      ];
-      deltaCredits = credits;
+        { name: courseName, credits, grade: '修得', year }
+      ]).courses;
     }
+    const deltaCredits = sumEarnedCredits(updated) - sumEarnedCredits(userProfile.completedCourses);
 
     const newCredits = Math.max(0, userProfile.currentCredits + deltaCredits);
     saveProfile({
@@ -3077,11 +3109,12 @@ export default function UnifiedAssistantPage() {
                                 <span>📋 コース科目チェックリスト（{cDetail.description}）</span>
                                 <span className="text-slate-400 text-[10px]">クリックで修得済みに登録</span>
                               </div>
+                              {analysis && <RequirementGroups groups={analysis.groups} />}
 
                               <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg text-xs">
                                 {/* 必修科目 */}
                                 {cDetail.requiredCourses.map((req) => {
-                                  const isComp = userProfile.completedCourses.some((x) => x.name === req.name);
+                                  const isComp = hasEarnedCourse(req.name, req.aliases);
                                   return (
                                     <label
                                       key={req.name}
@@ -3108,10 +3141,10 @@ export default function UnifiedAssistantPage() {
 
                                 {/* 選択必修科目 */}
                                 {cDetail.electiveRequiredCourses.map((ele) => {
-                                  const isComp = userProfile.completedCourses.some((x) => x.name === ele.name);
+                                  const isComp = hasEarnedCourse(ele.name, ele.aliases);
                                   return (
                                     <label
-                                      key={ele.name}
+                                      key={ele.name + (ele.group || '')}
                                       className={`p-2 flex items-center justify-between cursor-pointer transition ${
                                         isComp ? 'bg-slate-50/70' : 'hover:bg-slate-50'
                                       }`}
@@ -3123,7 +3156,9 @@ export default function UnifiedAssistantPage() {
                                           onChange={() => toggleCourseCompleted(ele.name, ele.credits, 1)}
                                           className="rounded text-slate-800 focus:ring-slate-500"
                                         />
-                                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">
+                                        <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded border ${
+                                          ele.category === '選択' ? 'bg-slate-100 text-slate-700 border-slate-200' : 'bg-amber-100 text-amber-900 border-amber-300'
+                                        }`}>
                                           {ele.group || '選択必修'}
                                         </span>
                                         <span className={`font-medium ${isComp ? 'text-slate-400 line-through' : 'text-slate-800'}`}>
@@ -3135,6 +3170,38 @@ export default function UnifiedAssistantPage() {
                                   );
                                 })}
                               </div>
+                              <RequirementNotes notes={cDetail.notes} />
+
+                              {/* 教職コース：所属学科の教科に関する専門的事項（網掛けの必修・選択必修） */}
+                              {analysis?.licenses && (
+                                <div className="space-y-2 pt-1">
+                                  <div className="text-[11px] font-semibold text-slate-700">
+                                    🎓 {userProfile.department}の教科に関する専門的事項
+                                  </div>
+                                  {analysis.licenses.length === 0 && (
+                                    <p className="text-[11px] text-slate-500">学部要覧（p.145-159）には{userProfile.department}の教科専門科目の表がありません。教職センターで確認してください。</p>
+                                  )}
+                                  {analysis.licenses.map((lic) => (
+                                    <div key={lic.subject + lic.levels.join()} className="rounded-lg border border-slate-200 p-2 space-y-1.5">
+                                      <div className="text-xs font-bold text-slate-900">
+                                        {lic.subject}（{lic.levels.join('・')}）
+                                        <span className="ml-1 text-[10px] font-normal text-slate-500">必要 {lic.requiredCreditsText} ／ {lic.page}</span>
+                                      </div>
+                                      {lic.missingRequired.length > 0 ? (
+                                        <div className="text-[11px] text-rose-700">
+                                          未修得の必修（{lic.missingRequired.length}科目）：{lic.missingRequired.map((c) => c.name).join('、')}
+                                        </div>
+                                      ) : (
+                                        <div className="text-[11px] text-emerald-700">✓ 網掛けの必修科目はすべて修得済み</div>
+                                      )}
+                                      <RequirementGroups groups={lic.groups} />
+                                      <div className="text-[10px] text-slate-500">教科教育法：{lic.methodCourses.join('、')}</div>
+                                      <RequirementNotes notes={lic.notes} />
+                                    </div>
+                                  ))}
+                                  <p className="text-[10px] text-slate-400">網掛けでない選択科目も必要単位数に数えられます。必要単位数に届いているかは成績表と教職センターの案内で確認してください。</p>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -3232,11 +3299,13 @@ export default function UnifiedAssistantPage() {
                                 <span>📋 修了要件科目（全 {mDetail.requiredCourses.length + mDetail.electiveRequiredCourses.length} 科目）: {mDetail.description}</span>
                                 <span className="text-slate-400 text-[10px]">クリックで修得済みに登録</span>
                               </div>
+                              {analysis && <RequirementGroups groups={analysis.groups} />}
+                              <RequirementNotes notes={mDetail.notes} />
 
                               <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg text-xs">
                                 {/* 必修科目 */}
                                 {mDetail.requiredCourses.map((req) => {
-                                  const isComp = userProfile.completedCourses.some((x) => x.name === req.name);
+                                  const isComp = hasEarnedCourse(req.name, req.aliases);
                                   return (
                                     <label
                                       key={req.name}
@@ -3263,7 +3332,7 @@ export default function UnifiedAssistantPage() {
 
                                 {/* 選択・群指定科目 */}
                                 {mDetail.electiveRequiredCourses.map((ele) => {
-                                  const isComp = userProfile.completedCourses.some((x) => x.name === ele.name);
+                                  const isComp = hasEarnedCourse(ele.name, ele.aliases);
                                   return (
                                     <label
                                       key={ele.name + (ele.group || '')}

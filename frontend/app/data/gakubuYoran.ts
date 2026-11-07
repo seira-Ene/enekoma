@@ -1,4 +1,6 @@
 import { isEarnedGrade } from './courseGrades';
+import { evaluateProgram, hasCompleted, GroupStatus } from './programProgress';
+import { getTeachingLicenses, LICENSE_REQUIRED_CREDITS } from './teachingLicenseCurriculum';
 import {
   VERIFIED_COURSES_CURRICULUM,
   VERIFIED_MINORS_CURRICULUM,
@@ -845,82 +847,60 @@ export interface CourseProgramInfo {
   keyRequiredCourses: string[];
 }
 
-export const GAKUBU_YORAN_COURSES: CourseProgramInfo[] = [
+const COURSE_SUMMARIES: Omit<CourseProgramInfo, 'keyRequiredCourses' | 'requiredCredits' | 'page' | 'window'>[] = [
   {
     name: '教職コース',
-    target: '中学校・高等学校教諭一種免許状（全学科共通）、特別支援学校教諭免許状（教育学科のみ）',
-    window: '教職センター（本館）',
-    page: 'p.140-163',
-    requiredCredits: 28, // 中一種は概ね28単位＋教職20単位、高一種は36単位＋教職14単位
-    creditsRule: '修得単位は卒業要件の「自由選択区分」に算入可能。※ただし「各教科教育法Ⅰ〜Ⅳ」「教育実習事前・事後指導」「教育実習Ⅰ・Ⅱ」「教職実践演習（中・高）」等の実習・実践科目は自由選択に算入不可・GPA対象外（要覧 p.33, p.144）。',
-    practicalRequirements: '教育実習条件：4年進級時「卒業見込」、教科教育法4単位含む24単位以上修得、教育の基礎的理解科目19単位以上修得、直前指導受講合格（要覧 p.142）。',
-    keyRequiredCourses: [
-      '教育原論（教育の理念と歴史）', '現代教職論', '発達と学習（教育心理学）', '特別支援教育概論',
-      '教育課程論', '教育制度論', '教育の社会学', '道徳教育の理論と方法', '教育方法・ICT活用論',
-      '特別活動・総合的な学習の時間の指導法', '生徒指導・進路指導論', '教育相談', '教職実践演習（中・高）'
-    ]
+    target: '中学校・高等学校教諭一種免許状（全学科共通）',
+    creditsRule: '教職コース履修届を提出し許可を得て履修した教職コース科目は卒業単位（自由選択）に算入できます。ただし各教科教育法Ⅰ〜Ⅳ、教育実習事前・事後指導、教育実習Ⅰ・Ⅱ、教職実践演習（中・高）は算入できません（要覧 p.144、p.33）。教科に関する専門的事項は中学校一種28単位・高等学校一種36単位が必要です（p.145-159）。',
+    practicalRequirements: '介護等体験（特別支援学校2日間・社会福祉施設5日間）が必要です。'
+  },
+  {
+    name: '特別支援学校教諭免許状',
+    target: '特別支援学校教諭一種免許状（知的障害者・肢体不自由者・病弱者）。基礎免許状（中学校又は高等学校）の取得が前提',
+    creditsRule: '教育学科で開講する特別支援教育に関する科目30単位がすべて必要です。これらは教育学科専門科目でコース科目ではありません（p.163）。',
+    practicalRequirements: '特別支援教育演習・教育実習（特別支援学校）事前・事後指導・教育実習（特別支援学校）は、2年次の履修制限選考試験（62単位以上・累積GPA1.5以上などが条件）の合格者のみ履修できます（p.160）。'
   },
   {
     name: '司書教諭コース',
-    target: '学校図書館司書教諭国家資格',
-    window: '教職センター（本館）',
-    page: 'p.164',
-    requiredCredits: 10,
-    creditsRule: '修得単位は「自由選択区分」に算入可能（要覧 p.33）。必修5科目10単位すべて修得。教員免許状の取得が前提。修得62単位以上で申請可能。',
-    practicalRequirements: '基礎免許（中学校・高校）の取得が必須前提となります。',
-    keyRequiredCourses: [
-      '学校経営と学校図書館', '学校図書館メディアの構成', '学習指導と学校図書館', '読書と豊かな人間性', '情報メディアの活用'
-    ]
+    target: '学校図書館の司書教諭（教員免許状の取得が前提）',
+    creditsRule: '修得単位は「自由選択区分」に算入可能（要覧 p.33）。必修5科目10単位すべて修得。申請は大学での修得単位62単位以上の人に限られます。',
+    practicalRequirements: '教職コースを並行して受講します。'
   },
   {
     name: '司書コース',
-    target: '公共図書館等の図書館司書国家資格',
-    window: '教務課（本館1階）',
-    page: 'p.165',
-    requiredCredits: 26,
-    creditsRule: '修得単位は「自由選択区分」に算入可能（要覧 p.33）。必修13科目22単位＋選択必修2科目4単位＝計26単位。国家試験はなく科目修得で資格取得。',
-    keyRequiredCourses: [
-      '図書館情報学概論', '図書館制度・経営論', '図書館情報技術論', '図書館サービス概論',
-      '情報サービス論', '情報サービス演習1・2', '児童サービス論', '情報資源組織論', '情報資源組織演習1・2'
-    ]
+    target: '公共図書館などの司書',
+    creditsRule: '修得単位は「自由選択区分」に算入可能（要覧 p.33）。必修13科目22単位＋選択必修2科目4単位＝計26単位。国家試験はなく科目修得で資格取得。'
   },
   {
     name: '学芸員コース',
-    target: '博物館・美術館・資料館等の学芸員国家資格',
-    window: '教務課（本館1階）',
-    page: 'p.166-167',
-    requiredCredits: 38,
-    creditsRule: '修得単位は「自由選択区分」に算入可能（要覧 p.33）。1・2年次「博物館概論」「博物館経営論」修得の上、2年次選考試験合格が必須。必修22単位＋選択16単位＝計38単位。実習費が必要。',
-    practicalRequirements: '2年次選考試験合格および博物館実習1〜4の履修が必須。',
-    keyRequiredCourses: [
-      '博物館概論', '博物館経営論', '博物館資料論', '博物館資料保存論1・2', '博物館展示論',
-      '博物館教育論', '博物館情報・メディア論', '博物館実習1〜4'
-    ]
+    target: '博物館・美術館などの学芸員',
+    creditsRule: '修得単位は「自由選択区分」に算入可能（要覧 p.33）。必修22単位＋選択16単位＝計38単位。',
+    practicalRequirements: '1・2年次に「博物館概論」「博物館経営論」を修得し、2年次の選考試験に合格すると博物館実習を受講できます。実習は再履修できず、実習費がかかります。'
   },
   {
     name: '社会教育主事コース',
-    target: '社会教育主事任用資格／社会教育士称号',
-    window: '教務課（本館1階）',
-    page: 'p.168-169',
-    requiredCredits: 25,
-    creditsRule: '修得単位は「自由選択区分」に算入可能（要覧 p.33）。大学に2年以上在学し62単位以上修得＋コース科目修得で任用資格・社会教育士。必修17単位＋選択必修8単位＝計25単位。',
-    keyRequiredCourses: [
-      '生涯学習論', '社会教育論', '社会教育経営論1・2', '地域教育論', '社会教育課題研究1・2', '社会教育演習1・2', '社会教育実習'
-    ]
+    target: '社会教育主事の任用資格・社会教育士の称号',
+    creditsRule: '修得単位は「自由選択区分」に算入可能（要覧 p.33）。大学に2年以上在学し62単位以上修得＋コース科目の修得で任用資格を得て、社会教育士と称することができます。必修17単位＋選択必修8単位＝計25単位。',
+    practicalRequirements: '社会教育実習には前年度までの科目修得などの条件と、実習費5,000円・交通費がかかります。'
   },
   {
     name: '日本語教育コース',
-    target: '登録日本語教員（国家資格）経過措置Cルート／日本語教員養成',
-    window: '教務課（本館1階）',
-    page: 'p.170-171',
-    requiredCredits: 26,
-    creditsRule: '修得単位は「自由選択区分」に算入可能（要覧 p.33）。必修11単位＋選択必修2単位を含む計26単位以上修得で修了証書。修了者は日本語教員試験の「基礎試験」と「実践研修」が免除（応用試験のみ）。実習履修には4科目8単位含む20単位修得が必要。',
-    practicalRequirements: '日本語教育実習の履修には指定4科目8単位を含む計20単位修得が必要。',
-    keyRequiredCourses: [
-      '日本語教育学入門', '日本語教授法1・2', '第二言語習得論', '日本語教材研究', '日本語教育評価法', '日本語教育実習'
-    ]
+    target: '登録日本語教員（経過措置Cルート）。修了者は日本語教員試験の基礎試験と実践研修が免除され、応用試験のみ',
+    creditsRule: '修得単位は「自由選択区分」に算入可能（要覧 p.33）。必修11単位＋選択必修2単位を含む計26単位以上で修了。',
+    practicalRequirements: '日本語教育実習の履修には指定4科目8単位を含む計20単位の修得が必要です。'
   }
 ];
+
+export const GAKUBU_YORAN_COURSES: CourseProgramInfo[] = COURSE_SUMMARIES.map((summary) => {
+  const detail = VERIFIED_COURSES_CURRICULUM[summary.name];
+  return {
+    ...summary,
+    window: detail.window,
+    page: detail.page,
+    requiredCredits: detail.requiredCredits,
+    keyRequiredCourses: detail.requiredCourses.map((c) => c.name)
+  };
+});
 
 // =========================================================================
 // 5. 学部要覧 p.180-192「副専攻（全24種）」完全準拠データ
@@ -937,7 +917,7 @@ export interface MinorProgramInfo {
   recommendedCourses: string[];
 }
 
-export const GAKUBU_YORAN_ALL_24_MINORS: MinorProgramInfo[] = [
+const MINOR_SUMMARIES: MinorProgramInfo[] = [
   // --- 5つの学際副専攻（全学科対象） ---
   {
     name: 'グローバル・コミュニケーション副専攻',
@@ -975,7 +955,7 @@ export const GAKUBU_YORAN_ALL_24_MINORS: MinorProgramInfo[] = [
     creditsReq: 16,
     window: '教務課・理系6学科',
     page: 'p.192',
-    ruleNotice: '⚠️ 注意：理系6学科（地理・地球科学・数学・情報科学・物理・生命科学・化学）所属学生は修了認定を受けられません（文系11学科・体育学科対象）。',
+    ruleNotice: '⚠️ 注意：理系学科（地球科学科・数学科・情報科学科・物理学科・生命科学科・化学科）の学生は修了認定を受けられません（要覧 p.180・p.192）。',
     description: '文系学生が自然科学の基礎的思考法とリテラシーを修得するための学際副専攻。',
     recommendedCourses: ['数学の世界', '物理学の世界', '化学の世界', '生命科学の世界', '地球科学の世界']
   },
@@ -1202,6 +1182,19 @@ export const GAKUBU_YORAN_ALL_24_MINORS: MinorProgramInfo[] = [
   }
 ];
 
+// ページ・窓口・科目名は要覧の表を書き写した VERIFIED_MINORS_CURRICULUM に合わせる（手書きの概要と食い違わないように）
+export const GAKUBU_YORAN_ALL_24_MINORS: MinorProgramInfo[] = MINOR_SUMMARIES.map((summary) => {
+  const detail = VERIFIED_MINORS_CURRICULUM[summary.name];
+  if (!detail) return summary;
+  const listed = [...detail.requiredCourses, ...detail.electiveRequiredCourses].map((c) => c.name);
+  return {
+    ...summary,
+    page: detail.page,
+    window: detail.window,
+    recommendedCourses: Array.from(new Set(listed)).slice(0, 6)
+  };
+});
+
 // =========================================================================
 // 6. ユーザープロフィール型定義
 // =========================================================================
@@ -1268,6 +1261,19 @@ export interface DeficiencyReport {
     isFulfilled: boolean;
     missingCompulsory: CourseOrMinorItem[];
     completedCompulsory: CourseOrMinorItem[];
+    // 科目群・選択必修の条件
+    groups: GroupStatus[];
+    // 教職コースのみ：所属学科で取れる免許の教科専門科目
+    licenses?: {
+      subject: string;
+      levels: string[];
+      page: string;
+      requiredCreditsText: string;
+      missingRequired: CourseOrMinorItem[];
+      groups: GroupStatus[];
+      methodCourses: string[];
+      notes: string[];
+    }[];
     note: string;
   }[];
   minorsAnalysis: {
@@ -1280,6 +1286,7 @@ export interface DeficiencyReport {
     warning?: string;
     missingCompulsory: CourseOrMinorItem[];
     completedCompulsory: CourseOrMinorItem[];
+    groups: GroupStatus[];
     note: string;
   }[];
   // 優先度3
@@ -1302,6 +1309,7 @@ export function analyzeAcademicDeficiency(profile: UserProfileData): DeficiencyR
       .filter((c) => isEarnedGrade(c.grade))
       .map((c) => c.name.trim())
   );
+  const earnedNames = Array.from(completedNames);
 
   // 優先度1: 学科必修科目の未修得チェック（必修と選択必修の完全区別）
   const missingMajorReqs: RequiredCourseItem[] = [];
@@ -1311,9 +1319,7 @@ export function analyzeAcademicDeficiency(profile: UserProfileData): DeficiencyR
 
   // 1. 必修科目（100%修得が必須）
   deptData.requiredCourses.forEach((req) => {
-    const isCompleted = Array.from(completedNames).some((name) =>
-      name === req.name || name.includes(req.name) || req.name.includes(name)
-    );
+    const isCompleted = hasCompleted({ name: req.name }, earnedNames);
 
     if (isCompleted) {
       completedMajorReqs.push(req.name);
@@ -1324,9 +1330,7 @@ export function analyzeAcademicDeficiency(profile: UserProfileData): DeficiencyR
 
   // 2. 選択必修科目（指定群・コースから規定単位の修得が必要）
   (deptData.electiveRequiredCourses || []).forEach((req) => {
-    const isCompleted = Array.from(completedNames).some((name) =>
-      name === req.name || name.includes(req.name) || req.name.includes(name)
-    );
+    const isCompleted = hasCompleted({ name: req.name }, earnedNames);
 
     if (isCompleted) {
       completedElectiveReqs.push(req.name);
@@ -1356,40 +1360,44 @@ export function analyzeAcademicDeficiency(profile: UserProfileData): DeficiencyR
   const coursesAnalysis = (profile.selectedCourses || []).map((cName) => {
     const cInfo = GAKUBU_YORAN_COURSES.find((x) => x.name === cName);
     const cDetail = VERIFIED_COURSES_CURRICULUM[cName];
-    const missingCompulsory: CourseOrMinorItem[] = [];
-    const completedCompulsory: CourseOrMinorItem[] = [];
-    let earnedCourseCredits = 0;
-
-    if (cDetail) {
-      cDetail.requiredCourses.forEach((req) => {
-        const isComp = Array.from(completedNames).some((n) => n === req.name || n.includes(req.name) || req.name.includes(n));
-        if (isComp) {
-          completedCompulsory.push(req);
-          earnedCourseCredits += req.credits;
-        } else {
-          missingCompulsory.push(req);
-        }
-      });
-      cDetail.electiveRequiredCourses.forEach((ele) => {
-        const isComp = Array.from(completedNames).some((n) => n === ele.name || n.includes(ele.name) || ele.name.includes(n));
-        if (isComp) {
-          earnedCourseCredits += ele.credits;
-        }
-      });
-    }
-
+    const progress = cDetail ? evaluateProgram(cDetail, earnedNames) : undefined;
     const targetCredits = cDetail?.requiredCredits || cInfo?.requiredCredits || 26;
-    const isFulfilled = missingCompulsory.length === 0 && earnedCourseCredits >= targetCredits;
+    const groups = progress?.groups || [];
+
+    // 教職コースは所属学科の教科専門科目（網掛けの必修・選択必修）も確認する
+    const licenses = cName === '教職コース'
+      ? getTeachingLicenses(dept).map((lic) => {
+          const lp = evaluateProgram(lic, earnedNames);
+          return {
+            subject: lic.subject,
+            levels: lic.levels,
+            page: lic.page,
+            requiredCreditsText: lic.levels.map((lv) => `${lv}${LICENSE_REQUIRED_CREDITS[lv]}単位`).join('・'),
+            missingRequired: lp.missingRequired,
+            groups: lp.groups,
+            methodCourses: lic.methodCourses,
+            notes: lic.notes
+          };
+        })
+      : undefined;
+
+    const isFulfilled = !!progress
+      && progress.missingRequired.length === 0
+      && groups.every((g) => g.met)
+      && progress.earnedCredits >= targetCredits
+      && (licenses || []).every((l) => l.missingRequired.length === 0 && l.groups.every((g) => g.met));
 
     return {
       name: cName,
       window: cDetail?.window || cInfo?.window || '担当窓口',
-      page: cDetail?.page || cInfo?.page || 'p.140',
+      page: cDetail?.page || cInfo?.page || 'p.144',
       reqCredits: targetCredits,
-      earnedCredits: earnedCourseCredits,
+      earnedCredits: progress?.earnedCredits || 0,
       isFulfilled,
-      missingCompulsory,
-      completedCompulsory,
+      missingCompulsory: progress?.missingRequired || [],
+      completedCompulsory: progress?.completedRequired || [],
+      groups,
+      licenses,
       note: cDetail?.description || (cInfo ? `${cInfo.creditsRule} ${cInfo.practicalRequirements || ''}` : '所定のコース科目の履修が必要です。')
     };
   });
@@ -1403,34 +1411,18 @@ export function analyzeAcademicDeficiency(profile: UserProfileData): DeficiencyR
     if (mInfo?.type === 'department' && mInfo.targetDept === dept) {
       isValid = false;
       warning = `⚠️ 所属学科（${dept}）と同一の学科副専攻は修了認定を受けることができません（要覧 p.180）。`;
-    } else if (mName === '科学リテラシー副専攻' && ['地理学科', '地球科学科', '数学科', '情報科学科', '物理学科', '生命科学科', '化学科'].includes(dept)) {
+    } else if (mName === '科学リテラシー副専攻' && ['地球科学科', '数学科', '情報科学科', '物理学科', '生命科学科', '化学科'].includes(dept)) {
       isValid = false;
       warning = `⚠️ 理系6学科所属学生は「科学リテラシー副専攻」の修了認定を受けることができません（要覧 p.192）。`;
     }
 
-    const missingCompulsory: CourseOrMinorItem[] = [];
-    const completedCompulsory: CourseOrMinorItem[] = [];
-    let earnedMinorCredits = 0;
+    const progress = mDetail ? evaluateProgram(mDetail, earnedNames) : undefined;
+    const missingCompulsory = progress?.missingRequired || [];
+    const completedCompulsory = progress?.completedRequired || [];
+    const earnedMinorCredits = progress?.earnedCredits || 0;
+    const groups = progress?.groups || [];
 
-    if (mDetail) {
-      mDetail.requiredCourses.forEach((req) => {
-        const isComp = Array.from(completedNames).some((n) => n === req.name || n.includes(req.name) || req.name.includes(n));
-        if (isComp) {
-          completedCompulsory.push(req);
-          earnedMinorCredits += req.credits;
-        } else {
-          missingCompulsory.push(req);
-        }
-      });
-      mDetail.electiveRequiredCourses.forEach((ele) => {
-        const isComp = Array.from(completedNames).some((n) => n === ele.name || n.includes(ele.name) || ele.name.includes(n));
-        if (isComp) {
-          earnedMinorCredits += ele.credits;
-        }
-      });
-    }
-
-    const isFulfilled = isValid && missingCompulsory.length === 0 && earnedMinorCredits >= 16;
+    const isFulfilled = isValid && !!progress && missingCompulsory.length === 0 && groups.every((g) => g.met) && earnedMinorCredits >= 16;
 
     return {
       name: mName,
@@ -1442,6 +1434,7 @@ export function analyzeAcademicDeficiency(profile: UserProfileData): DeficiencyR
       warning,
       missingCompulsory,
       completedCompulsory,
+      groups,
       note: mDetail?.description || (mInfo ? `${mInfo.description} 修了要件：指定科目16単位以上修得。` : '指定科目16単位以上修得で修了証書。')
     };
   });

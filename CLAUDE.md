@@ -9,7 +9,7 @@ EneKoma(エネコマ)は、日本大学文理学部(CHS)の学生向けAIチャ�
 | 機能 | 内容 | 主な実装 |
 |---|---|---|
 | OCRカルテ化 | 成績表・時間割の画像/PDFから修得単位・GPA・履修科目を反映 | `app/api/chat/route.ts`, `parseProfileUpdateFromText`(`data/studentAccounts.ts`) |
-| 卒業・進級要件チェック | 必修・選択必修の未履修、資格コース・副専攻の進捗、不足単位を判定 | `analyzeAcademicDeficiency`(`data/gakubuYoran.ts`), `data/departmentCurriculum.ts`, `data/coursesAndMinorsCurriculum.ts` |
+| 卒業・進級要件チェック | 必修・選択必修の未履修、資格コース・教職の教科専門科目・副専攻の進捗、不足単位を判定 | `analyzeAcademicDeficiency`(`data/gakubuYoran.ts`), `data/departmentCurriculum.ts`, `data/coursesAndMinorsCurriculum.ts`, `data/teachingLicenseCurriculum.ts` |
 | 目標GPA逆算 | 今期S・Aを何単位取れば目標GPAに届くかを提案 | `simulateGpaEngine`(`data/gakubuYoran.ts`) |
 | 空き教室・構内ナビ | 今の時限の空き教室、自販機・ゴミ箱・各課窓口を案内 | `findFreeRooms`(`data/courses.ts`), `SYSTEM_PROMPT` と `answerLocally`(`route.ts`) |
 | 履修サポート | 重複チェック、空きコマ提案、友達との空きコマ照合、必修組み込みの時間割案、移動判定、科目・教員・教室の逆引き | `answerTimetableQuery`(`data/timetableAssistant.ts`) |
@@ -96,6 +96,16 @@ AIの回答末尾に置く ` ```profile_update ` JSONブロックでプロフィ
 - ログインと登録はクライアント側の `data/studentAccounts.ts` で処理する。`/api/auth` は `page.tsx` から呼ばれておらず、登録内容を保存もしない。
 - メンテナンス設定だけはサーバー側のRedisに保存する(「運用ルール」参照)。
 - デザインテーマはアカウントではなく端末ごとに `localStorage` の `enekoma_theme` に保存する。`layout.tsx` の `<head>` のスクリプトが描画前に `<html data-theme>` を付けるので、再読み込みでちらつかない。
+
+### 資格コース・教職・副専攻のデータ
+
+要覧 p.144-192 の表を書き写したもの。科目を直すときは要覧の表と照らし合わせる。
+
+- `data/coursesAndMinorsCurriculum.ts`: 資格コース7種と副専攻24種。`category` は必修・選択必修・選択の3種類で、「a群から4単位以上」「A又はB」などの条件は `groupRules` に書く。
+- `data/teachingLicenseCurriculum.ts`: 教職の「教科に関する専門的事項」を学科・教科ごとに持つ。表の網掛け（必修・選択必修）の科目だけで、網掛けでない選択科目は載せていない。
+- 進み具合は `evaluateProgram`(`data/programProgress.ts`)で判定する。科目名の照合は `isSameCourseName`(`data/courseGrades.ts`)を使い、部分一致にしない（「生理学」と「代謝生理学」を区別するため）。
+- `GAKUBU_YORAN_COURSES` と `GAKUBU_YORAN_ALL_24_MINORS`(`gakubuYoran.ts`)のページ・窓口・主な科目は、上の詳細データから作る。
+- Geminiには `buildCurriculumContext`(`data/curriculumContext.ts`)で該当する表を渡し、APIキーがないときは `answerCurriculumLocally` で答える。
 
 ### デザインテーマ
 

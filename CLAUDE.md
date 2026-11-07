@@ -50,7 +50,7 @@ cd backend && pip install -r requirements.txt && uvicorn main:app --reload --por
 ### チャットの流れ
 
 1. `page.tsx` が質問、APIキー、直近6件の履歴、添付ファイル、プロフィールを `POST /api/chat` に送る。
-2. `route.ts` が `GEMINI_MODEL_ORDER` の順に1モデルずつ試す。すべて失敗すれば `answerLocally` で応答する。同時に呼ぶと無料枠を2倍使うので並列にしない。チャットは思考を最小にして速くしている。画像は読み取り精度を確認できていないので既定のまま。
+2. `route.ts` が `GEMINI_MODEL_ORDER` の順に1モデルずつ試す。すべて失敗すれば `answerLocally` で応答する。同時に呼ぶと無料枠を2倍使うので並列にしない。思考量は用途で分ける(`*_THINKING_CONFIG`)。チャットと成績表は `minimal`、時間割は `low`。時間割を `minimal` にすると、画質の悪い画像で科目名を読み違えた(架空データでの実測)。変更するときは正答率を測ってから決める。
 3. サーバー通信自体が失敗すると、`page.tsx` がブラウザからGeminiを直接呼ぶ。
 
 モデル名は `route.ts` と `page.tsx`(直接呼び出しとキーのテスト)の両方にハードコードされているので、変更時は両方を更新する。

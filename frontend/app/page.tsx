@@ -33,10 +33,15 @@ import {
   rememberLogin,
   REMEMBER_LOGIN_DAYS,
   authenticateStudent,
+  checkLocalPassword,
+  isDemoAccountId,
+  linkServerAccount,
+  PASSWORD_MIN_LENGTH,
   registerNewStudent,
   parseProfileUpdateFromText,
   extractCompletedCoursesFromText
 } from '@/app/data/studentAccounts';
+import { callAccountApi, isServerUnavailable } from '@/app/data/accountClient';
 import { prepareFileForUpload } from '@/app/data/imageUpload';
 import { THEMES, ThemeId, applyTheme, readStoredTheme, saveTheme } from '@/app/data/themes';
 import { calculateGpa, isEarnedGrade, isFailingGrade, isSameCourseName, normalizeGrade, resolveRetakes, sumEarnedCredits, toCourseRecord } from '@/app/data/courseGrades';
@@ -221,8 +226,24 @@ export default function UnifiedAssistantPage() {
   // 学生アカウント管理ステート（個別アカウント対応）
   const [currentStudent, setCurrentStudent] = useState<StudentAccount | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [authTab, setAuthTab] = useState<'login' | 'register' | 'switch' | 'info'>('login');
+  const [authTab, setAuthTab] = useState<'login' | 'register' | 'switch' | 'info' | 'forgot' | 'reset'>('login');
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [isAuthBusy, setIsAuthBusy] = useState(false);
+  // 旧方式（端末内だけ）のアカウントでパスワードが短いとき、サーバーに移す前に新しいパスワードを決めてもらう
+  const [migrationAccount, setMigrationAccount] = useState<StudentAccount | null>(null);
+  const [migrationPassword, setMigrationPassword] = useState('');
+  // パスワード・IDを忘れたとき
+  const [forgotIdentifier, setForgotIdentifier] = useState('');
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [resetToken, setResetToken] = useState<string | null>(null);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetPasswordConfirm, setResetPasswordConfirm] = useState('');
+  // 基本設定のメール連携・パスワード変更
+  const [accountEmailInput, setAccountEmailInput] = useState('');
+  const [accountCurrentPassword, setAccountCurrentPassword] = useState('');
+  const [accountNewPassword, setAccountNewPassword] = useState('');
+  const [accountMessage, setAccountMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   // ログインフォーム入力
   const [loginId, setLoginId] = useState('');
@@ -234,7 +255,8 @@ export default function UnifiedAssistantPage() {
   const [regKeyTestResult, setRegKeyTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [regId, setRegId] = useState('');
   const [regName, setRegName] = useState('');
-  const [regPassword, setRegPassword] = useState('1234');
+  const [regPassword, setRegPassword] = useState('');
+  const [regEmail, setRegEmail] = useState('');
   const [regDept, setRegDept] = useState('情報科学科');
   const [regGrade, setRegGrade] = useState<number>(1);
   const [regAdmissionYear, setRegAdmissionYear] = useState<'reiwa7_or_later' | 'reiwa6_or_earlier'>('reiwa7_or_later');
@@ -669,26 +691,240 @@ export default function UnifiedAssistantPage() {
     setTimeout(() => setProfileNotification(null), 5000);
   };
 
-  // ログインフォーム送信
-  const handleStudentLogin = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    setAuthError(null);
-
-    if (!loginId.trim()) {
-      setAuthError('学籍番号またはIDを入力してください。');
-      return;
-    }
-    const acc = authenticateStudent(loginId, loginPassword);
-    if (!acc) {
-      setAuthError('該当する学生アカウントが見つからないか、パスワードが違います。下のデモアカウント（日大文太/桜上水花子）もワンクリックでお試しいただけます。');
-      return;
-    }
+  const finishLogin = (acc: StudentAccount) => {
     handleSwitchToStudent(acc);
     if (keepLoggedIn) rememberLogin(acc.id);
     setLoginId('');
     setLoginPassword('');
     setKeepLoggedIn(false);
+    setMigrationAccount(null);
+    setMigrationPassword('');
+    setAuthNotice(null);
   };
+
+  // 旧方式（端末内だけ）のアカウントをサーバーに登録する。サーバーに届かなければ、端末内で照合済みなので今回はそのままログインする
+  const migrateLegacyAccount = async (local: StudentAccount, password: string): Promise<{ account?: StudentAccount; error?: string; offline?: boolean }> => {
+    const res = await callAccountApi('register', {
+      loginId: local.id, password, name: local.name, department: local.department, grade: local.grade, admissionYear: local.admissionYear
+    });
+    if (res.ok && res.account) return { account: linkServerAccount(res.account) };
+    if (res.error === 'id_taken') {
+      // 別の端末で先に登録していた場合は、同じパスワードならそのまま紐付ける
+      const login = await callAccountApi('login', { loginId: local.id, password });
+      if (login.ok && login.account) return { account: linkServerAccount(login.account) };
+      return { error: 'このIDは別の端末でサーバーに登録済みで、パスワードが違います。そのときのパスワードでログインするか、「パスワード・IDを忘れた方」から再設定してください。' };
+    }
+    if (isServerUnavailable(res)) return { account: local, offline: true };
+    return { error: res.message || 'サーバーに登録できませんでした。' };
+  };
+
+  // ログインフォーム送信
+  const handleStudentLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setAuthError(null);
+    setAuthNotice(null);
+
+    const id = loginId.trim();
+    if (!id) {
+      setAuthError('学籍番号またはIDを入力してください。');
+      return;
+    }
+    if (isDemoAccountId(id)) {
+      const demo = authenticateStudent(id, loginPassword);
+      if (!demo) {
+        setAuthError('デモアカウントのパスワードは 1234 です。下のボタンからパスワードなしでも切り替えられます。');
+        return;
+      }
+      finishLogin(demo);
+      return;
+    }
+
+    setIsAuthBusy(true);
+    try {
+      const legacy = checkLocalPassword(id, loginPassword);
+      if (legacy) {
+        if (loginPassword.trim().length < PASSWORD_MIN_LENGTH) {
+          setMigrationAccount(legacy);
+          return;
+        }
+        const result = await migrateLegacyAccount(legacy, loginPassword.trim());
+        if (result.error || !result.account) {
+          setAuthError(result.error || 'ログインできませんでした。');
+          return;
+        }
+        finishLogin(result.account);
+        return;
+      }
+
+      const res = await callAccountApi('login', { loginId: id, password: loginPassword });
+      if (res.ok && res.account) {
+        finishLogin(linkServerAccount(res.account));
+        return;
+      }
+      setAuthError(res.message || 'ログインIDまたはパスワードが違います。');
+    } finally {
+      setIsAuthBusy(false);
+    }
+  };
+
+  // 旧方式のアカウントに新しいパスワードを設定して、サーバーに移す
+  const handleMigrationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!migrationAccount) return;
+    setAuthError(null);
+    const next = migrationPassword.trim();
+    if (next.length < PASSWORD_MIN_LENGTH) {
+      setAuthError(`新しいパスワードは${PASSWORD_MIN_LENGTH}文字以上にしてください。`);
+      return;
+    }
+    setIsAuthBusy(true);
+    try {
+      const result = await migrateLegacyAccount(migrationAccount, next);
+      if (result.error || !result.account) {
+        setAuthError(result.error || 'ログインできませんでした。');
+        return;
+      }
+      finishLogin(result.account);
+      if (result.offline) {
+        setProfileNotification('⚠️ サーバーに接続できなかったため、新しいパスワードはまだ登録されていません。今回はこれまでのパスワードでログインしました。');
+        setTimeout(() => setProfileNotification(null), 8000);
+      }
+    } finally {
+      setIsAuthBusy(false);
+    }
+  };
+
+  // パスワード再設定メール・ログインIDのお知らせメールを申し込む
+  const handleForgotRequest = async (kind: 'request_password_reset' | 'request_login_id') => {
+    setAuthError(null);
+    setAuthNotice(null);
+    const identifier = (kind === 'request_login_id' ? forgotEmail : forgotIdentifier).trim();
+    if (!identifier) {
+      setAuthError(kind === 'request_login_id' ? '登録したメールアドレスを入力してください。' : 'ログインIDかメールアドレスを入力してください。');
+      return;
+    }
+    setIsAuthBusy(true);
+    try {
+      const res = await callAccountApi(kind, { identifier });
+      if (res.ok) setAuthNotice(res.message || 'メールを送りました。');
+      else setAuthError(res.message || '送信できませんでした。');
+    } finally {
+      setIsAuthBusy(false);
+    }
+  };
+
+  // メールのリンクから新しいパスワードを設定する
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    if (resetPassword.trim().length < PASSWORD_MIN_LENGTH) {
+      setAuthError(`新しいパスワードは${PASSWORD_MIN_LENGTH}文字以上にしてください。`);
+      return;
+    }
+    if (resetPassword !== resetPasswordConfirm) {
+      setAuthError('確認用のパスワードが一致しません。');
+      return;
+    }
+    setIsAuthBusy(true);
+    try {
+      const res = await callAccountApi('reset_password', { token: resetToken, newPassword: resetPassword.trim() });
+      if (!res.ok) {
+        setAuthError(res.message || 'パスワードを変更できませんでした。');
+        return;
+      }
+      setResetToken(null);
+      setResetPassword('');
+      setResetPasswordConfirm('');
+      setLoginId(res.loginId || '');
+      setLoginPassword('');
+      setAuthTab('login');
+      setAuthNotice('パスワードを変更しました。新しいパスワードでログインしてください。');
+    } finally {
+      setIsAuthBusy(false);
+    }
+  };
+
+  // 基本設定：メールアドレスを登録（確認メールを送る）
+  const handleSetAccountEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentStudent) return;
+    setAccountMessage(null);
+    setIsAuthBusy(true);
+    try {
+      const res = await callAccountApi('set_email', { loginId: currentStudent.id, password: accountCurrentPassword, email: accountEmailInput.trim() });
+      if (!res.ok || !res.account) {
+        setAccountMessage({ ok: false, text: res.message || '登録できませんでした。' });
+        return;
+      }
+      const updated = { ...currentStudent, email: res.account.email, pendingEmail: res.account.pendingEmail };
+      saveStudentAccount(updated);
+      setCurrentStudent(updated);
+      setAccountEmailInput('');
+      setAccountCurrentPassword('');
+      setAccountMessage({ ok: true, text: `${res.account.pendingEmail}に確認メールを送りました。メールのリンクを開くと登録が完了します（24時間以内）。` });
+    } finally {
+      setIsAuthBusy(false);
+    }
+  };
+
+  // 基本設定：パスワード変更
+  const handleChangeAccountPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentStudent) return;
+    setAccountMessage(null);
+    if (accountNewPassword.trim().length < PASSWORD_MIN_LENGTH) {
+      setAccountMessage({ ok: false, text: `新しいパスワードは${PASSWORD_MIN_LENGTH}文字以上にしてください。` });
+      return;
+    }
+    setIsAuthBusy(true);
+    try {
+      const res = await callAccountApi('change_password', { loginId: currentStudent.id, password: accountCurrentPassword, newPassword: accountNewPassword.trim() });
+      if (!res.ok) {
+        setAccountMessage({ ok: false, text: res.message || '変更できませんでした。' });
+        return;
+      }
+      setAccountCurrentPassword('');
+      setAccountNewPassword('');
+      setAccountMessage({ ok: true, text: 'パスワードを変更しました。' });
+    } finally {
+      setIsAuthBusy(false);
+    }
+  };
+
+  // メールのリンク（パスワード再設定・メールアドレス確認）を開いたとき
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const reset = params.get('reset_password');
+    const verify = params.get('verify_email');
+    if (!reset && !verify) return;
+    // トークンを履歴やブックマークに残さない
+    params.delete('reset_password');
+    params.delete('verify_email');
+    const rest = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`);
+
+    void (async () => {
+      if (reset) {
+        setResetToken(reset);
+        setAuthTab('reset');
+        setShowAuthModal(true);
+        return;
+      }
+      const res = await callAccountApi('verify_email', { token: verify });
+      if (res.ok && res.account) {
+        const local = loadAllAccounts()[res.account.loginId];
+        if (local) {
+          const updated = { ...local, email: res.account.email, pendingEmail: res.account.pendingEmail };
+          saveStudentAccount(updated);
+          setCurrentStudent((cur) => (cur?.id === updated.id ? updated : cur));
+        }
+        setProfileNotification(`✓ メールアドレス（${res.account.email}）の確認が完了しました。パスワードやログインIDを忘れたときに使えます。`);
+      } else {
+        setProfileNotification(`⚠️ ${res.message || 'メールアドレスを確認できませんでした。'}`);
+      }
+      setTimeout(() => setProfileNotification(null), 8000);
+    })();
+  }, []);
 
   // 新規登録時の添付ファイル選択
   const handleRegFileSelect = (e: React.ChangeEvent<HTMLInputElement>, target: 'timetable' | 'transcript') => {
@@ -827,11 +1063,36 @@ export default function UnifiedAssistantPage() {
       setAuthError('お名前またはニックネームを入力してください。');
       return;
     }
+    if (regPassword.trim().length < PASSWORD_MIN_LENGTH) {
+      setAuthError(`パスワードは${PASSWORD_MIN_LENGTH}文字以上にしてください。パスワードを忘れたときはメールで再設定できます。`);
+      return;
+    }
 
     setIsRegistering(true);
     let initialProfile: any = {};
 
     try {
+      setRegStatusText('アカウントを登録中...');
+      const serverRes = await callAccountApi('register', {
+        loginId: regId.trim(),
+        password: regPassword.trim(),
+        name: regName.trim(),
+        department: regDept,
+        grade: regGrade,
+        admissionYear: regAdmissionYear,
+        email: regEmail.trim() || undefined
+      });
+      if (!serverRes.ok || !serverRes.account) {
+        setAuthError(serverRes.message || 'アカウントを登録できませんでした。');
+        return;
+      }
+      const registeredAccount = serverRes.account;
+      const mailNotice = regEmail.trim()
+        ? serverRes.verificationSent
+          ? `${regEmail.trim()}に確認メールを送りました。リンクを開くと、パスワードを忘れたときに使えるようになります。`
+          : 'メールアドレスは登録しましたが、確認メールを送れませんでした。あとで基本設定から送り直せます。'
+        : '';
+
       // 1. 今期の時間割ファイルが添付されている場合、AIに解析させて登録科目を抽出
       if (regTimetableFile) {
         setRegStatusText('時間割ファイルをAI解析中（科目を抽出しています）...');
@@ -932,7 +1193,6 @@ export default function UnifiedAssistantPage() {
       const newAcc = registerNewStudent({
         id: regId.trim(),
         name: regName.trim(),
-        password: regPassword.trim() || '1234',
         department: regDept,
         grade: regGrade,
         admissionYear: regAdmissionYear,
@@ -941,9 +1201,15 @@ export default function UnifiedAssistantPage() {
         initialProfile
       });
 
-      handleSwitchToStudent(newAcc);
+      handleSwitchToStudent({ ...newAcc, ...linkServerAccount(registeredAccount) });
+      if (mailNotice) {
+        setProfileNotification(`✓ 登録が完了しました。${mailNotice}`);
+        setTimeout(() => setProfileNotification(null), 10000);
+      }
       setRegId('');
       setRegName('');
+      setRegPassword('');
+      setRegEmail('');
       setRegCourses([]);
       setRegMinors([]);
       setRegTimetableFile(null);
@@ -2889,6 +3155,94 @@ export default function UnifiedAssistantPage() {
                     </div>
                   </div>
 
+                  {/* アカウント・メール連携 */}
+                  {currentStudent && (
+                    <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2.5">
+                      <div className="font-semibold text-slate-800 text-xs">アカウント・メール連携</div>
+                      {isDemoAccountId(currentStudent.id) ? (
+                        <p className="text-[11px] text-slate-500">デモアカウントではメール連携とパスワード変更は使えません。</p>
+                      ) : !currentStudent.serverLinked ? (
+                        <div className="space-y-2">
+                          <p className="text-[11px] text-slate-600 leading-relaxed">
+                            このアカウントは、この端末だけに保存されている古い形式です。一度ログインし直すとサーバーに登録され、メールでのパスワード再設定やID確認が使えるようになります。カルテはそのまま残ります。
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const id = currentStudent.id;
+                              setCurrentStudentId(null);
+                              setCurrentStudent(null);
+                              setUserProfile(DEFAULT_PROFILE);
+                              setLoginId(id);
+                              setLoginPassword('');
+                              setAuthTab('login');
+                              setAuthNotice('今までのパスワードでログインしてください。');
+                              setShowProfileModal(false);
+                              setShowAuthModal(true);
+                            }}
+                            className="px-3 py-1.5 bg-slate-900 text-white rounded-md text-xs font-medium"
+                          >
+                            ログインし直す
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="text-[11px] text-slate-700 space-y-0.5">
+                            <div>ログインID：<span className="font-semibold">{currentStudent.id}</span></div>
+                            <div>
+                              メールアドレス：
+                              {currentStudent.email
+                                ? <span className="font-semibold">{currentStudent.email}（確認済み）</span>
+                                : <span className="text-amber-800">未登録（パスワードを忘れると再設定できません）</span>}
+                            </div>
+                            {currentStudent.pendingEmail && (
+                              <div className="text-amber-800">確認待ち：{currentStudent.pendingEmail}（届いたメールのリンクを開いてください）</div>
+                            )}
+                          </div>
+                          {accountMessage && (
+                            <div className={`p-2 rounded text-[11px] border ${accountMessage.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-700'}`}>
+                              {accountMessage.text}
+                            </div>
+                          )}
+                          <input
+                            type="password"
+                            value={accountCurrentPassword}
+                            onChange={(e) => setAccountCurrentPassword(e.target.value)}
+                            placeholder="現在のパスワード（変更の確認に使います）"
+                            autoComplete="current-password"
+                            className="w-full px-3 py-2 border border-slate-300 rounded-md text-xs bg-white"
+                          />
+                          <form onSubmit={handleSetAccountEmail} className="flex gap-2">
+                            <input
+                              type="email"
+                              value={accountEmailInput}
+                              onChange={(e) => setAccountEmailInput(e.target.value)}
+                              placeholder={currentStudent.email ? '新しいメールアドレス' : 'メールアドレス'}
+                              autoComplete="email"
+                              className="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-md text-xs bg-white"
+                            />
+                            <button type="submit" disabled={isAuthBusy} className="shrink-0 px-3 py-2 bg-slate-900 text-white rounded-md text-xs font-medium disabled:opacity-60">
+                              確認メールを送る
+                            </button>
+                          </form>
+                          <form onSubmit={handleChangeAccountPassword} className="flex gap-2">
+                            <input
+                              type="password"
+                              value={accountNewPassword}
+                              onChange={(e) => setAccountNewPassword(e.target.value)}
+                              placeholder={`新しいパスワード（${PASSWORD_MIN_LENGTH}文字以上）`}
+                              autoComplete="new-password"
+                              className="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-md text-xs bg-white"
+                            />
+                            <button type="submit" disabled={isAuthBusy} className="shrink-0 px-3 py-2 bg-white border border-slate-300 text-slate-800 rounded-md text-xs font-medium disabled:opacity-60">
+                              パスワード変更
+                            </button>
+                          </form>
+                        </>
+                      )}
+                    </div>
+                  )}
+
                   {/* カリキュラム体系 */}
                   <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
                     <label className="block font-semibold text-slate-800 text-xs mb-1.5 flex items-center justify-between">
@@ -3724,6 +4078,11 @@ export default function UnifiedAssistantPage() {
                 ⚠️ {authError}
               </div>
             )}
+            {authNotice && (
+              <div className="mx-4 mt-3 p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs rounded-md">
+                ✓ {authNotice}
+              </div>
+            )}
 
             {/* モーダルコンテンツ */}
             <div className="p-4 overflow-y-auto text-xs sm:text-sm text-slate-700 space-y-4">
@@ -3773,7 +4132,7 @@ export default function UnifiedAssistantPage() {
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        パスワード（初期値: 1234）
+                        パスワード
                       </label>
                       <input
                         type="password"
@@ -3797,16 +4156,44 @@ export default function UnifiedAssistantPage() {
                     </label>
                     <button
                       type="submit"
-                      className="w-full py-2 bg-slate-900 text-white rounded-md text-xs font-medium hover:bg-slate-800 transition"
+                      disabled={isAuthBusy}
+                      className="w-full py-2 bg-slate-900 text-white rounded-md text-xs font-medium hover:bg-slate-800 transition disabled:opacity-60"
                     >
-                      ログインしてカルテを読み込む
+                      {isAuthBusy ? '確認中...' : 'ログインしてカルテを読み込む'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setAuthTab('forgot'); setAuthError(null); setAuthNotice(null); setForgotIdentifier(loginId.trim()); }}
+                      className="w-full text-center text-[11px] text-slate-600 underline underline-offset-2 hover:text-slate-900"
+                    >
+                      パスワード・ログインIDを忘れた方
                     </button>
                   </form>
+
+                  {/* 端末内だけの古いアカウントは、短いパスワードのままサーバーに移さない */}
+                  {migrationAccount && (
+                    <form onSubmit={handleMigrationSubmit} className="p-3 rounded-lg border border-amber-300 bg-amber-50 space-y-2">
+                      <p className="text-[11px] text-amber-900 leading-relaxed">
+                        {migrationAccount.name}さんのアカウントは、この端末だけに保存されている古い形式です。パスワードを忘れたときにメールで再設定できるよう、新しいパスワード（{PASSWORD_MIN_LENGTH}文字以上）を設定してください。カルテはそのまま使えます。
+                      </p>
+                      <input
+                        type="password"
+                        value={migrationPassword}
+                        onChange={(e) => setMigrationPassword(e.target.value)}
+                        placeholder={`新しいパスワード（${PASSWORD_MIN_LENGTH}文字以上）`}
+                        autoComplete="new-password"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-md text-xs bg-white"
+                      />
+                      <button type="submit" disabled={isAuthBusy} className="w-full py-2 bg-slate-900 text-white rounded-md text-xs font-medium disabled:opacity-60">
+                        新しいパスワードを設定してログイン
+                      </button>
+                    </form>
+                  )}
 
                   {/* 1クリック体験デモアカウント */}
                   <div className="pt-3 border-t border-slate-200">
                     <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                      💡 ワンクリック体験（デモアカウントですぐ試す）
+                      💡 ワンクリック体験（デモアカウントはパスワード不要）
                     </p>
                     <div className="space-y-2">
                       {Object.values(INITIAL_DEMO_ACCOUNTS).map((demo) => (
@@ -4011,16 +4398,31 @@ export default function UnifiedAssistantPage() {
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        パスワード（任意・初期値 1234）
+                        パスワード（{PASSWORD_MIN_LENGTH}文字以上・必須）
                       </label>
                       <input
                         type="password"
                         value={regPassword}
                         onChange={(e) => setRegPassword(e.target.value)}
-                        placeholder="1234"
+                        autoComplete="new-password"
                         className="w-full px-3 py-2 border border-slate-300 rounded-md text-xs"
                         disabled={isRegistering}
                       />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        メールアドレス（任意）
+                      </label>
+                      <input
+                        type="email"
+                        value={regEmail}
+                        onChange={(e) => setRegEmail(e.target.value)}
+                        placeholder="example@example.com"
+                        autoComplete="email"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-md text-xs"
+                        disabled={isRegistering}
+                      />
+                      <p className="mt-1 text-[10px] text-slate-500">パスワードやログインIDを忘れたときに使います。確認メールのリンクを開くと登録が完了します。</p>
                     </div>
                   </div>
 
@@ -4331,10 +4733,73 @@ export default function UnifiedAssistantPage() {
               )}
 
               {/* TAB 4: 保存済み全アカウント一覧切替 */}
+              {authTab === 'forgot' && (
+                <div className="space-y-4">
+                  <p className="text-[11px] text-slate-600 leading-relaxed">
+                    メールアドレスを登録して確認が済んでいるアカウントが対象です。メールが届かない場合は、迷惑メールフォルダも確認してください。
+                  </p>
+                  <form onSubmit={(e) => { e.preventDefault(); handleForgotRequest('request_password_reset'); }} className="p-3 rounded-lg border border-slate-200 space-y-2">
+                    <div className="text-xs font-bold text-slate-900">パスワードを再設定する</div>
+                    <input
+                      type="text"
+                      value={forgotIdentifier}
+                      onChange={(e) => setForgotIdentifier(e.target.value)}
+                      placeholder="ログインID または メールアドレス"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-md text-xs"
+                    />
+                    <button type="submit" disabled={isAuthBusy} className="w-full py-2 bg-slate-900 text-white rounded-md text-xs font-medium disabled:opacity-60">
+                      再設定のメールを送る
+                    </button>
+                  </form>
+                  <form onSubmit={(e) => { e.preventDefault(); handleForgotRequest('request_login_id'); }} className="p-3 rounded-lg border border-slate-200 space-y-2">
+                    <div className="text-xs font-bold text-slate-900">ログインID（学籍番号）を確認する</div>
+                    <input
+                      type="email"
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      placeholder="登録したメールアドレス"
+                      autoComplete="email"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-md text-xs"
+                    />
+                    <button type="submit" disabled={isAuthBusy} className="w-full py-2 bg-slate-900 text-white rounded-md text-xs font-medium disabled:opacity-60">
+                      ログインIDをメールで受け取る
+                    </button>
+                  </form>
+                  <button type="button" onClick={() => { setAuthTab('login'); setAuthError(null); setAuthNotice(null); }} className="text-[11px] text-slate-600 underline underline-offset-2">
+                    ログイン画面に戻る
+                  </button>
+                </div>
+              )}
+
+              {authTab === 'reset' && (
+                <form onSubmit={handleResetPassword} className="space-y-3">
+                  <p className="text-[11px] text-slate-600">新しいパスワード（{PASSWORD_MIN_LENGTH}文字以上）を設定してください。リンクは30分間、1回だけ使えます。</p>
+                  <input
+                    type="password"
+                    value={resetPassword}
+                    onChange={(e) => setResetPassword(e.target.value)}
+                    placeholder="新しいパスワード"
+                    autoComplete="new-password"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-md text-xs"
+                  />
+                  <input
+                    type="password"
+                    value={resetPasswordConfirm}
+                    onChange={(e) => setResetPasswordConfirm(e.target.value)}
+                    placeholder="確認のためもう一度"
+                    autoComplete="new-password"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-md text-xs"
+                  />
+                  <button type="submit" disabled={isAuthBusy || !resetToken} className="w-full py-2 bg-slate-900 text-white rounded-md text-xs font-medium disabled:opacity-60">
+                    パスワードを変更する
+                  </button>
+                </form>
+              )}
+
               {authTab === 'switch' && (
                 <div className="space-y-3">
                   <p className="text-xs text-slate-500">
-                    このブラウザに保存されている学生カルテ一覧です。クリックして即座に切り替えられます：
+                    このブラウザに保存されている学生カルテの一覧です。切り替えるにはパスワードの入力が必要です（デモアカウントは不要）。
                   </p>
                   <div className="space-y-2">
                     {Object.values(loadAllAccounts()).map((acc) => {
@@ -4364,10 +4829,21 @@ export default function UnifiedAssistantPage() {
                           {!isCurrent && (
                             <button
                               type="button"
-                              onClick={() => handleSwitchToStudent(acc)}
+                              onClick={() => {
+                                if (isDemoAccountId(acc.id)) {
+                                  handleSwitchToStudent(acc);
+                                  return;
+                                }
+                                // 共用の端末で他の人のカルテを開けないよう、パスワードを確認してから切り替える
+                                setLoginId(acc.id);
+                                setLoginPassword('');
+                                setAuthError(null);
+                                setAuthNotice(`${acc.name}さんのパスワードを入力してください。`);
+                                setAuthTab('login');
+                              }}
                               className="px-2.5 py-1 text-xs bg-slate-800 text-white rounded font-medium hover:bg-slate-900 transition"
                             >
-                              選択
+                              {isDemoAccountId(acc.id) ? '選択' : 'ログイン'}
                             </button>
                           )}
                         </div>

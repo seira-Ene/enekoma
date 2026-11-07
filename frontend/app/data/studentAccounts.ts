@@ -16,7 +16,12 @@ export interface ChatMessageItem {
 export interface StudentAccount {
   id: string;             // 学籍番号またはログインID
   name: string;           // 氏名・ニックネーム
-  password: string;       // パスワード
+  // 旧方式（端末内だけのアカウント）とデモのパスワード。サーバーに登録したアカウントは空にし、照合はサーバーで行う
+  password: string;
+  // ログイン情報をサーバーに登録済みか（メールでのパスワード再設定・ID確認が使える）
+  serverLinked?: boolean;
+  email?: string | null;        // 確認済みのメールアドレス
+  pendingEmail?: string | null; // 確認メールを送ったが、まだリンクが開かれていないアドレス
   department: string;     // 所属学科（文理学部18学科）
   grade: number;          // 1〜4年
   admissionYear: 'reiwa7_or_later' | 'reiwa6_or_earlier';
@@ -120,6 +125,9 @@ export const INITIAL_DEMO_ACCOUNTS: Record<string, StudentAccount> = {
     ]
   }
 };
+
+// パスワードの最小文字数（サーバーと画面で同じ値を使う）
+export const PASSWORD_MIN_LENGTH = 8;
 
 const STORAGE_KEY_ACCOUNTS = 'enekoma_accounts_db';
 const STORAGE_KEY_CURRENT_ID = 'enekoma_current_student_id';
@@ -225,17 +233,51 @@ export function getCurrentStudent(): StudentAccount | null {
   return account;
 }
 
-// 認証（ログイン）
-export function authenticateStudent(id: string, password?: string): StudentAccount | null {
-  const accounts = loadAllAccounts();
-  const acc = accounts[id.trim()];
+export const isDemoAccountId = (id: string) => Object.prototype.hasOwnProperty.call(INITIAL_DEMO_ACCOUNTS, id.trim());
+
+/** 端末内のパスワードで照合する（デモと、サーバーに移していない旧方式のアカウントだけ）。照合だけでログインはしない */
+export function checkLocalPassword(id: string, password: string): StudentAccount | null {
+  const acc = loadAllAccounts()[id.trim()];
+  if (!acc || acc.serverLinked || !acc.password) return null;
+  return acc.password === password.trim() ? acc : null;
+}
+
+// 認証（ログイン）。サーバーに登録したアカウントは /api/account で照合するので、ここでは通さない
+export function authenticateStudent(id: string, password: string): StudentAccount | null {
+  const acc = checkLocalPassword(id, password);
   if (!acc) return null;
-  if (password && acc.password && acc.password !== password.trim()) {
-    return null;
-  }
   setCurrentStudentId(acc.id);
   saveStudentAccount(acc);
   return acc;
+}
+
+// サーバーから受け取るアカウント情報
+export interface ServerAccountView {
+  loginId: string;
+  name: string;
+  department: string;
+  grade: number;
+  admissionYear: 'reiwa7_or_later' | 'reiwa6_or_earlier';
+  email: string | null;
+  pendingEmail: string | null;
+}
+
+/**
+ * サーバーで照合できたアカウントを端末に用意する。端末にカルテがあればそれを使い、なければ空のカルテを作る（成績はサーバーにないため）。
+ * 端末内のパスワードは消す
+ */
+export function linkServerAccount(server: ServerAccountView): StudentAccount {
+  const existing = loadAllAccounts()[server.loginId];
+  const base = existing || registerNewStudent({
+    id: server.loginId,
+    name: server.name,
+    department: server.department,
+    grade: server.grade,
+    admissionYear: server.admissionYear
+  });
+  const linked: StudentAccount = { ...base, password: '', serverLinked: true, email: server.email, pendingEmail: server.pendingEmail };
+  saveStudentAccount(linked);
+  return linked;
 }
 
 // 新規学生アカウント登録
@@ -256,7 +298,8 @@ export function registerNewStudent(data: {
   const department = data.department || '情報科学科';
   const grade = data.grade || 1;
   const admissionYear = data.admissionYear || 'reiwa7_or_later';
-  const password = (data.password || '1234').trim();
+  // サーバーに登録するアカウントは端末にパスワードを残さない
+  const password = (data.password || '').trim();
   const selectedCourses = data.selectedCourses || [];
   const selectedMinors = data.selectedMinors || [];
 

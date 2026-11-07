@@ -50,7 +50,40 @@ export function gradePoint(grade: unknown): number | null {
 
 /** 同じ科目かどうかの判定に使うキー（全角半角・空白の違いを無視する） */
 export function courseKey(name: string): string {
-  return String(name || '').normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+  return String(name || '')
+    .normalize('NFKC')
+    .replace(/\s+/g, '')
+    .toLowerCase()
+    // 「教育実習Ⅰ」と「教育実習1」を同じ科目として扱う（NFKCでⅠはIになる）
+    .replace(/(?<![a-z])(iv|iii|ii|i)(?=$|\()/g, (m) => String(['i', 'ii', 'iii', 'iv'].indexOf(m) + 1));
+}
+
+// 末尾の「(含演習)」「(社会心理学)」などの補足を外したキー
+function courseBaseKey(name: string): string {
+  return courseKey(name).replace(/\([^()]*\)$/, '');
+}
+
+/**
+ * 成績表の科目名と要覧の科目名が同じ科目か。全角半角・空白・ローマ数字の違いと、片方だけにある末尾の補足（含演習など）は無視する。
+ * 「生理学」と「運動生理学（基礎）」のような部分一致は別の科目として扱う。
+ */
+export function isSameCourseName(a: string, b: string): boolean {
+  const ka = courseKey(a);
+  const kb = courseKey(b);
+  if (!ka || !kb) return false;
+  if (ka === kb) return true;
+  // 両方に補足がある場合（スポーツ実習（水泳）と（サッカー）など）は別の科目
+  if (courseBaseKey(a) === kb || ka === courseBaseKey(b)) return true;
+  // 「中国語1〜14」のような範囲の書き方は、その中のどれか1科目と同じとみなす
+  return [a, b].some((range, i) => {
+    const m = courseKey(range).match(/^(.*?)(\d+)[〜~](\d+)(.*)$/);
+    if (!m) return false;
+    const other = i === 0 ? b : a;
+    for (let n = Number(m[2]); n <= Number(m[3]); n++) {
+      if (isSameCourseName(other, `${m[1]}${n}${m[4]}`)) return true;
+    }
+    return false;
+  });
 }
 
 const TERM_ORDER: Record<string, number> = { 前期: 1, 春学期: 1, 夏期: 2, 集中: 2, 後期: 3, 秋学期: 3, 通年: 3 };

@@ -1,10 +1,4 @@
 import {
-  VERIFIED_COURSES_CURRICULUM,
-  VERIFIED_MINORS_CURRICULUM,
-  getCourseCurriculum,
-  getMinorCurriculum
-} from '@/app/data/coursesAndMinorsCurriculum';
-import {
   VERIFIED_12_DEPARTMENTS_CURRICULUM,
   getDepartmentCurriculum
 } from '@/app/data/departmentCurriculum';
@@ -20,6 +14,7 @@ import {
   UserProfileData
 } from '@/app/data/gakubuYoran';
 import { answerTimetableQuery, buildTimetableContext } from '@/app/data/timetableAssistant';
+import { answerCurriculumLocally, buildCurriculumContext } from '@/app/data/curriculumContext';
 import { parseProfileUpdateFromText } from '@/app/data/studentAccounts';
 
 const SYSTEM_PROMPT = `
@@ -51,7 +46,7 @@ const SYSTEM_PROMPT = `
 
 ## 【動作ルール】
 0. 時間割データの厳守：授業、教員、教室、時限、空き教室についての事実は、質問と一緒に渡される「時間割の参照データ」だけを根拠にしてください。参照データにない授業名、教員名、教室番号、時限を作らないでください。データがないときは推測せず、「時間割データでは確認できませんでした」と伝えるか、曜日や時限、科目名を聞き返してください。
-1. 要覧準拠の回答義務：履修・単位・卒業要件に関する相談は、文理学部要覧の基準に基づいて回答してください。
+1. 要覧準拠の回答義務：履修・単位・卒業要件に関する相談は、文理学部要覧の基準に基づいて回答してください。資格コース・教職・副専攻・資格について質問と一緒に「学部要覧の参照データ」が渡されたときは、科目名・単位数・条件をその内容だけから答え、参照データにない科目を作らないでください。
 2. 4桁教室番号の正確な保持：「3306」「3505」等の教室番号は省略せず「3号館3306教室」のように自然に案内してください。
 3. 画像や時間割表の読み込み時：
    学生への返信本文は上記の通り人間らしいチャット言葉で書き、システム連携用JSONブロック \`\`\`profile_update ... \`\`\` のみ回答の末尾にそのまま出力してください（画面側で自動的に抽出され、ユーザーには本文のみが表示されます）。
@@ -165,16 +160,18 @@ const SYSTEM_PROMPT = `
 ・計算式：(4×S + 3×A + 2×B + 1×C) / 総履修単位(D,E,F含む)。小数第3位四捨五入。D/E/F は単位未修得なので修得単位に数えない。
 ・再履修時は最後の履修による成績・単位数のみを累積GPAに算入。
 
-### 4. コース科目（全6コース・要覧 p.140-177）
-・教職コース（教職センター / p.140-163）
-・司書教諭コース（教職センター / 必修10単位 / p.164）
-・司書コース（教務課 / 必修22単位＋選択必修4単位＝26単位 / p.165）
-・学芸員コース（教務課 / 必修22単位＋選択16単位＝38単位 / p.166-167）
-・社会教育主事コース（教務課 / 必修17単位＋選択必修8単位＝25単位 / p.168-169）
-・日本語教育コース（教務課 / 必修11単位＋選択必修2単位含む計26単位 / p.170-171）
+### 4. コース科目（要覧 p.144-179）
+・教職コース（教職センター / p.144-159）：全学科共通の教職科目に加え、教科に関する専門的事項が中学校一種28単位・高等学校一種36単位必要。各教科教育法Ⅰ〜Ⅳ・教育実習関係・教職実践演習は卒業単位に算入できない
+・特別支援学校教諭免許状（教育学科 / 30単位すべて必修 / p.160-163）：基礎免許状が前提。2年次の選考（62単位以上・累積GPA1.5以上など）に合格した人だけが演習・実習を履修できる
+・司書教諭コース（必修5科目10単位 / p.164）：教員免許状の取得が前提
+・司書コース（必修13科目22単位＋選択必修2科目4単位＝26単位 / p.165）
+・学芸員コース（必修22単位＋選択16単位＝38単位 / p.166-167）：2年次の選考試験に合格すると博物館実習を受講できる
+・社会教育主事コース（必修17単位＋選択必修8単位＝25単位 / p.168-169）
+・日本語教育コース（必修11単位と選択必修2単位を含む計26単位 / p.170-171）
+・その他の資格（p.178-179）：社会福祉士・公認心理師・甲種危険物取扱者などの受験資格、測量士補・社会調査士・認定心理士などの卒業後申請の資格、社会福祉主事などの任用資格がある。対象学科が決まっているものが多い
 
 ### 5. 副専攻（全24種・要覧 p.180-192）
-指定科目16単位以上修得で修了証書。所属学科と同一の学科副専攻は修了認定不可。理系学科生は科学リテラシー副専攻不可。
+指定科目16単位以上の修得と申請で、卒業時に修了証書。事前登録は不要。所属学科と同じ学科副専攻は修了認定不可。理系学科（地球科・数・情報科・物理・生命科・化学科）の学生は科学リテラシー副専攻不可。副専攻ごとの必修や科目群の条件は参照データで確認する。
 
 ---
 
@@ -423,32 +420,9 @@ function answerLocally(query: string, userProfile?: UserProfileData): string {
     }
   }
 
-  // 0.01 資格コース（司書・学芸員等）の必修・単位数回答
-  const courseKeys = Object.keys(VERIFIED_COURSES_CURRICULUM);
-  const matchedCourse = courseKeys.find((k) => q.includes(k) || (k === '司書コース' && q.includes('司書') && !q.includes('教諭')));
-  if (matchedCourse) {
-    const cInfo = VERIFIED_COURSES_CURRICULUM[matchedCourse];
-    if (cInfo) {
-      if (cInfo.requiredCourses.length > 0 && (q.includes('必修') || q.includes('科目') || q.includes('単位') || q.includes('何単位') || q.includes('要件'))) {
-        const reqList = cInfo.requiredCourses.map((c) => `${c.name}（${c.credits}単位）`).join('、');
-        const eleCount = cInfo.electiveRequiredCourses.length;
-        return `${cInfo.name}は${cInfo.description}。必修科目には、${reqList}があります！履修カルテの「資格コース」タブでチェックしながら進められますよ。`;
-      }
-    }
-  }
-
-  // 0.02 全24副専攻の修了要件・必修科目回答
-  const minorKeys = Object.keys(VERIFIED_MINORS_CURRICULUM);
-  const matchedMinor = minorKeys.find((k) => q.includes(k) || (k.replace('副専攻', '') && q.includes(k.replace('副専攻', '')) && q.includes('副専攻')));
-  if (matchedMinor) {
-    const mInfo = VERIFIED_MINORS_CURRICULUM[matchedMinor];
-    if (mInfo) {
-      const reqList = mInfo.requiredCourses.length > 0
-        ? `必修科目として${mInfo.requiredCourses.map((c) => `${c.name}（${c.credits}単位）`).join('、')}の修得が必要です。`
-        : '特定の全学科必修はなく、指定群から規定単位を選択します。';
-      return `${mInfo.name}は、${mInfo.description}。${reqList}16単位修得で卒業時に修了証書が授与されますよ！`;
-    }
-  }
+  // 0.01 資格コース・教職・副専攻：要覧の表を書き写したデータから答える
+  const curriculumAnswer = answerCurriculumLocally(query, userProfile);
+  if (curriculumAnswer) return curriculumAnswer;
 
   // 0. 必修と選択必修の違いの質問
   if (q.includes('必修') && (q.includes('違い') || q.includes('選択必修') || q.includes('何が違う') || q.includes('どう違う'))) {
@@ -737,8 +711,10 @@ export async function POST(req: NextRequest) {
 
       // 時間割の事実はAIに推測させず、検索した実データを渡す（画像解析では不要）
       const timetableContext = image ? '' : buildTimetableContext(query, userProfile);
+      // 資格コース・教職・副専攻の質問には、要覧の表から該当部分を渡す
+      const curriculumContext = image ? '' : buildCurriculumContext(query, userProfile);
       const currentTurnParts: any[] = [
-        { text: `${profileContext}${timetableContext}${userPromptText}` }
+        { text: `${profileContext}${timetableContext}${curriculumContext}${userPromptText}` }
       ];
 
       if (image && image.data) {

@@ -1,4 +1,5 @@
 import { UserProfileData, EnrolledCourseItem, CourseRecord } from './gakubuYoran';
+import { calculateGpa, isEarnedGrade, normalizeGrade, resolveRetakes, sumEarnedCredits, toCourseRecord } from './courseGrades';
 
 export interface ChatMessageItem {
   id: string;
@@ -262,7 +263,7 @@ export function registerNewStudent(data: {
   const enrolledCourses = data.initialProfile?.enrolledCourses || [];
   const completedCourses = data.initialProfile?.completedCourses || [];
   const semCredits = data.initialProfile?.semesterCredits ?? enrolledCourses.reduce((sum, c) => sum + (c.credits || 2), 0);
-  const earnedCredits = data.initialProfile?.currentCredits ?? (completedCourses.length > 0 ? completedCourses.reduce((sum, c) => sum + (c.credits || 2), 0) : (grade === 1 ? 0 : grade === 2 ? 30 : grade === 3 ? 64 : 96));
+  const earnedCredits = data.initialProfile?.currentCredits ?? (completedCourses.length > 0 ? sumEarnedCredits(completedCourses) : (grade === 1 ? 0 : grade === 2 ? 30 : grade === 3 ? 64 : 96));
   const gpa = data.initialProfile?.currentGpa ?? 2.80;
 
   const timetableCount = enrolledCourses.length;
@@ -367,10 +368,15 @@ function tryCleanAndParseJson(raw: string): any {
 }
 
 // 成績テキスト・OCR出力から科目一覧（科目名・単位数・評価）を高精度に抽出するパーサー（スマホのタブ区切り・カンマ・スペース対応）
+// 同じ科目が複数行あれば（不合格→再履修など）最後の履修だけを残す
 export function extractCompletedCoursesFromText(text: string): CourseRecord[] {
+  return resolveRetakes(extractCourseRowsFromText(text)).courses;
+}
+
+// 成績テキストの各行をそのまま科目の記録にする（再履修の整理はしない）
+function extractCourseRowsFromText(text: string): CourseRecord[] {
   if (!text) return [];
   const courses: CourseRecord[] = [];
-  const seen = new Set<string>();
 
   const headerWords = new Set([
     '科目名', '授業名', '講義名', '単位数', '単位', '評価', '評点', '担当教員',
@@ -378,19 +384,12 @@ export function extractCompletedCoursesFromText(text: string): CourseRecord[] {
     '修得科目', '成績', '修得単位', '現在gpa', '通算gpa', '累積gpa', 'gpa'
   ]);
 
-  const gradeMap: Record<string, string> = {
-    '秀': 'S', 'S': 'S', 's': 'S',
-    '優': 'A', 'A': 'A', 'a': 'A',
-    '良': 'B', 'B': 'B', 'b': 'B',
-    '可': 'C', 'C': 'C', 'c': 'C',
-    '不可': 'D', 'D': 'D', 'd': 'D', 'F': 'F', 'f': 'F',
-    '合格': '合格', 'P': '合格', 'p': '合格', 'PASS': '合格', 'Pass': '合格', '合': '合格',
-    '認定': '認定', '認': '認定', 'N': '認定', 'n': '認定',
-    '免除': '免除', '免': '免除',
-    '修得': '修得'
+  // 評価の候補（S〜F、秀/優/良/可/不可、P=履修中止、N=認定、合格・免除・修得）
+  const gradeRegex = /^(?:[SABCDEFPNsabcdefpn秀優良可]|不可|不合格|履修中止|合格|認定|[認免合]|免除|修得)$/;
+  const toGrade = (raw: string) => {
+    const g = normalizeGrade(raw);
+    return g === '免除' ? '修得' : g;
   };
-
-  const gradeRegex = /^(?:[SABCDFabcdf秀優良可]|不可|合格|認定|[Pp認免合]|免除|修得)$/;
 
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
@@ -428,8 +427,17 @@ export function extractCompletedCoursesFromText(text: string): CourseRecord[] {
     for (const t of tokens) {
       const cleanT = t.replace(/^[\(（\[【「『](.*)[\)）\]】」』]$/, '$1').trim();
       if (gradeRegex.test(cleanT) && foundGrade === null) {
-        foundGrade = gradeMap[cleanT] || cleanT.toUpperCase();
+        foundGrade = toGrade(cleanT);
       }
+    }
+
+    // 履修年度・学期（再履修の前後関係に使う）
+    let foundYear: number | undefined;
+    let foundTerm: string | undefined;
+    for (const t of tokens) {
+      const yM = t.match(/^(20[0-9]{2})(?:年度?)?$/);
+      if (yM && foundYear === undefined) foundYear = parseInt(yM[1], 10);
+      if (['前期', '後期', '通年', '春学期', '秋学期', '集中'].includes(t) && !foundTerm) foundTerm = t;
     }
 
     // 3. 科目名を探す
@@ -451,51 +459,54 @@ export function extractCompletedCoursesFromText(text: string): CourseRecord[] {
 
     // 4. トークン分割で拾えなかった場合の正規表現フォールバック
     if (!foundName || !foundGrade) {
-      const spaceM = line.match(/([^\s:：\(\)（）\d]+.*?)\s+([0-9]+(?:\.[0-9]+)?)\s*(?:単位)?\s+([SABCDFabcdf秀優良可]|不可|合格|認定|[Pp認免合]|免除|修得)\b/);
+      const spaceM = line.match(/([^\s:：\(\)（）\d]+.*?)\s+([0-9]+(?:\.[0-9]+)?)\s*(?:単位)?\s+([SABCDEFPNsabcdefpn秀優良可]|不可|不合格|履修中止|合格|認定|[認免合]|免除|修得)(?![A-Za-z])/);
       if (spaceM) {
         foundName = spaceM[1].replace(/^[・\-\*\s]+/, '').replace(/^科目名?[：:]\s*/, '').trim();
         foundCredits = parseFloat(spaceM[2]);
-        const grRaw = spaceM[3].trim();
-        foundGrade = gradeMap[grRaw] || grRaw.toUpperCase();
+        foundGrade = toGrade(spaceM[3].trim());
       }
     }
 
     if (foundName && foundGrade && !headerWords.has(foundName.toLowerCase())) {
-      const cr = foundCredits !== null ? foundCredits : 2;
-      if (!seen.has(foundName)) {
-        seen.add(foundName);
-        courses.push({
-          name: foundName,
-          credits: cr,
-          grade: foundGrade,
-          year: 1
-        });
-      }
+      const record = toCourseRecord({
+        name: foundName,
+        credits: foundCredits ?? 2,
+        grade: foundGrade,
+        takenYear: foundYear,
+        term: foundTerm
+      });
+      if (record) courses.push(record);
     }
   }
 
   return courses;
 }
 
-// 成績科目一覧からGPAを自動算定（日大文理公式ルール準拠：S=4, A=3, B=2, C=1, D/F=0, 合格・認定は除外）
+// 成績科目一覧からGPAを自動算定（要覧 p.38-39：S=4, A=3, B=2, C=1, D/E/F=0 で分母に含める。P・N・合格などは除外。再履修は最後の成績のみ）
 export function calculateGpaFromCompletedCourses(courses: CourseRecord[]): number {
   if (!courses || courses.length === 0) return 2.80;
-  let gpaPoints = 0;
-  let gpaCredits = 0;
-  for (const c of courses) {
-    const gr = (c.grade || '').toUpperCase();
-    let pt: number | null = null;
-    if (gr === 'S' || gr === '秀') pt = 4.0;
-    else if (gr === 'A' || gr === '優') pt = 3.0;
-    else if (gr === 'B' || gr === '良') pt = 2.0;
-    else if (gr === 'C' || gr === '可') pt = 1.0;
-    else if (gr === 'D' || gr === 'F' || gr === '不可') pt = 0.0;
-    if (pt !== null) {
-      gpaPoints += pt * (c.credits || 2);
-      gpaCredits += (c.credits || 2);
+  return calculateGpa(resolveRetakes(courses).courses) ?? 2.80;
+}
+
+// 成績表のJSONを整える：科目名・単位数・評価をそろえ、再履修を整理し、修得単位とGPAを補う
+function finalizeTranscriptUpdate(parsed: any) {
+  if (Array.isArray(parsed.completedCourses) && parsed.completedCourses.length > 0) {
+    const records = parsed.completedCourses
+      .map((c: any) => toCourseRecord(c))
+      .filter((c: CourseRecord | null): c is CourseRecord => c !== null);
+    const resolved = resolveRetakes(records);
+    parsed.completedCourses = resolved.courses;
+    // 再履修で除外した不合格の件数（画面の通知に使う）
+    parsed.retakesResolved = resolved.replaced.filter((c) => !isEarnedGrade(c.grade)).length;
+    if (parsed.totalEarnedCredits === undefined) {
+      parsed.totalEarnedCredits = sumEarnedCredits(parsed.completedCourses);
     }
+    if (parsed.currentGpa === undefined) {
+      parsed.currentGpa = calculateGpaFromCompletedCourses(parsed.completedCourses);
+    }
+    parsed.action = parsed.action || 'transcript';
   }
-  return gpaCredits > 0 ? Math.round((gpaPoints / gpaCredits) * 100) / 100 : 2.80;
+  return parsed;
 }
 
 // テキスト・OCR出力からのプロフィール更新JSON抽出ユーティリティ（クライアント・サーバー両用）
@@ -507,16 +518,7 @@ export function parseProfileUpdateFromText(text: string, isImage: boolean = fals
   if (matchUpdate) {
     const parsed = tryCleanAndParseJson(matchUpdate[1]);
     if (parsed && (parsed.enrolledCourses || parsed.action || parsed.addCompletedCourses || parsed.completedCourses || parsed.totalEarnedCredits !== undefined)) {
-      if (Array.isArray(parsed.completedCourses) && parsed.completedCourses.length > 0) {
-        if (parsed.totalEarnedCredits === undefined) {
-          parsed.totalEarnedCredits = parsed.completedCourses.reduce((sum: number, c: any) => sum + (Number(c.credits) || 2), 0);
-        }
-        if (parsed.currentGpa === undefined) {
-          parsed.currentGpa = calculateGpaFromCompletedCourses(parsed.completedCourses);
-        }
-        parsed.action = parsed.action || 'transcript';
-      }
-      return parsed;
+      return finalizeTranscriptUpdate(parsed);
     }
   }
 
@@ -525,16 +527,7 @@ export function parseProfileUpdateFromText(text: string, isImage: boolean = fals
   for (const blk of codeBlocks) {
     const parsed = tryCleanAndParseJson(blk[1]);
     if (parsed && (parsed.enrolledCourses || parsed.action || parsed.addCompletedCourses || parsed.completedCourses || parsed.totalEarnedCredits !== undefined)) {
-      if (Array.isArray(parsed.completedCourses) && parsed.completedCourses.length > 0) {
-        if (parsed.totalEarnedCredits === undefined) {
-          parsed.totalEarnedCredits = parsed.completedCourses.reduce((sum: number, c: any) => sum + (Number(c.credits) || 2), 0);
-        }
-        if (parsed.currentGpa === undefined) {
-          parsed.currentGpa = calculateGpaFromCompletedCourses(parsed.completedCourses);
-        }
-        parsed.action = parsed.action || 'transcript';
-      }
-      return parsed;
+      return finalizeTranscriptUpdate(parsed);
     }
   }
 
@@ -543,16 +536,7 @@ export function parseProfileUpdateFromText(text: string, isImage: boolean = fals
   if (rawMatch) {
     const parsed = tryCleanAndParseJson(rawMatch[0]);
     if (parsed && (parsed.enrolledCourses || parsed.action || parsed.addCompletedCourses || parsed.completedCourses || parsed.totalEarnedCredits !== undefined)) {
-      if (Array.isArray(parsed.completedCourses) && parsed.completedCourses.length > 0) {
-        if (parsed.totalEarnedCredits === undefined) {
-          parsed.totalEarnedCredits = parsed.completedCourses.reduce((sum: number, c: any) => sum + (Number(c.credits) || 2), 0);
-        }
-        if (parsed.currentGpa === undefined) {
-          parsed.currentGpa = calculateGpaFromCompletedCourses(parsed.completedCourses);
-        }
-        parsed.action = parsed.action || 'transcript';
-      }
-      return parsed;
+      return finalizeTranscriptUpdate(parsed);
     }
   }
 
@@ -593,17 +577,19 @@ export function parseProfileUpdateFromText(text: string, isImage: boolean = fals
     }
 
     // 高精度科目パーサーを実行
-    const completedCourses = extractCompletedCoursesFromText(text);
+    const resolved = resolveRetakes(extractCourseRowsFromText(text));
+    const completedCourses = resolved.courses;
 
     if (extractedCredits !== undefined || extractedGpa !== undefined || completedCourses.length > 0) {
-      const finalCredits = extractedCredits ?? (completedCourses.length > 0 ? completedCourses.reduce((sum, c) => sum + (c.credits || 2), 0) : 30);
+      const finalCredits = extractedCredits ?? (completedCourses.length > 0 ? sumEarnedCredits(completedCourses) : 30);
       const finalGpa = extractedGpa ?? (completedCourses.length > 0 ? calculateGpaFromCompletedCourses(completedCourses) : 2.80);
 
       return {
         action: 'transcript',
         totalEarnedCredits: finalCredits,
         currentGpa: finalGpa,
-        completedCourses
+        completedCourses,
+        retakesResolved: resolved.replaced.filter((c) => !isEarnedGrade(c.grade)).length
       };
     }
   }

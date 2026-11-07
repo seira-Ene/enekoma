@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, M_PLUS_Rounded_1c, Zen_Kaku_Gothic_New } from "next/font/google";
+import { DEFAULT_THEME, THEME_INIT_SCRIPT } from "./data/themes";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -10,6 +11,21 @@ const geistSans = Geist({
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+});
+
+// テーマ用の日本語フォント。preload しないので、そのテーマを選んだ人の端末だけが読み込む
+const roundedFont = M_PLUS_Rounded_1c({
+  variable: "--font-rounded",
+  weight: ["400", "700"],
+  display: "swap",
+  preload: false,
+});
+
+const sharpFont = Zen_Kaku_Gothic_New({
+  variable: "--font-sharp",
+  weight: ["400", "700"],
+  display: "swap",
+  preload: false,
 });
 
 export const metadata: Metadata = {
@@ -37,10 +53,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
+    // data-theme は描画前のスクリプトが書き換えるので、サーバーの値との違いを警告しない
     <html
       lang="ja"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      data-theme={DEFAULT_THEME}
+      suppressHydrationWarning
+      className={`${geistSans.variable} ${geistMono.variable} ${roundedFont.variable} ${sharpFont.variable} h-full antialiased`}
     >
+      <head>
+        {/* 保存したテーマを最初の描画より前に適用する（再読み込み時に一瞬デフォルト色が出ないように） */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body className="h-full flex flex-col overscroll-none select-text">{children}</body>
     </html>
   );

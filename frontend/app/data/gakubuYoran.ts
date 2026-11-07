@@ -1,3 +1,4 @@
+import { isEarnedGrade } from './courseGrades';
 import {
   VERIFIED_COURSES_CURRICULUM,
   VERIFIED_MINORS_CURRICULUM,
@@ -1207,9 +1208,14 @@ export const GAKUBU_YORAN_ALL_24_MINORS: MinorProgramInfo[] = [
 export interface CourseRecord {
   name: string;
   credits: number;
-  grade?: 'S' | 'A' | 'B' | 'C' | 'D' | 'E' | 'P' | 'N' | '修得' | '履修済' | '-' | string;
+  // S/A/B/C は合格、D/E/F は不合格（未修得）、P は履修中止、N は認定。'修得' と '-' は評価が分からない記録（過去の時間割から登録）
+  grade?: 'S' | 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'P' | 'N' | '合格' | '修得' | '-' | string;
   category?: string;
+  // 履修した学年（1〜4）
   year?: number;
+  // 履修した年度（西暦）と学期。再履修でどの記録が最後かを決めるのに使う
+  takenYear?: number;
+  term?: string;
 }
 
 export interface EnrolledCourseItem {
@@ -1293,7 +1299,7 @@ export function analyzeAcademicDeficiency(profile: UserProfileData): DeficiencyR
 
   const completedNames = new Set(
     (profile.completedCourses || [])
-      .filter((c) => !['D', 'E', 'F', '不合格'].includes(c.grade || ''))
+      .filter((c) => isEarnedGrade(c.grade))
       .map((c) => c.name.trim())
   );
 

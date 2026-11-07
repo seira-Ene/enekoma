@@ -13,6 +13,7 @@ EneKoma(エネコマ)は、日本大学文理学部(CHS)の学生向けAIチャ�
 | 目標GPA逆算 | 今期S・Aを何単位取れば目標GPAに届くかを提案 | `simulateGpaEngine`(`data/gakubuYoran.ts`) |
 | 空き教室・構内ナビ | 今の時限の空き教室、自販機・ゴミ箱・各課窓口を案内 | `findFreeRooms`(`data/courses.ts`), `SYSTEM_PROMPT` と `answerLocally`(`route.ts`) |
 | 履修サポート | 重複チェック、空きコマ提案、友達との空きコマ照合、必修組み込みの時間割案、移動判定、科目・教員・教室の逆引き | `answerTimetableQuery`(`data/timetableAssistant.ts`) |
+| デザインテーマ | デフォルト・かわいい・かっこいいの切り替え(プロフィールの基本設定タブ) | `data/themes.ts`, `globals.css`, `layout.tsx` |
 
 ## コマンド
 
@@ -78,6 +79,15 @@ AIの回答末尾に置く ` ```profile_update ` JSONブロックでプロフィ
 
 時間割表には成績が載っていないため、過去の時間割から登録する科目の評価は「修得」または「-」とし、推測しない(GPAを歪めないため)。
 
+### 成績と再履修
+
+評価の判定、修得単位とGPAの計算は `data/courseGrades.ts` にまとめてある。個別に `grade === 'D'` のような判定を書かず、ここの関数を使う。
+
+- 評価は `normalizeGrade` で S/A/B/C/D/E/F にそろえる(秀→S、優→A、良→B、可→C、不可→D)。
+- D/E/F は不合格で、修得単位に数えない。GPAでは0点として分母に含める。P(履修中止)は修得単位にもGPAにも入れない。N(認定)と合格は修得単位に入れ、GPAには入れない。
+- 同名科目は `resolveRetakes` で1件にし、最後の履修だけを残す(要覧 p.39)。`takenYear`(年度)と `term`(学期)があればそれで前後を決める。なければ合格した記録を残し(修得済みの科目は再履修できないため)、どちらも同じなら後から読み込んだ方を残す。
+- `currentCredits` と `currentGpa` は、科目の記録があればそこから計算し直す。AIが返した `totalEarnedCredits` は使わず、記録の合計と違えば通知で知らせる(読み取り漏れの確認用)。
+
 ### 状態の保存
 
 データベースはない。
@@ -85,6 +95,16 @@ AIの回答末尾に置く ` ```profile_update ` JSONブロックでプロフィ
 - アカウント、プロフィール、チャット履歴、APIキーはブラウザの `localStorage` / `sessionStorage` に保存する。
 - ログインと登録はクライアント側の `data/studentAccounts.ts` で処理する。`/api/auth` は `page.tsx` から呼ばれておらず、登録内容を保存もしない。
 - メンテナンス設定だけはサーバー側のRedisに保存する(「運用ルール」参照)。
+- デザインテーマはアカウントではなく端末ごとに `localStorage` の `enekoma_theme` に保存する。`layout.tsx` の `<head>` のスクリプトが描画前に `<html data-theme>` を付けるので、再読み込みでちらつかない。
+
+### デザインテーマ
+
+Tailwind v4 のユーティリティは `--color-slate-900` などの変数を参照するので、`globals.css` の `html[data-theme="..."]` で変数を上書きして画面全体の配色を変える。`page.tsx` のクラスはテーマごとに書き分けない。
+
+- かわいい: グレーをピンク系、indigo/blue をピンク・バイオレットに置き換え、角丸を大きくし、M PLUS Rounded 1c を使う。
+- かっこいい: 各色の濃淡を反転したダーク配色(`white` も暗くなる)で、indigo/blue をシアン系にし、角丸を小さくし、Zen Kaku Gothic New を使う。新しい色を使うときは、反転後も読めるか確認する。
+- テーマ用フォントは `preload: false` なので、選んだ端末だけが読み込む。フォントは `--theme-font` 経由で `font-sans` と `body` に効かせる。
+- テーマを追加するときは `THEMES`(`data/themes.ts`)と `globals.css` の両方に足す。
 
 ### カリキュラムの分岐
 

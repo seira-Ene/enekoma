@@ -6,7 +6,7 @@ import {
   getCourseCurriculum,
   getMinorCurriculum
 } from '@/app/data/coursesAndMinorsCurriculum';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import {
   GAKUBU_YORAN_DEPARTMENTS,
   GAKUBU_YORAN_COURSES,
@@ -35,10 +35,11 @@ import {
   authenticateStudent,
   registerNewStudent,
   parseProfileUpdateFromText,
-  extractCompletedCoursesFromText,
-  calculateGpaFromCompletedCourses
+  extractCompletedCoursesFromText
 } from '@/app/data/studentAccounts';
 import { prepareFileForUpload } from '@/app/data/imageUpload';
+import { THEMES, ThemeId, applyTheme, readStoredTheme, saveTheme } from '@/app/data/themes';
+import { calculateGpa, isEarnedGrade, isFailingGrade, normalizeGrade, resolveRetakes, sumEarnedCredits, toCourseRecord } from '@/app/data/courseGrades';
 
 // メッセージ型定義
 interface ChatMessage {
@@ -171,6 +172,16 @@ export default function UnifiedAssistantPage() {
 
   // ユーザープロフィール
   const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_PROFILE);
+  // デザインテーマ（端末ごとに localStorage に保存。初回の描画前に layout.tsx のスクリプトが適用済み）
+  const [theme, setTheme] = useState<ThemeId>(() => readStoredTheme());
+  // 開発時の Strict Mode の再マウントなどで data-theme が消えても付け直す
+  useLayoutEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+  const changeTheme = (id: ThemeId) => {
+    setTheme(id);
+    saveTheme(id);
+  };
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [profileTab, setProfileTab] = useState<'timetable' | 'completed' | 'reqCourses' | 'basic' | 'courses' | 'minors'>('timetable');
   const [reqCourseFilter, setReqCourseFilter] = useState<'all' | 'compulsory' | 'elective'>('all');
@@ -512,25 +523,24 @@ export default function UnifiedAssistantPage() {
 
     // 2. 過去の時間割（修得済みに加算：勝手な評価はつけず「修得」として登録）
     if (update.action === 'add_completed_timetable' || Array.isArray(update.addCompletedCourses)) {
-      const toAdd: CourseRecord[] = (update.addCompletedCourses || []).map((c: any) => ({
-        name: String(c.name || '').trim(),
-        credits: Number(c.credits) || 2,
-        grade: '修得',
-        year: Number(c.year) || 1
-      })).filter((c: CourseRecord) => c.name.length > 0);
+      // 時間割表には成績がないので評価は付けない（GPAを歪めない）
+      const toAdd: CourseRecord[] = (update.addCompletedCourses || [])
+        .map((c: any) => toCourseRecord({ ...c, grade: '修得' }))
+        .filter((c: CourseRecord | null): c is CourseRecord => c !== null);
 
       if (toAdd.length > 0) {
-        const existingNames = new Set(updatedProf.completedCourses.map((c) => c.name));
-        const newlyAdded = toAdd.filter((c) => !existingNames.has(c.name));
-        const addedCredits = newlyAdded.reduce((sum, c) => sum + c.credits, 0);
-        const newCompleted = [...updatedProf.completedCourses, ...newlyAdded];
-        const newTotal = Number(update.totalEarnedCredits) || (updatedProf.currentCredits + addedCredits);
+        const before = updatedProf.completedCourses;
+        // 成績表から登録済みの科目は成績の記録を優先する（不合格のあとに再履修した科目は修得に置き換わる）
+        const newCompleted = resolveRetakes([...before, ...toAdd]).courses;
+        const newlyAdded = newCompleted.length - before.length;
+        const addedCredits = sumEarnedCredits(newCompleted) - sumEarnedCredits(before);
+        const newTotal = Math.max(0, updatedProf.currentCredits + addedCredits);
         updatedProf = {
           ...updatedProf,
           completedCourses: newCompleted,
           currentCredits: newTotal
         };
-        notifs.push(`過去の時間割から${newlyAdded.length}科目を修得済みに登録（+${addedCredits}単位・評価なし）`);
+        notifs.push(`過去の時間割から${newlyAdded}科目を修得済みに登録（+${addedCredits}単位・評価なし）`);
         modified = true;
       }
     }
@@ -538,28 +548,29 @@ export default function UnifiedAssistantPage() {
     // 3. 成績表・成績通知書（科目名・単位数・評価の高精度統合）
     if (update.action === 'transcript' || Array.isArray(update.completedCourses) || (update.totalEarnedCredits !== undefined && update.currentGpa !== undefined)) {
       let newCompleted = updatedProf.completedCourses || [];
-      if (Array.isArray(update.completedCourses) && update.completedCourses.length > 0) {
-        const incoming: CourseRecord[] = update.completedCourses.map((c: any) => ({
-          name: String(c.name || '').trim(),
-          credits: Number(c.credits) || 2,
-          grade: String(c.grade || '修得').trim(),
-          year: Number(c.year) || 1
-        })).filter((c: CourseRecord) => c.name.length > 0);
+      let replacedCount = 0;
+      const hasIncoming = Array.isArray(update.completedCourses) && update.completedCourses.length > 0;
+      if (hasIncoming) {
+        const incoming: CourseRecord[] = update.completedCourses
+          .map((c: any) => toCourseRecord(c))
+          .filter((c: CourseRecord | null): c is CourseRecord => c !== null);
 
-        // 既存科目と統合（同名科目は新しい成績・評価で更新、新規科目は追加）
-        const courseMap = new Map<string, CourseRecord>();
-        newCompleted.forEach((c) => courseMap.set(c.name, c));
-        incoming.forEach((c) => courseMap.set(c.name, c));
-        newCompleted = Array.from(courseMap.values());
+        // 既存の記録→今回の成績表の順に並べ、同名科目は最後の履修だけを残す（再履修で合格した科目の古い不合格を除外）
+        const resolved = resolveRetakes([...newCompleted, ...incoming]);
+        newCompleted = resolved.courses;
+        // 成績表の中で整理した分（パーサーが数える）と、既存の記録を置き換えた分
+        replacedCount = (Number(update.retakesResolved) || 0) + resolved.replaced.filter((c) => !isEarnedGrade(c.grade)).length;
       }
 
-      const calculatedCredits = newCompleted.reduce((sum, c) => sum + (c.credits || 2), 0);
+      // 修得単位は合格した科目だけを合計する（D/E/F・履修中止は数えない。再履修の二重カウントもしない）
       const parsedCredits = Number(update.totalEarnedCredits);
-      const newCredits = (!isNaN(parsedCredits) && parsedCredits > 0) ? parsedCredits : (calculatedCredits > 0 ? calculatedCredits : updatedProf.currentCredits);
+      const hasParsedCredits = update.totalEarnedCredits !== undefined && !isNaN(parsedCredits) && parsedCredits > 0;
+      const calculatedCredits = sumEarnedCredits(newCompleted);
+      const newCredits = newCompleted.length > 0 ? calculatedCredits : (hasParsedCredits ? parsedCredits : updatedProf.currentCredits);
 
       const parsedGpa = Number(update.currentGpa);
-      const autoGpa = calculateGpaFromCompletedCourses(newCompleted);
-      const newGpa = (!isNaN(parsedGpa) && parsedGpa >= 0) ? parsedGpa : autoGpa;
+      const autoGpa = calculateGpa(newCompleted);
+      const newGpa = autoGpa ?? ((!isNaN(parsedGpa) && parsedGpa >= 0) ? parsedGpa : updatedProf.currentGpa);
 
       updatedProf = {
         ...updatedProf,
@@ -567,7 +578,18 @@ export default function UnifiedAssistantPage() {
         currentGpa: newGpa,
         completedCourses: newCompleted
       };
-      notifs.push(`成績通知書から反映しました（${newCompleted.length}科目 / 修得 ${newCredits}単位 / GPA ${newGpa.toFixed(2)}）`);
+      const failedCount = newCompleted.filter((c) => isFailingGrade(c.grade)).length;
+      const details = [
+        `${newCompleted.length}科目`,
+        `修得 ${newCredits}単位`,
+        `GPA ${newGpa.toFixed(2)}`,
+        failedCount > 0 ? `未修得 ${failedCount}科目` : '',
+        replacedCount > 0 ? `再履修で${replacedCount}科目を最新の成績に更新` : ''
+      ].filter(Boolean).join(' / ');
+      notifs.push(`成績通知書から反映しました（${details}）`);
+      if (hasIncoming && hasParsedCredits && parsedCredits !== calculatedCredits) {
+        notifs.push(`成績表に書かれた修得単位（${parsedCredits}単位）と科目の合計（${calculatedCredits}単位）が違います。読み取り漏れがないか一覧を確認してください`);
+      }
       modified = true;
     }
 
@@ -862,12 +884,13 @@ export default function UnifiedAssistantPage() {
                 initialProfile.currentGpa = Number(update.currentGpa);
               }
               if (Array.isArray(update.completedCourses) && update.completedCourses.length > 0) {
-                initialProfile.completedCourses = update.completedCourses.map((c: any) => ({
-                  name: String(c.name || '').trim(),
-                  credits: Number(c.credits) || 2,
-                  grade: c.grade || 'A',
-                  year: Number(c.year) || 1
-                }));
+                const records = update.completedCourses
+                  .map((c: any) => toCourseRecord(c))
+                  .filter((c: CourseRecord | null): c is CourseRecord => c !== null);
+                initialProfile.completedCourses = resolveRetakes(records).courses;
+                // 修得単位とGPAは合格した科目・最後の履修から計算し直す
+                initialProfile.currentCredits = sumEarnedCredits(initialProfile.completedCourses);
+                initialProfile.currentGpa = calculateGpa(initialProfile.completedCourses) ?? initialProfile.currentGpa;
               }
             }
           }
@@ -1513,7 +1536,7 @@ export default function UnifiedAssistantPage() {
 
     if (isCompleted) {
       updated = userProfile.completedCourses.filter((c) => c.name !== courseName);
-      deltaCredits = -credits;
+      deltaCredits = sumEarnedCredits(updated) - sumEarnedCredits(userProfile.completedCourses);
     } else {
       updated = [
         ...userProfile.completedCourses,
@@ -2290,7 +2313,7 @@ export default function UnifiedAssistantPage() {
                 { id: 'timetable', label: '📅 今期履修中', detail: `${userProfile.semesterCredits}単位` },
                 { id: 'completed', label: '📜 修得済み科目', detail: `${userProfile.completedCourses.length}件` },
                 { id: 'reqCourses', label: '📌 学科必修​チェック', detail: liveDeficiency.missingMajorReqs.length === 0 ? '完修' : `残${liveDeficiency.missingMajorReqs.length}` },
-                { id: 'basic', label: '⚙️ 基本設定・GPA' },
+                { id: 'basic', label: '⚙️ 基本設定・GPA', detail: THEMES.find((t) => t.id === theme)?.label },
                 { id: 'courses', label: '🏅 資格コース' },
                 { id: 'minors', label: '🌐 副専攻', detail: '24種' }
               ].map((tab) => (
@@ -2575,27 +2598,40 @@ export default function UnifiedAssistantPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {userProfile.completedCourses.map((c, i) => (
-                          <tr key={i} className="hover:bg-slate-50">
-                            <td className="py-2 px-2.5 font-medium text-slate-900 min-w-[140px]">{c.name}</td>
-                            <td className="py-2 px-2.5 text-slate-600 whitespace-nowrap">{c.credits}単位</td>
+                        {userProfile.completedCourses.map((c, i) => {
+                          const g = normalizeGrade(c.grade || '修得');
+                          const failed = isFailingGrade(g);
+                          const earned = isEarnedGrade(g);
+                          return (
+                          <tr key={i} className={failed ? 'bg-rose-50/60 hover:bg-rose-50' : 'hover:bg-slate-50'}>
+                            <td className={`py-2 px-2.5 font-medium min-w-[140px] ${earned ? 'text-slate-900' : 'text-slate-500'}`}>
+                              {c.name}
+                              {(c.takenYear || c.term) && (
+                                <span className="ml-1.5 text-[10px] font-normal text-slate-400">{[c.takenYear ? `${c.takenYear}年度` : '', c.term || ''].filter(Boolean).join(' ')}</span>
+                              )}
+                            </td>
+                            <td className={`py-2 px-2.5 whitespace-nowrap ${earned ? 'text-slate-600' : 'text-slate-400 line-through'}`}>{c.credits}単位</td>
                             <td className="py-2 px-2.5 whitespace-nowrap">
                               <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
-                                c.grade === 'S' ? 'bg-purple-100 text-purple-800' :
-                                c.grade === 'A' ? 'bg-emerald-100 text-emerald-800' :
-                                c.grade === 'B' ? 'bg-blue-100 text-blue-800' :
-                                c.grade === 'C' ? 'bg-amber-100 text-amber-800' :
+                                g === 'S' ? 'bg-purple-100 text-purple-800' :
+                                g === 'A' ? 'bg-emerald-100 text-emerald-800' :
+                                g === 'B' ? 'bg-blue-100 text-blue-800' :
+                                g === 'C' ? 'bg-amber-100 text-amber-800' :
+                                failed ? 'bg-rose-100 text-rose-700 border border-rose-200' :
                                 'bg-slate-100 text-slate-700 border border-slate-200'
                               }`}>
-                                {c.grade || '修得'}
+                                {g}
                               </span>
+                              {failed && <span className="ml-1 text-[10px] font-semibold text-rose-600">未修得</span>}
+                              {g === 'P' && <span className="ml-1 text-[10px] text-slate-500">履修中止</span>}
                             </td>
                             <td className="py-2 px-2.5 text-center">
                               <button
                                 type="button"
                                 onClick={() => {
                                   const updated = userProfile.completedCourses.filter((_, idx) => idx !== i);
-                                  const newCredits = Math.max(0, userProfile.currentCredits - c.credits);
+                                  // 不合格・履修中止の記録は修得単位に入っていないので減らさない
+                                  const newCredits = Math.max(0, userProfile.currentCredits - (isEarnedGrade(c.grade) ? c.credits : 0));
                                   saveProfile({ ...userProfile, completedCourses: updated, currentCredits: newCredits });
                                 }}
                                 className="text-rose-600 hover:text-rose-800 text-[11px]"
@@ -2604,7 +2640,8 @@ export default function UnifiedAssistantPage() {
                               </button>
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -2780,6 +2817,46 @@ export default function UnifiedAssistantPage() {
               {/* TAB 4: 基本情報・GPA目標 */}
               {profileTab === 'basic' && (
                 <div className="space-y-4">
+                  {/* デザインテーマ */}
+                  <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                    <div className="font-semibold text-slate-800 text-xs mb-1.5 flex items-center justify-between">
+                      <span id="theme-picker-label">デザインテーマ:</span>
+                      <span className="text-[10px] text-slate-500">この端末に保存されます</span>
+                    </div>
+                    <div role="radiogroup" aria-labelledby="theme-picker-label" className="grid grid-cols-3 gap-2">
+                      {THEMES.map((option) => {
+                        const selected = theme === option.id;
+                        return (
+                          <button
+                            key={option.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={selected}
+                            data-theme-option={option.id}
+                            onClick={() => changeTheme(option.id)}
+                            className={`p-2 rounded-lg border text-left transition ${
+                              selected
+                                ? 'border-slate-800 ring-2 ring-slate-800/20 bg-white'
+                                : 'border-slate-200 bg-white hover:bg-slate-100'
+                            }`}
+                          >
+                            {/* 見本はテーマ変数の影響を受けないよう固定色で描く */}
+                            <span className="flex h-6 overflow-hidden rounded-md border border-black/10" aria-hidden="true">
+                              {option.swatch.map((color) => (
+                                <span key={color} className="flex-1" style={{ backgroundColor: color }} />
+                              ))}
+                            </span>
+                            <span className="mt-1.5 flex items-center gap-1 text-xs font-bold text-slate-900">
+                              {selected && <span aria-hidden="true">✓</span>}
+                              {option.label}
+                            </span>
+                            <span className="mt-0.5 block text-[10px] leading-snug text-slate-500">{option.description}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* カリキュラム体系 */}
                   <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
                     <label className="block font-semibold text-slate-800 text-xs mb-1.5 flex items-center justify-between">

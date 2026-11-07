@@ -97,7 +97,7 @@ AIの回答末尾に置く ` ```profile_update ` JSONブロックでプロフィ
 - パスワード再設定とログインIDの確認は、確認済みのメールアドレスに送るリンク（再設定30分・確認24時間、1回限り、保存はトークンのハッシュだけ）で行う。応答はアカウントの有無で変えない。ログインは同じIDに15分で10回まで、同じアドレスへのメールは1時間に3通まで。
 - 以前の端末内だけのアカウントは、次のログインでサーバーに登録する（パスワードが8文字未満なら新しいパスワードを決めてもらう）。デモアカウント（`INITIAL_DEMO_ACCOUNTS`）は端末内だけで、サーバーには登録できない。
 - アカウント切替は、デモ以外はパスワードの入力が必要（共用PCで他人のカルテを開けないように）。
-- メールの送信は `app/api/account/mailer.ts`。本番はGmail（`GMAIL_USER` と `GMAIL_APP_PASSWORD`、nodemailerでsmtp.gmail.com:465）で送る。送信元はそのGmailアドレスで、`MAIL_FROM` で表示名だけ変えられる。Gmailの送信上限は1日約500通。Resend（`MAIL_PROVIDER=resend`、`RESEND_API_KEY`、`MAIL_FROM`）にも切り替えられる。ローカル開発で未設定ならサーバーのログに出し、Vercel上で未設定ならメール機能は503を返す。リンクのドメインは `APP_BASE_URL`、なければVercelの本番URLを使う（Hostヘッダーは使わない）。Redisのない環境では、ローカル開発だけメモリに保存する。
+- メールの送信は `app/api/account/mailer.ts`。本番はGmail（`GMAIL_USER` と `GMAIL_APP_PASSWORD`、nodemailerでsmtp.gmail.com:465）で送る。送信元はそのGmailアドレスで、`MAIL_FROM` で表示名だけ変えられる。Gmailの送信上限は1日約500通。送信のたびに `[mail] sent` / `[mail] failed` の1行ログ（日本時間・宛先のユーザー名を伏せたアドレス・件名・Gmailの応答・messageId）を出す。本文とリンクは出さない。Vercel Hobbyの実行ログは約1時間で消えるので、届かない報告は早めに `vercel logs` で確認する。Resend（`MAIL_PROVIDER=resend`、`RESEND_API_KEY`、`MAIL_FROM`）にも切り替えられる。ローカル開発で未設定ならサーバーのログに出し、Vercel上で未設定ならメール機能は503を返す。リンクのドメインは `APP_BASE_URL`、なければVercelの本番URLを使う（Hostヘッダーは使わない）。Redisのない環境では、ローカル開発だけメモリに保存する。
 - メンテナンス設定だけはサーバー側のRedisに保存する(「運用ルール」参照)。
 - デザインテーマはアカウントではなく端末ごとに `localStorage` の `enekoma_theme` に保存する。`layout.tsx` の `<head>` のスクリプトが描画前に `<html data-theme>` を付けるので、再読み込みでちらつかない。
 

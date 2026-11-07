@@ -270,8 +270,11 @@ const SYSTEM_PROMPT = `
 const GEMINI_MODEL_ORDER = ['gemini-3-flash-preview', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
 // 思考を最小にすると応答が2〜3倍速くなる（実測）。チャットの事実は検索結果から渡すので精度への影響が小さい
 const CHAT_THINKING_CONFIG = { thinkingConfig: { thinkingLevel: 'minimal' } };
-// 画像は読み取り精度を確認できるまで既定の思考量のままにする
-const IMAGE_THINKING_CONFIG = {};
+// 画像は架空の成績表・時間割で正答率を比べて決めた（2026-11-07 実測）
+// 成績表: minimal でも画質を落とした画像を含め全問正解。既定の約17秒が約6秒になる
+// 時間割: minimal は画質が悪いと科目名を読み違えたので、精度の落ちなかった low にする
+const TRANSCRIPT_THINKING_CONFIG = { thinkingConfig: { thinkingLevel: 'minimal' } };
+const TIMETABLE_THINKING_CONFIG = { thinkingConfig: { thinkingLevel: 'low' } };
 const CHAT_REQUEST_TIMEOUT_MS = 10000;
 const CHAT_TOTAL_TIMEOUT_MS = 25000;
 // 科目の多い画像は出力が長いので、途中で打ち切ってやり直さないよう長めに待つ
@@ -651,6 +654,8 @@ export async function POST(req: NextRequest) {
     if (apiKey) {
       const imageType = body.imageType || null;
       let userPromptText = query;
+      // 読み取る書類によって思考量を変える
+      let isTranscriptImage = false;
       if (image) {
         const isPast = imageType === 'past_timetable' || query.includes('過去') || query.includes('修得済み') || query.includes('前学期');
         const isTranscript = imageType === 'transcript' || query.includes('成績') || query.includes('通知書') || query.includes('GPA') || query.includes('評価');
@@ -671,6 +676,7 @@ export async function POST(req: NextRequest) {
 }
 \`\`\``;
         } else if (isTranscript) {
+          isTranscriptImage = true;
           imageInstruction = `【最重要：成績通知書OCR解析】
 添付された成績通知書（スマホ画面スクリーンショット、写真、PDF、またはテキスト）を解析し、記載されているすべての履修済み科目（科目名・単位数・評価）、総修得単位数、現在GPAを1科目も漏れなく読み取ってください。
 ※スマホのポータル画面（NU-Web等）のスクリーンショット等で総単位数やGPAの記載が見当たらない場合でも、画像内のすべての科目（科目名・単位数・評価）を completedCourses 配列に漏れなく出力してください（講義は2単位、体育・実験演習は1単位）。
@@ -807,7 +813,7 @@ export async function POST(req: NextRequest) {
         generationConfig: {
           temperature: 0.25,
           maxOutputTokens: outputLimit,
-          ...(isImageRequest ? IMAGE_THINKING_CONFIG : CHAT_THINKING_CONFIG)
+          ...(!isImageRequest ? CHAT_THINKING_CONFIG : isTranscriptImage ? TRANSCRIPT_THINKING_CONFIG : TIMETABLE_THINKING_CONFIG)
         }
       };
 

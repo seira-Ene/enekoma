@@ -15,6 +15,13 @@ import {
 import { answerTimetableQuery, buildTimetableContext } from '@/app/data/timetableAssistant';
 import { answerCurriculumLocally, buildCurriculumContext } from '@/app/data/curriculumContext';
 import { parseProfileUpdateFromText } from '@/app/data/studentAccounts';
+import { ExtractionError, ExtractionKind, extractDocument, MediaPart } from './extraction';
+
+// 科目の多い成績表（複数ページのPDFなど）の読み取りは1分以上かかることがある
+export const maxDuration = 120;
+// 読み取り全体の上限。画面側は2分で打ち切るので、それより前に結果か理由を返す
+const EXTRACTION_TIMEOUT_MS = 100_000;
+const EXTRACTION_KINDS: ExtractionKind[] = ['transcript', 'current_timetable', 'past_timetable'];
 
 const SYSTEM_PROMPT = `
 # 公式ナレッジベース：日本大学文理学部『学部要覧（令和7年度/2025年度）』完全準拠
@@ -575,6 +582,18 @@ export async function GET() {
   });
 }
 
+/** Geminiの失敗を利用者向けの言葉にする */
+function friendlyGeminiError(status: number | null, message: string | null): string {
+  const lower = (message || '').toLowerCase();
+  if (lower.includes('api_key') || lower.includes('api key')) {
+    return 'APIキーが無効であるか、形式が正しくありません。Google AI Studio（aistudio.google.com）で取得した有効なキー（AIzaSy...）をご確認ください。';
+  }
+  if (status === 429) return 'Gemini APIの無料枠利用上限（レートリミット）に達しました。1〜2分お待ちいただくか、別のキーをお試しください。';
+  if (status === 403) return 'APIアクセス権限がありません。Gemini APIが有効化されているGoogleアカウントのキーかご確認ください。';
+  if (lower.includes('timeout') || lower.includes('aborted')) return '読み取りに時間がかかりすぎました。ページを分けるか、画像を小さくしてお試しください。';
+  return message || '接続エラー';
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -586,6 +605,37 @@ export async function POST(req: NextRequest) {
 
     if (!query && !image) {
       return NextResponse.json({ reply: '質問内容または画像を入力してください。' }, { status: 400 });
+    }
+
+    // 成績表・時間割の読み取り（会話文なしでJSONだけを返させる）。images は縦長画像を分けたもの
+    const extractKind: ExtractionKind | null = EXTRACTION_KINDS.includes(body.extract) ? body.extract : null;
+    const mediaSource: unknown[] = Array.isArray(body.images) && body.images.length ? body.images : image ? [image] : [];
+    const mediaParts: MediaPart[] = mediaSource
+      .filter((m): m is { mimeType?: string; data: string } => !!m && typeof (m as { data?: unknown }).data === 'string')
+      .slice(0, 10)
+      .map((m) => ({ mimeType: String(m.mimeType || 'image/jpeg'), data: m.data.replace(/^data:[^;]+;base64,/, '') }));
+    if (apiKey && extractKind && mediaParts.length > 0) {
+      try {
+        const result = await extractDocument({ apiKey, models: GEMINI_MODEL_ORDER, parts: mediaParts, kind: extractKind, timeoutMs: EXTRACTION_TIMEOUT_MS });
+        console.info(`[extract] ${extractKind} model=${result.model} rows=${result.stats.rowCount} extracted=${result.stats.extracted} attempts=${result.stats.attempts} ms=${result.stats.ms}`);
+        return NextResponse.json({
+          reply: result.reply,
+          source: 'gemini',
+          model: result.model,
+          profileUpdate: result.profileUpdate,
+          extractionWarning: result.warning,
+          extraction: result.stats
+        });
+      } catch (err) {
+        if (err instanceof ExtractionError && err.code === 'no_courses') {
+          return NextResponse.json({ reply: '科目の一覧が見つかりませんでした。', source: 'gemini', profileUpdate: null });
+        }
+        const status = err instanceof ExtractionError ? (err.status ?? null) : null;
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[extract] ${extractKind} failed: ${status ?? ''} ${message}`);
+        const friendly = friendlyGeminiError(status, message);
+        return NextResponse.json({ reply: `AIで読み取れませんでした（${friendly}）`, source: 'local', error: friendly, errorStatus: status, profileUpdate: null });
+      }
     }
 
     // Google Gemini API呼び出し（APIキー設定時）
@@ -821,14 +871,7 @@ export async function POST(req: NextRequest) {
       }
 
       // APIキーが設定されたがGeminiがエラーになった場合のエラーメッセージ整形
-      let friendlyError = lastErrorMessage || '接続エラー';
-      if (lastErrorMessage?.toLowerCase().includes('api_key') || lastErrorStatus === 400) {
-        friendlyError = 'APIキーが無効であるか、形式が正しくありません。Google AI Studio（aistudio.google.com）で取得した有効なキー（AIzaSy...）をご確認ください。';
-      } else if (lastErrorStatus === 429) {
-        friendlyError = 'Gemini APIの無料枠利用上限（レートリミット）に達しました。1〜2分お待ちいただくか、別のキーをお試しください。';
-      } else if (lastErrorStatus === 403) {
-        friendlyError = 'APIアクセス権限がありません。Gemini APIが有効化されているGoogleアカウントのキーかご確認ください。';
-      }
+      const friendlyError = friendlyGeminiError(lastErrorStatus, lastErrorMessage);
 
       const localReply = answerLocally(query || (image ? '成績表画像' : ''), userProfile);
       let fallbackUpdate = parseProfileUpdateFromText(localReply, !!image);

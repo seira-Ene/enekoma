@@ -260,10 +260,14 @@ export default function UnifiedAssistantPage() {
   const [profileNotification, setProfileNotification] = useState<string | null>(null);
   // ファイルの読み込み・AI解析中に画面中央に出す表示
   const [uploadBusyMessage, setUploadBusyMessage] = useState<string | null>(null);
-  const showUploadError = (message: string) => {
-    setProfileNotification(`⚠️ ${message}`);
-    setTimeout(() => setProfileNotification((current) => (current === `⚠️ ${message}` ? null : current)), 9000);
-  };
+  const showUploadError = (message: string) => setProfileNotification(`⚠️ ${message}`);
+  // 通知は出てから一定時間で消す。新しい通知が出たらタイマーを掛け直すので、前の通知のタイマーで消えない
+  useEffect(() => {
+    if (!profileNotification) return;
+    const ms = Math.min(12000, Math.max(profileNotification.startsWith('⚠️') ? 9000 : 5000, profileNotification.length * 120));
+    const timer = setTimeout(() => setProfileNotification(null), ms);
+    return () => clearTimeout(timer);
+  }, [profileNotification]);
   const [showTranscriptPasteBox, setShowTranscriptPasteBox] = useState(false);
   const [transcriptPasteText, setTranscriptPasteText] = useState('');
 
@@ -680,7 +684,6 @@ export default function UnifiedAssistantPage() {
       saveProfile(updatedProf);
       if (notifs.length > 0) {
         setProfileNotification(`✓ ${notifs.join(' ｜ ')}`);
-        setTimeout(() => setProfileNotification(null), 8000);
       }
     }
     return modified;
@@ -720,7 +723,6 @@ export default function UnifiedAssistantPage() {
     }
     setShowAuthModal(false);
     setProfileNotification(`✓ ${account.name}さん（${account.department} ${account.grade}年）としてログインしました`);
-    setTimeout(() => setProfileNotification(null), 5000);
   };
 
   const finishLogin = (acc: StudentAccount) => {
@@ -860,7 +862,6 @@ export default function UnifiedAssistantPage() {
       finishLogin(result.account);
       if (result.offline) {
         setProfileNotification('⚠️ サーバーに接続できなかったため、新しいパスワードはまだ登録されていません。今回はこれまでのパスワードでログインしました。');
-        setTimeout(() => setProfileNotification(null), 8000);
       }
     } finally {
       setIsAuthBusy(false);
@@ -1007,7 +1008,6 @@ export default function UnifiedAssistantPage() {
       } else {
         setProfileNotification(`⚠️ ${res.message || 'メールアドレスを確認できませんでした。'}`);
       }
-      setTimeout(() => setProfileNotification(null), 8000);
     })();
   }, []);
 
@@ -1089,7 +1089,6 @@ export default function UnifiedAssistantPage() {
         const applied = applyProfileUpdate(update);
         if (applied) {
           setProfileNotification(isTimetable ? '✓ 時間割を読み込み、履修中科目・今期単位数を更新しました！' : '✓ 成績通知書を読み込み、修得単位・GPAを更新しました！');
-          setTimeout(() => setProfileNotification(null), 6000);
         } else {
           showUploadError('解析結果をカルテに反映できませんでした。');
         }
@@ -1280,7 +1279,6 @@ export default function UnifiedAssistantPage() {
       handleSwitchToStudent({ ...newAcc, ...linkServerAccount(registeredAccount) });
       if (mailNotice) {
         setProfileNotification(`✓ 登録が完了しました。${mailNotice}`);
-        setTimeout(() => setProfileNotification(null), 10000);
       }
       setRegId('');
       setRegName('');
@@ -1320,7 +1318,6 @@ export default function UnifiedAssistantPage() {
       ]);
       setShowAuthModal(false);
       setProfileNotification('ログアウトしました（ゲストモード）');
-      setTimeout(() => setProfileNotification(null), 4000);
     }
   };
 
@@ -3036,7 +3033,6 @@ export default function UnifiedAssistantPage() {
                                 setShowTranscriptPasteBox(false);
                               } else {
                                 setProfileNotification('⚠️ 有効な科目名・単位数・評価を検出できませんでした。');
-                                setTimeout(() => setProfileNotification(null), 5000);
                               }
                             }}
                             className="px-3 py-1.5 bg-emerald-800 hover:bg-emerald-900 text-white rounded-md text-xs font-semibold shadow-2xs transition"

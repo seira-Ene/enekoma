@@ -16,7 +16,7 @@ import { answerTimetableQuery, buildTimetableContext } from '@/app/data/timetabl
 import { answerCurriculumLocally, buildCurriculumContext } from '@/app/data/curriculumContext';
 import { parseProfileUpdateFromText } from '@/app/data/studentAccounts';
 import { ExtractionError, ExtractionKind, extractDocument, MediaPart } from './extraction';
-import { answerFriendStatusQuery, isFriendStatusQuery, mayBeFriendStatusQuery, sanitizeSharedSchedule } from '@/app/data/friendStatus';
+import { answerFriendStatusQuery, friendQueryIntent, isFriendStatusQuery, mayBeFriendStatusQuery, sanitizeSharedSchedule } from '@/app/data/friendStatus';
 import { get_friends_current_status } from '../friends/friendStore';
 import { authenticate } from '../friends/auth';
 import { requestTime } from '../friends/requestTime';
@@ -282,7 +282,8 @@ const SYSTEM_PROMPT = `
   - 土曜日: 10:00 - 13:00
 
 【フレンド（友達）の居場所・空きコマ】
-- 友達が今どこの教室にいるか、空きコマかは、サーバーのツール get_friends_current_status の結果（ログイン中の人の承認済みフレンドの、今の曜限の授業名・教室か空きコマか）だけで答える。結果がないときは推測せず、プロフィールの「フレンド」タブでフレンドを追加して時間割を共有してもらうよう案内する。
+- 友達が今どこの教室にいるか、空きコマか、今日の予定、もう授業が終わったか、次の授業はいつか、放課後に空いているかは、サーバーのツール get_friends_current_status の結果（ログイン中の人の承認済みフレンドの、今の曜限の授業名・教室か空きコマか、今日の授業の一覧と終わる時限、次の授業の曜日・時限・教室、次の空きコマ）だけで答える。引数 intent は now・next_slot・next_class・today・finished・after_school のどれか。
+- 授業時間外でも「分かりません」で終えない。朝は「本日最初の授業は〇限から（教室）」、放課後は「本日の授業はすべて終了しています。〇〇さんは本日4限で全授業終了です。」、日曜は「本日は休日のため授業はありません。次回（月曜1限）の〇〇さんの授業は〇〇教室です。」のように、結果にある今日の予定と次の授業で答える。結果がないときは推測せず、プロフィールの「フレンド」タブでフレンドを追加して時間割を共有してもらうよう案内する。
 - 友達の成績・GPA・連絡先などは扱わない。
 `;
 
@@ -622,7 +623,13 @@ export async function POST(req: NextRequest) {
         const result = await get_friends_current_status(me, requestTime(req));
         if (isFriendStatusQuery(query, result.friends.map((f) => f.name))) {
           const myCourses = sanitizeSharedSchedule(userProfile?.enrolledCourses);
-          return NextResponse.json({ reply: answerFriendStatusQuery(query, result, myCourses), source: 'local', tool: 'get_friends_current_status' });
+          const intent = friendQueryIntent(query);
+          return NextResponse.json({
+            reply: answerFriendStatusQuery(query, result, myCourses, intent),
+            source: 'local',
+            tool: 'get_friends_current_status',
+            toolArgs: { intent }
+          });
         }
       } else if (isFriendStatusQuery(query)) {
         return NextResponse.json({

@@ -2,7 +2,7 @@
 
 // フレンド機能（フレンドコード方式）。フレンドに見せるのは名前と、今の授業（科目名・教室）か空きコマかだけ
 import { useCallback, useEffect, useState } from 'react';
-import { badgeText, type FriendCurrentStatus, type FriendSlotStatus, type CampusSlot } from '@/app/data/friendStatus';
+import { cardBadges, slotHeading, type FriendCurrentStatus, type FriendSlotStatus, type CampusSlot } from '@/app/data/friendStatus';
 import { getSessionToken, saveSessionToken } from '@/app/data/studentAccounts';
 import { callAccountApi } from '@/app/data/accountClient';
 
@@ -301,11 +301,12 @@ export default function FriendsPanel({ loginId, serverLinked, courses }: Props) 
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="font-semibold text-slate-800">フレンド（{me?.friends.length ?? 0}人）</span>
-          <span className="text-[11px] text-slate-500">{slot ? (slot.period === null ? '今は授業時間外' : `${slot.inClass ? '今' : '次'}は${slot.label}`) : ''}</span>
+          <span className="text-[11px] text-slate-500">{slot ? slotHeading(slot) : ''}</span>
         </div>
         {me && me.friends.length === 0 && <p className="text-slate-500">まだフレンドがいません。友達のフレンドコードを入力して申請してください。</p>}
         {me?.friends.map((f) => {
           const s = statusOf(f.friendCode);
+          const badges = s && slot ? cardBadges(s, slot) : null;
           return (
             <div key={f.friendCode} data-friend-card={f.name} className="p-3 rounded-lg border border-slate-200 bg-white">
               <div className="flex items-center justify-between gap-2">
@@ -321,14 +322,14 @@ export default function FriendsPanel({ loginId, serverLinked, courses }: Props) 
                   外す
                 </button>
               </div>
-              {s && (
+              {badges && (
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  <span data-status-badge className={`px-2 py-1 rounded-md border text-[11px] font-semibold ${BADGE_STYLES[s.now.kind]}`}>
-                    {badgeText(s.now)}
+                  <span data-status-badge className={`px-2 py-1 rounded-md border text-[11px] font-semibold ${BADGE_STYLES[badges.mainKind]}`}>
+                    {badges.main}
                   </span>
-                  {s.next && (
+                  {badges.sub && (
                     <span data-next-badge className="px-2 py-1 rounded-md border border-slate-200 text-[11px] text-slate-600">
-                      次 {badgeText(s.next)}
+                      {badges.sub}
                     </span>
                   )}
                 </div>

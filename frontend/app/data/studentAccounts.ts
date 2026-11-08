@@ -359,11 +359,11 @@ export function registerNewStudent(data: {
 
   let welcomeDetail = '';
   if (timetableCount > 0 && earnedCredits > 0) {
-    welcomeDetail = `\n\n【登録時に自動反映されたカルテ】\n・**今期履修中**: ${timetableCount}科目（${semCredits}単位）を登録しました。\n・**修得済み**: ${earnedCredits}単位（GPA: ${gpa.toFixed(2)}）を反映しました。`;
+    welcomeDetail = `\n\n【登録時に自動反映されたカルテ】\n・今期履修中：${timetableCount}科目（${semCredits}単位）を登録しました。\n・修得済み：${earnedCredits}単位（GPA: ${gpa.toFixed(2)}）を反映しました。`;
   } else if (timetableCount > 0) {
-    welcomeDetail = `\n\n【登録時に自動反映されたカルテ】\n・**今期履修中**: ${timetableCount}科目（${semCredits}単位）を登録しました。`;
+    welcomeDetail = `\n\n【登録時に自動反映されたカルテ】\n・今期履修中：${timetableCount}科目（${semCredits}単位）を登録しました。`;
   } else if (earnedCredits > 0) {
-    welcomeDetail = `\n\n【登録時に自動反映されたカルテ】\n・**修得済み**: ${earnedCredits}単位（GPA: ${gpa.toFixed(2)}）を反映しました。`;
+    welcomeDetail = `\n\n【登録時に自動反映されたカルテ】\n・修得済み：${earnedCredits}単位（GPA: ${gpa.toFixed(2)}）を反映しました。`;
   }
 
   const courseNotice = selectedCourses.length > 0 ? `\n・選択コース: ${selectedCourses.join(', ')}` : '';

@@ -4,7 +4,7 @@ import { keepsFacts, styleInstruction } from '@/app/data/speakingStyle';
 const STYLE_TIMEOUT_MS = 8000;
 
 /** 短い文を1つ作る（速いモデルから順に試し、すべて失敗したら null） */
-async function callGeminiText(apiKey: string, models: readonly string[], system: string, text: string): Promise<string | null> {
+async function callGeminiText(apiKey: string, models: readonly string[], system: string, text: string): Promise<{ text: string; model: string } | null> {
   const deadline = Date.now() + STYLE_TIMEOUT_MS * 2;
   for (const model of models) {
     const remaining = deadline - Date.now();
@@ -27,7 +27,7 @@ async function callGeminiText(apiKey: string, models: readonly string[], system:
         .map((p: { text?: string }) => p.text || '')
         .join('')
         .trim();
-      if (out) return out;
+      if (out) return { text: out, model };
     } catch {
       // 次のモデルを試す
     }
@@ -38,7 +38,7 @@ async function callGeminiText(apiKey: string, models: readonly string[], system:
 const BASE = 'あなたは日本大学文理学部の履修アシスタント「エネコマ」です。LINEのような自然な会話文で、記号・太字・見出しは使いません。';
 
 /** 話し方を変えたときのあいさつ（1〜2文）。作れなければ null */
-export function styleGreeting(apiKey: string, models: readonly string[], style: string): Promise<string | null> {
+export function styleGreeting(apiKey: string, models: readonly string[], style: string): Promise<{ text: string; model: string } | null> {
   return callGeminiText(
     apiKey,
     models,
@@ -58,5 +58,5 @@ export async function restyleReply(apiKey: string, models: readonly string[], st
     BASE + styleInstruction(style),
     `次の文の内容（人名・教室・曜日・時限・科目名・数字）を一つも変えず、足しも削りもせずに、話し方だけを書き換えてください。書き換えた文だけを出力してください。\n\n${reply}`
   );
-  return out && keepsFacts(reply, out, keep) ? out : reply;
+  return out && keepsFacts(reply, out.text, keep) ? out.text : reply;
 }

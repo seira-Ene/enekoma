@@ -2544,7 +2544,7 @@ export default function UnifiedAssistantPage() {
                     <span className="font-semibold text-slate-900">EneKoma</span>
                     {msg.source === 'gemini' ? (
                       <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 text-[10px] font-medium border border-slate-200">
-                        Gemini {msg.model || '1.5 Flash'}
+                        Gemini{msg.model ? ` ${msg.model}` : ''}
                       </span>
                     ) : (
                       <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 text-[10px] font-medium">

@@ -629,9 +629,10 @@ export async function POST(req: NextRequest) {
       const greeting = apiKey ? await styleGreeting(apiKey, GEMINI_MODEL_ORDER, speakingStyle) : null;
       return NextResponse.json({
         reply: greeting
-          ? sanitizeConversationalReply(greeting)
+          ? sanitizeConversationalReply(greeting.text)
           : `話し方を「${speakingStyle}」風にしますね。AI（Gemini）が答えるときにこの話し方になります。「普通の話し方に戻して」と送れば元に戻ります。`,
         source: greeting ? 'gemini' : 'local',
+        ...(greeting ? { model: greeting.model } : {}),
         speakingStyle
       });
     }

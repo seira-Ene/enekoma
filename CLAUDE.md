@@ -15,6 +15,7 @@ EneKoma(エネコマ)は、日本大学文理学部(CHS)の学生向けAIチャ�
 | 履修サポート | 重複チェック、空きコマ提案、友達との空きコマ照合、必修組み込みの時間割案、移動判定、科目・教員・教室の逆引き | `answerTimetableQuery`(`data/timetableAssistant.ts`) |
 | デザインテーマ | デフォルト・かわいい・かっこいいの切り替えと、メインの色(おすすめの色・好きな色)の選択(プロフィールの基本設定タブ) | `data/themes.ts`, `globals.css`, `layout.tsx` |
 | フレンド | フレンドコードで申請・承認、フレンドの今の曜限の授業（科目名・教室）か空きコマかを表示、共有のON/OFF、チャットで「今だれが空きコマ？」に回答 | `components/FriendsPanel.tsx`, `api/friends/`, `data/friendStatus.ts` |
+| 話し方の指定 | 「織田信長みたいに話して」「関西弁で話して」で口調を変え、「普通の話し方に戻して」かチップの✕まで続ける。事実は変えない | `data/speakingStyle.ts`, `api/chat/styleRewrite.ts` |
 | お問い合わせ・ユーザーの声 | レビュー・ご意見・質問・不具合報告の受付、管理者画面でのステータス管理と公開の切り替え、公開分を `/voices` に匿名で表示 | `components/FeedbackModal.tsx`, `components/AdminFeedbackModal.tsx`, `api/feedback/`, `api/admin/feedback/` |
 
 ## コマンド
@@ -181,6 +182,7 @@ Tailwind v4 のユーティリティは `--color-slate-900` などの変数を�
 
 - Next.jsは16系で、学習データと異なる場合がある。コードを書く前に `frontend/node_modules/next/dist/docs/` の該当ガイドを読む(`frontend/AGENTS.md`)。
 - `frontend/CLAUDE.md` と `frontend/AGENTS.md` は `next dev` が管理するブロックを含む。
+- 話し方の指定：`parseStyleRequest` が「〇〇みたいに話して」などを見分け、サーバーは `speakingStyle` を返す。端末は `localStorage` の `enekoma_speaking_style` に保存し、毎回 `speakingStyle` として送る。Geminiの回答には `styleInstruction` をシステムプロンプトに足す（口調だけ。数字・教室・科目名・人名は変えない）。フレンドの答えのような決まった文は `restyleReply` で口調だけ書き換え、数字と名前・教室・科目名が1つでも消えたら元の文を使う（`keepsFacts`）。APIキーがなければ話し方は変わらない。
 - AIの回答は、LINEのような自然な会話文にする方針。`SYSTEM_PROMPT` で記号・太字・見出し・システムタグを禁止し、`sanitizeConversationalReply` で後処理している。`answerLocally` の文言も同じ文体に揃える。
 - 校舎・自販機・施設の案内は `SYSTEM_PROMPT` と `answerLocally` の両方に書かれている。情報を更新するときは両方を直す。
 - 要覧の規則を扱うときは、必修と選択必修を区別し、令和7年度以降と令和6年度以前のカリキュラムも区別する。

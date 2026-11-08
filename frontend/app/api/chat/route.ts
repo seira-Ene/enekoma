@@ -20,6 +20,8 @@ import { answerFriendStatusQuery, friendQueryIntent, isFriendStatusQuery, mayBeF
 import { get_friends_current_status } from '../friends/friendStore';
 import { authenticate } from '../friends/auth';
 import { requestTime } from '../friends/requestTime';
+import { parseStyleRequest, sanitizeStyle, styleInstruction } from '@/app/data/speakingStyle';
+import { restyleReply, styleGreeting } from './styleRewrite';
 
 // 科目の多い成績表（複数ページのPDFなど）の読み取りは1分以上かかることがある
 export const maxDuration = 120;
@@ -390,12 +392,12 @@ function checkRequirementsLocally(profile: UserProfileData): string {
 }
 
 // ローカルエンジン（オフライン・API未設定時の高精度フォールバック・人間の自然なチャット言葉遣い）
-function answerLocally(query: string, userProfile?: UserProfileData): string {
+function answerLocally(query: string, userProfile?: UserProfileData, now: Date = new Date()): string {
   const q = query.trim();
   const qLower = q.toLowerCase();
 
   // 時間割に関する質問は実データから回答する
-  const timetableAnswer = answerTimetableQuery(q, userProfile);
+  const timetableAnswer = answerTimetableQuery(q, userProfile, now);
   if (timetableAnswer) return timetableAnswer;
 
   // 0. 必修と選択必修の違いの質問
@@ -616,6 +618,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ reply: '質問内容または画像を入力してください。' }, { status: 400 });
     }
 
+    // 話し方（「織田信長みたいに話して」）。端末に保存してもらい、元に戻すまで毎回送ってもらう
+    let speakingStyle = sanitizeStyle(body.speakingStyle);
+    const styleRequest = query && !image ? parseStyleRequest(query) : null;
+    if (styleRequest?.type === 'reset') {
+      return NextResponse.json({ reply: 'いつもの話し方に戻しますね。', source: 'local', speakingStyle: null });
+    }
+    if (styleRequest?.type === 'set') {
+      speakingStyle = styleRequest.style;
+      const greeting = apiKey ? await styleGreeting(apiKey, GEMINI_MODEL_ORDER, speakingStyle) : null;
+      return NextResponse.json({
+        reply: greeting
+          ? sanitizeConversationalReply(greeting)
+          : `話し方を「${speakingStyle}」風にしますね。AI（Gemini）が答えるときにこの話し方になります。「普通の話し方に戻して」と送れば元に戻ります。`,
+        source: greeting ? 'gemini' : 'local',
+        speakingStyle
+      });
+    }
+
     // フレンドの居場所・空きコマ（ツール get_friends_current_status の結果だけで答え、AIに推測させない）
     if (query && !image && mayBeFriendStatusQuery(query)) {
       const me = await authenticate(req, body).catch(() => null);
@@ -624,8 +644,14 @@ export async function POST(req: NextRequest) {
         if (isFriendStatusQuery(query, result.friends.map((f) => f.name))) {
           const myCourses = sanitizeSharedSchedule(userProfile?.enrolledCourses);
           const intent = friendQueryIntent(query);
+          let reply = answerFriendStatusQuery(query, result, myCourses, intent);
+          // 話し方の指定があれば口調だけ書き換える（名前・教室・科目名・数字が消えたら元の文のまま）
+          if (speakingStyle && apiKey) {
+            const keep = result.friends.flatMap((f) => [f.name, f.now.room, f.now.course, f.nextClass?.room, f.nextClass?.course].filter((x): x is string => !!x));
+            reply = sanitizeConversationalReply(await restyleReply(apiKey, GEMINI_MODEL_ORDER, speakingStyle, reply, keep));
+          }
           return NextResponse.json({
-            reply: answerFriendStatusQuery(query, result, myCourses, intent),
+            reply,
             source: 'local',
             tool: 'get_friends_current_status',
             toolArgs: { intent }
@@ -751,7 +777,7 @@ export async function POST(req: NextRequest) {
         : '';
 
       // 時間割の事実はAIに推測させず、検索した実データを渡す（画像解析では不要）
-      const timetableContext = image ? '' : buildTimetableContext(query, userProfile);
+      const timetableContext = image ? '' : buildTimetableContext(query, userProfile, requestTime(req));
       // 資格コース・教職・副専攻の質問には、要覧の表から該当部分を渡す
       const curriculumContext = image ? '' : buildCurriculumContext(query, userProfile);
       const currentTurnParts: any[] = [
@@ -833,7 +859,7 @@ export async function POST(req: NextRequest) {
       const outputLimit = isImageRequest ? 8192 : 4096;
       const geminiPayload = {
         systemInstruction: {
-          parts: [{ text: SYSTEM_PROMPT.trim() }]
+          parts: [{ text: SYSTEM_PROMPT.trim() + (speakingStyle && !isImageRequest ? styleInstruction(speakingStyle) : '') }]
         },
         contents,
         generationConfig: {
@@ -905,7 +931,7 @@ export async function POST(req: NextRequest) {
       // APIキーが設定されたがGeminiがエラーになった場合のエラーメッセージ整形
       const friendlyError = friendlyGeminiError(lastErrorStatus, lastErrorMessage);
 
-      const localReply = answerLocally(query || (image ? '成績表画像' : ''), userProfile);
+      const localReply = answerLocally(query || (image ? '成績表画像' : ''), userProfile, requestTime(req));
       let fallbackUpdate = parseProfileUpdateFromText(localReply, !!image);
       if (!fallbackUpdate && image && image.data) {
         const rawMime = (image.mimeType || '').toLowerCase();
@@ -927,7 +953,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ローカルエンジンによる即時フォールバック（公式要覧準拠）
-    const localReply = answerLocally(query || (image ? '成績表画像' : ''), userProfile);
+    const localReply = answerLocally(query || (image ? '成績表画像' : ''), userProfile, requestTime(req));
     let fallbackUpdate = parseProfileUpdateFromText(localReply, !!image);
     if (!fallbackUpdate && image && image.data) {
       const rawMime = (image.mimeType || '').toLowerCase();

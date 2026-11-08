@@ -24,7 +24,12 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: 'ステータスが正しくありません。' }, { status: 400 });
         }
         const note = typeof body.adminNote === 'string' ? body.adminNote.slice(0, 1000) : undefined;
-        const item = await updateFeedback(id, { ...(status ? { status } : {}), ...(note !== undefined ? { adminNote: note } : {}) });
+        const isPublic = typeof body.isPublic === 'boolean' ? body.isPublic : undefined;
+        const item = await updateFeedback(id, {
+          ...(status ? { status } : {}),
+          ...(note !== undefined ? { adminNote: note } : {}),
+          ...(isPublic !== undefined ? { isPublic } : {})
+        });
         if (!item) return NextResponse.json({ error: '見つかりませんでした。' }, { status: 404 });
         return NextResponse.json({ status: 'ok', item });
       }

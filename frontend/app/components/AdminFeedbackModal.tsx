@@ -24,6 +24,7 @@ interface Item {
   userAgent?: string;
   status: Status;
   adminNote?: string;
+  isPublic?: boolean;
 }
 
 const adminCode = () => sessionStorage.getItem('enekoma_admin_code') || '';
@@ -38,7 +39,7 @@ async function adminRequest(body: object) {
 
 export default function AdminFeedbackModal({ onClose, onCountChange }: { onClose: () => void; onCountChange?: (newCount: number) => void }) {
   const [items, setItems] = useState<Item[] | null>(null);
-  const [filter, setFilter] = useState<Status | 'all'>('all');
+  const [filter, setFilter] = useState<Status | 'all' | 'public'>('all');
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -75,7 +76,7 @@ export default function AdminFeedbackModal({ onClose, onCountChange }: { onClose
 
   const replaceItem = (item: Item) => setItems((list) => (list || []).map((x) => (x.id === item.id ? item : x)));
 
-  const update = async (id: string, fields: { status?: Status; adminNote?: string }) => {
+  const update = async (id: string, fields: { status?: Status; adminNote?: string; isPublic?: boolean }) => {
     setBusyId(id);
     setError(null);
     try {
@@ -102,7 +103,7 @@ export default function AdminFeedbackModal({ onClose, onCountChange }: { onClose
   };
 
   const counts = (items || []).reduce<Record<string, number>>((acc, i) => ({ ...acc, [i.status]: (acc[i.status] || 0) + 1 }), {});
-  const shown = (items || []).filter((i) => filter === 'all' || i.status === filter);
+  const shown = (items || []).filter((i) => filter === 'all' || (filter === 'public' ? i.isPublic : i.status === filter));
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="admin-feedback-title">
@@ -119,14 +120,18 @@ export default function AdminFeedbackModal({ onClose, onCountChange }: { onClose
         </div>
 
         <div className="flex flex-wrap gap-1.5 px-4 pt-3 text-[11px]">
-          {(['all', 'new', 'in_progress', 'resolved', 'wontfix'] as const).map((s) => (
+          {(['all', 'new', 'in_progress', 'resolved', 'wontfix', 'public'] as const).map((s) => (
             <button
               key={s}
               type="button"
               onClick={() => setFilter(s)}
               className={`px-2.5 py-1 rounded-full border font-semibold ${filter === s ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'}`}
             >
-              {s === 'all' ? `すべて（${items?.length ?? 0}）` : `${STATUS_LABELS[s]}（${counts[s] || 0}）`}
+              {s === 'all'
+                ? `すべて（${items?.length ?? 0}）`
+                : s === 'public'
+                  ? `公開中（${(items || []).filter((i) => i.isPublic).length}）`
+                  : `${STATUS_LABELS[s]}（${counts[s] || 0}）`}
             </button>
           ))}
         </div>
@@ -142,6 +147,7 @@ export default function AdminFeedbackModal({ onClose, onCountChange }: { onClose
                 <span className="font-bold text-slate-900">{FEEDBACK_CATEGORY_LABELS[item.category]}</span>
                 {item.rating ? <span className="text-amber-500" aria-label={`${item.rating}つ星`}>{'★'.repeat(item.rating)}<span className="text-slate-300">{'★'.repeat(5 - item.rating)}</span></span> : null}
                 <span className="text-slate-500">{jst(item.createdAt)}</span>
+                {item.isPublic && <span className="px-2 py-0.5 rounded border text-[10px] font-bold bg-sky-100 text-sky-800 border-sky-200">公開中</span>}
               </div>
               <p className="whitespace-pre-wrap break-words text-slate-800 leading-relaxed">{item.message}</p>
               <div className="flex flex-wrap gap-x-3 text-[11px] text-slate-500">
@@ -167,6 +173,19 @@ export default function AdminFeedbackModal({ onClose, onCountChange }: { onClose
                   className="flex-1 min-w-40 px-2 py-1 border border-slate-300 rounded text-xs"
                 />
                 <button type="button" disabled={busyId === item.id} onClick={() => void update(item.id, { adminNote: notes[item.id] ?? item.adminNote ?? '' })} className="px-2.5 py-1 border border-slate-300 rounded text-xs disabled:opacity-60">メモ保存</button>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={!!item.isPublic}
+                  disabled={busyId === item.id}
+                  onClick={() => {
+                    if (!item.isPublic && !confirm('「ユーザーの声」に匿名で公開します。本文に個人を特定できる内容がないか確認しましたか？')) return;
+                    void update(item.id, { isPublic: !item.isPublic });
+                  }}
+                  className={`px-2.5 py-1 rounded text-xs font-semibold border disabled:opacity-60 ${item.isPublic ? 'bg-white text-slate-700 border-slate-300' : 'bg-sky-600 text-white border-sky-600'}`}
+                >
+                  {item.isPublic ? '非公開にする' : '公開する'}
+                </button>
                 <button type="button" disabled={busyId === item.id} onClick={() => void remove(item.id)} className="px-2.5 py-1 text-rose-700 text-xs disabled:opacity-60">削除</button>
               </div>
             </div>

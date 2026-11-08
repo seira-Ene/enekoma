@@ -2182,10 +2182,10 @@ export default function UnifiedAssistantPage() {
           <a
             href="/voices"
             className="w-8 h-8 flex items-center justify-center text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-100 border border-slate-200 sm:border-transparent transition shrink-0 text-sm"
-            title="ユーザーの声・レビュー"
-            aria-label="ユーザーの声・レビュー"
+            title="よくある質問・ユーザーの声"
+            aria-label="よくある質問・ユーザーの声"
           >
-            ⭐
+            ❓
           </a>
 
           {/* お問い合わせ・フィードバック */}
@@ -2335,8 +2335,8 @@ export default function UnifiedAssistantPage() {
           href="/voices"
           className="flex items-center space-x-1 px-2.5 py-1.5 bg-white text-slate-800 border border-slate-200 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 shadow-2xs active:scale-95 transition hover:bg-slate-50"
         >
-          <span>⭐</span>
-          <span>ユーザーの声</span>
+          <span>❓</span>
+          <span>よくある質問・声</span>
         </a>
 
         {/* お問い合わせ・フィードバック（スマホではヘッダーのボタンが隠れるので、ここにも置く） */}

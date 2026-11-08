@@ -967,14 +967,21 @@ export default function UnifiedAssistantPage() {
     const params = new URLSearchParams(window.location.search);
     const reset = params.get('reset_password');
     const verify = params.get('verify_email');
-    if (!reset && !verify) return;
+    const feedback = params.get('feedback');
+    if (!reset && !verify && !feedback) return;
     // トークンを履歴やブックマークに残さない
     params.delete('reset_password');
     params.delete('verify_email');
+    params.delete('feedback');
     const rest = params.toString();
     window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}${window.location.hash}`);
 
     void (async () => {
+      // 「ユーザーの声」ページの「声を送る」から来たとき
+      if (feedback) {
+        setShowFeedbackModal(true);
+        return;
+      }
       if (reset) {
         setResetToken(reset);
         setAuthTab('reset');
@@ -2171,6 +2178,16 @@ export default function UnifiedAssistantPage() {
             👤
           </button>
 
+          {/* ユーザーの声・レビュー */}
+          <a
+            href="/voices"
+            className="w-8 h-8 flex items-center justify-center text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-100 border border-slate-200 sm:border-transparent transition shrink-0 text-sm"
+            title="ユーザーの声・レビュー"
+            aria-label="ユーザーの声・レビュー"
+          >
+            ⭐
+          </a>
+
           {/* お問い合わせ・フィードバック */}
           <button
             onClick={() => setShowFeedbackModal(true)}
@@ -2312,6 +2329,15 @@ export default function UnifiedAssistantPage() {
           <span>📋</span>
           <span>『学部要覧』早見表</span>
         </button>
+
+        {/* ユーザーの声・レビュー */}
+        <a
+          href="/voices"
+          className="flex items-center space-x-1 px-2.5 py-1.5 bg-white text-slate-800 border border-slate-200 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 shadow-2xs active:scale-95 transition hover:bg-slate-50"
+        >
+          <span>⭐</span>
+          <span>ユーザーの声</span>
+        </a>
 
         {/* お問い合わせ・フィードバック（スマホではヘッダーのボタンが隠れるので、ここにも置く） */}
         <button

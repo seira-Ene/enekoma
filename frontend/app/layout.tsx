@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, M_PLUS_Rounded_1c, Zen_Kaku_Gothic_New } from "next/font/google";
 import { DEFAULT_THEME, THEME_INIT_SCRIPT } from "./data/themes";
+import { SITE_DESCRIPTION, SITE_KEYWORDS, SITE_NAME, SITE_TITLE, siteUrl } from "./siteConfig";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -28,9 +29,28 @@ const sharpFont = Zen_Kaku_Gothic_New({
   preload: false,
 });
 
+// 検索結果とSNSシェアに出す情報。og:image は app/opengraph-image.png から自動で入る
 export const metadata: Metadata = {
-  title: "EneKoma (エネコマ) - スマート時間割＆教室ナビ",
-  description: "大学生のためのスマホ対応PWA時間割アプリ。教室番号から建物の場所や詳細メモを即座に表示！",
+  metadataBase: new URL(siteUrl()),
+  title: { default: SITE_TITLE, template: `%s｜${SITE_NAME}` },
+  description: SITE_DESCRIPTION,
+  keywords: SITE_KEYWORDS,
+  applicationName: SITE_NAME,
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    locale: "ja_JP",
+    url: "/",
+    siteName: SITE_NAME,
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+  },
+  robots: { index: true, follow: true },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -63,6 +83,24 @@ export default function RootLayout({
       <head>
         {/* 保存したテーマを最初の描画より前に適用する（再読み込み時に一瞬デフォルト色が出ないように） */}
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        {/* 検索エンジン向けの構造化データ */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "WebApplication",
+              name: SITE_NAME,
+              url: siteUrl(),
+              description: SITE_DESCRIPTION,
+              applicationCategory: "EducationalApplication",
+              operatingSystem: "Web",
+              inLanguage: "ja",
+              offers: { "@type": "Offer", price: "0", priceCurrency: "JPY" },
+              audience: { "@type": "EducationalAudience", educationalRole: "student" },
+            }),
+          }}
+        />
       </head>
       <body className="h-full flex flex-col overscroll-none select-text">{children}</body>
     </html>

@@ -19,13 +19,26 @@ export interface FeedbackItem {
   userAgent?: string;       // 不具合の調査用
   status: FeedbackStatus;
   adminNote?: string;
+  // 管理者が公開を許可したものだけ「ユーザーの声」に表示する（既定は非公開）
+  isPublic?: boolean;
   updatedAt?: string;
+}
+
+// 「ユーザーの声」に出す形。個人情報（メール・ログインID・端末情報・管理メモ）は含めない
+export interface PublicFeedback {
+  id: string;
+  date: string;             // 投稿日（日本時間・日付のみ）
+  category: FeedbackCategory;
+  rating?: number;
+  message: string;
 }
 
 export class FeedbackStorageUnavailableError extends Error {}
 
 const MAX_ITEMS = 500;
-const memory = new Map<string, FeedbackItem>();
+// ローカル開発用のメモリ保存。ページ（/voices）とAPIは別々に読み込まれるので、globalThis で共有する
+const globalStore = globalThis as unknown as { __enekomaFeedbackMemory?: Map<string, FeedbackItem> };
+const memory = (globalStore.__enekomaFeedbackMemory ??= new Map<string, FeedbackItem>());
 const hashKey = () => `enekoma:feedback:${deploymentEnv()}`;
 const orderKey = () => `enekoma:feedback:${deploymentEnv()}:order`;
 
@@ -84,7 +97,7 @@ export async function listFeedback(): Promise<FeedbackItem[]> {
   });
 }
 
-export async function updateFeedback(id: string, fields: { status?: FeedbackStatus; adminNote?: string }): Promise<FeedbackItem | null> {
+export async function updateFeedback(id: string, fields: { status?: FeedbackStatus; adminNote?: string; isPublic?: boolean }): Promise<FeedbackItem | null> {
   const b = backend();
   const current = b.kind === 'memory'
     ? memory.get(id) || null
@@ -106,4 +119,27 @@ export async function deleteFeedback(id: string): Promise<boolean> {
 
 export function clearFeedbackForTests() {
   memory.clear();
+}
+
+/** 本文に書かれたメールアドレス・電話番号・学籍番号などの長い数字を伏せる */
+export function anonymizeText(text: string): string {
+  return text
+    .replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, '（メールアドレス）')
+    .replace(/0\d{1,4}[-ー－]?\d{1,4}[-ー－]?\d{3,4}/g, '（電話番号）')
+    .replace(/\d{7,}/g, '（番号）');
+}
+
+/** 公開を許可されたものだけを、個人情報を除いて新しい順に返す */
+export async function listPublicFeedback(limit = 100): Promise<PublicFeedback[]> {
+  const items = await listFeedback();
+  return items
+    .filter((i) => i.isPublic)
+    .slice(0, limit)
+    .map((i) => ({
+      id: i.id,
+      date: new Date(new Date(i.createdAt).getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10),
+      category: i.category,
+      ...(i.category === 'review' && i.rating ? { rating: i.rating } : {}),
+      message: anonymizeText(i.message)
+    }));
 }

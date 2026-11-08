@@ -79,6 +79,9 @@ export default function FeedbackModal({ onClose, loginId, defaultEmail }: { onCl
           </div>
         ) : (
           <form onSubmit={submit} className="p-4 space-y-3 overflow-y-auto text-xs">
+            <a href="/voices" className="block text-right text-[11px] text-slate-600 underline underline-offset-2 hover:text-slate-900">
+              ⭐ ほかの人の声・レビューを見る
+            </a>
             <div role="radiogroup" aria-label="種類" className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
               {(Object.keys(FEEDBACK_CATEGORY_LABELS) as Category[]).map((c) => (
                 <button
@@ -133,7 +136,7 @@ export default function FeedbackModal({ onClose, loginId, defaultEmail }: { onCl
             {/* 自動送信よけ。画面には表示しない */}
             <input type="text" value={website} onChange={(e) => setWebsite(e.target.value)} tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />
 
-            <p className="text-[10px] text-slate-500 leading-relaxed">成績や時間割などのカルテの内容は送られません。パスワードは書かないでください。</p>
+            <p className="text-[10px] text-slate-500 leading-relaxed">成績や時間割などのカルテの内容は送られません。パスワードは書かないでください。いただいた声は、運営が確認したうえで名前やメールアドレスを伏せて「ユーザーの声」に掲載することがあります。</p>
             {error && <div className="p-2 rounded bg-rose-50 border border-rose-200 text-rose-700">{error}</div>}
             <button type="submit" disabled={sending} className="w-full py-2 bg-slate-900 text-white rounded-md text-xs font-medium disabled:opacity-60">
               {sending ? '送信中…' : '送信する'}

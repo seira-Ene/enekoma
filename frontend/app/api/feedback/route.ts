@@ -2,7 +2,7 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { checkEmailAddress } from '@/app/data/emailAddress';
 import { allowAttempt, StorageUnavailableError } from '../account/accountStore';
-import { addFeedback, FEEDBACK_CATEGORIES, FeedbackCategory, FeedbackItem, FeedbackStorageUnavailableError } from './feedbackStore';
+import { addFeedback, FEEDBACK_CATEGORIES, FeedbackCategory, FeedbackItem, FeedbackStorageUnavailableError, listPublicFeedback } from './feedbackStore';
 import { notifyAdminOfFeedback } from './notify';
 
 // 管理者への通知メールは、応答を返したあとに送る（送信の遅れや失敗で、保存や完了表示を止めない）
@@ -19,6 +19,16 @@ const MESSAGE_MIN = 5;
 const MESSAGE_MAX = 2000;
 
 const fail = (status: number, error: string, message: string) => NextResponse.json({ ok: false, error, message }, { status });
+
+// 「ユーザーの声」：管理者が公開を許可したものだけを、個人情報を除いて返す
+export async function GET() {
+  try {
+    return NextResponse.json({ ok: true, items: await listPublicFeedback() });
+  } catch (error) {
+    if (!(error instanceof FeedbackStorageUnavailableError)) console.error('Public feedback error:', error);
+    return NextResponse.json({ ok: false, items: [] }, { status: 503 });
+  }
+}
 
 export async function POST(request: NextRequest) {
   let body: Record<string, unknown>;

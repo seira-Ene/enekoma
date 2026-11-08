@@ -13,7 +13,7 @@ import {
   setRemove,
   sharesSchedule
 } from '../account/accountStore';
-import { campusSlotAt, friendStatusAt, FriendsStatusResult, SharedCourse } from '@/app/data/friendStatus';
+import { campusSlotAt, comparePresence, friendStatusAt, FriendsStatusResult, presenceAt, SharedCourse } from '@/app/data/friendStatus';
 
 export type FriendshipStatus = 'pending' | 'accepted';
 
@@ -131,6 +131,32 @@ export async function deleteSharedSchedule(loginId: string) {
   await kvDel(scheduleKey(loginId));
 }
 
+// ---- オンライン状態（共有をONにしている人だけ保存する） ----
+const presenceKey = (loginId: string) => `presence:${id(loginId)}`;
+const PRESENCE_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+export async function touchPresence(loginId: string, now: Date = new Date()) {
+  await kvSet(presenceKey(loginId), JSON.stringify({ lastSeenAt: now.toISOString() }), { ttlSeconds: PRESENCE_TTL_SECONDS });
+}
+
+/** アプリを閉じた・ログアウトした */
+export async function markOffline(loginId: string, now: Date = new Date()) {
+  await kvSet(presenceKey(loginId), JSON.stringify({ lastSeenAt: now.toISOString(), offline: true }), { ttlSeconds: PRESENCE_TTL_SECONDS });
+}
+
+export async function deletePresence(loginId: string) {
+  await kvDel(presenceKey(loginId));
+}
+
+async function getPresence(loginId: string): Promise<{ lastSeenAt: string; offline?: boolean } | null> {
+  const raw = await kvGet(presenceKey(loginId));
+  try {
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getSharedSchedule(loginId: string): Promise<SharedCourse[] | null> {
   const raw = await kvGet(scheduleKey(loginId));
   return raw ? (JSON.parse(raw).courses as SharedCourse[]) : null;
@@ -144,7 +170,10 @@ export async function get_friends_current_status(meLoginId: string, now: Date = 
   const slot = campusSlotAt(now);
   const friends = await views(await setMembers(friendsKey(meLoginId)));
   const statuses = await Promise.all(
-    friends.map(async (f) => friendStatusAt({ name: f.name, friendCode: f.friendCode, share: f.share, courses: f.share ? await getSharedSchedule(f.loginId) : null }, slot))
+    friends.map(async (f) => {
+      const [courses, presence] = f.share ? await Promise.all([getSharedSchedule(f.loginId), getPresence(f.loginId)]) : [null, null];
+      return friendStatusAt({ name: f.name, friendCode: f.friendCode, share: f.share, courses, presence: f.share ? presenceAt(presence, now) : null }, slot);
+    })
   );
-  return { slot, friends: statuses };
+  return { slot, friends: statuses.sort(comparePresence) };
 }

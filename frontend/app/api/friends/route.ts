@@ -12,7 +12,10 @@ import {
 } from '../account/accountStore';
 import { sanitizeSharedSchedule } from '@/app/data/friendStatus';
 import {
+  deletePresence,
   deleteSharedSchedule,
+  markOffline,
+  touchPresence,
   get_friends_current_status,
   listFriends,
   removeFriendship,
@@ -42,7 +45,18 @@ async function handle(request: NextRequest, body: Record<string, unknown>) {
   const account = await getAccount(me);
   if (!account) return fail(401, 'unauthorized', 'アカウントが見つかりませんでした。もう一度ログインしてください。');
 
+  // アプリを開いている印（オンライン状態）。共有をOFFにしている人は保存しない
+  const now = requestTime(request);
+  if (body.action !== 'offline' && sharesSchedule(account)) await touchPresence(me, now);
+
   switch (body.action) {
+    case 'heartbeat':
+      return NextResponse.json({ ok: true });
+
+    case 'offline':
+      if (sharesSchedule(account)) await markOffline(me, now);
+      return NextResponse.json({ ok: true });
+
     case 'me': {
       const friendCode = await ensureFriendCode(me);
       return NextResponse.json({ ok: true, name: account.name, friendCode, shareScheduleStatus: sharesSchedule(account), ...(await listFriends(me)) });
@@ -62,8 +76,11 @@ async function handle(request: NextRequest, body: Record<string, unknown>) {
     case 'set_sharing': {
       const share = body.share === true;
       await setShareScheduleStatus(me, share);
-      if (!share) await deleteSharedSchedule(me);
-      else if (Array.isArray(body.courses)) await saveSharedSchedule(me, sanitizeSharedSchedule(body.courses));
+      if (!share) await Promise.all([deleteSharedSchedule(me), deletePresence(me)]);
+      else {
+        await touchPresence(me, now);
+        if (Array.isArray(body.courses)) await saveSharedSchedule(me, sanitizeSharedSchedule(body.courses));
+      }
       return NextResponse.json({ ok: true, shareScheduleStatus: share });
     }
 
@@ -90,7 +107,7 @@ async function handle(request: NextRequest, body: Record<string, unknown>) {
     }
 
     case 'status': {
-      const result = await get_friends_current_status(me, requestTime(request));
+      const result = await get_friends_current_status(me, now);
       return NextResponse.json({ ok: true, ...result });
     }
 

@@ -112,9 +112,52 @@ export interface FriendDaySummary {
   state: 'no_classes' | 'before' | 'during' | 'finished';
 }
 
+/**
+ * オンライン状態。アプリを開いている間は1分ごとに知らせ、3分以上知らせがなければオフライン。
+ * 共有をOFFにしている人は null（見せない）
+ */
+export interface FriendPresence {
+  online: boolean;
+  // 最後にアプリを開いていた時刻と、何分前か（サーバーの時刻で計算する）
+  lastSeenAt: string | null;
+  minutesAgo: number | null;
+}
+
+export const ONLINE_WINDOW_MS = 3 * 60 * 1000;
+
+/** サーバーに保存した最後の知らせから、今のオンライン状態を決める */
+export function presenceAt(raw: { lastSeenAt: string; offline?: boolean } | null, now: Date): FriendPresence {
+  const seen = raw ? new Date(raw.lastSeenAt).getTime() : NaN;
+  if (!raw || Number.isNaN(seen)) return { online: false, lastSeenAt: null, minutesAgo: null };
+  const ago = Math.max(0, now.getTime() - seen);
+  return { online: !raw.offline && ago < ONLINE_WINDOW_MS, lastSeenAt: raw.lastSeenAt, minutesAgo: Math.floor(ago / 60000) };
+}
+
+/** 「オンライン」「オフライン（5分前）」「オフライン」 */
+export function presenceLabel(p: FriendPresence | null | undefined): string {
+  if (!p) return '';
+  if (p.online) return 'オンライン';
+  if (p.minutesAgo === null) return 'オフライン';
+  const m = p.minutesAgo;
+  const ago = m < 1 ? 'たった今' : m < 60 ? `${m}分前` : m < 60 * 24 ? `${Math.floor(m / 60)}時間前` : `${Math.floor(m / 1440)}日前`;
+  return `オフライン（${ago}）`;
+}
+
+/** 一覧の並び：オンラインの人 → 最近までいた人 → 一度も来ていない・非公開の人（同じなら名前順） */
+export function comparePresence(a: { name: string; presence?: FriendPresence | null }, b: { name: string; presence?: FriendPresence | null }): number {
+  const rank = (p?: FriendPresence | null) => (p?.online ? 0 : p?.minutesAgo != null ? 1 : 2);
+  const r = rank(a.presence) - rank(b.presence);
+  if (r) return r;
+  const am = a.presence?.minutesAgo ?? Infinity;
+  const bm = b.presence?.minutesAgo ?? Infinity;
+  if (am !== bm) return am - bm;
+  return a.name.localeCompare(b.name, 'ja');
+}
+
 export interface FriendCurrentStatus {
   name: string;
   friendCode: string;
+  presence: FriendPresence | null;
   now: FriendSlotStatus;
   next: FriendSlotStatus | null;
   today: FriendDaySummary | null;
@@ -157,10 +200,10 @@ function findNextClass(courses: SharedCourse[], today: string, fromPeriod: numbe
 
 /** 1人分の今・次のコマ・今日の予定・次の授業。共有を止めている人は「非公開」、時間割を送っていない人は「時間割未登録」 */
 export function friendStatusAt(
-  friend: { name: string; friendCode: string; share: boolean; courses: SharedCourse[] | null },
+  friend: { name: string; friendCode: string; share: boolean; courses: SharedCourse[] | null; presence?: FriendPresence | null },
   slot: CampusSlot
 ): FriendCurrentStatus {
-  const base = { name: friend.name, friendCode: friend.friendCode, today: null, nextClass: null, nextFree: null };
+  const base = { name: friend.name, friendCode: friend.friendCode, presence: friend.share ? friend.presence ?? null : null, today: null, nextClass: null, nextFree: null };
   if (!friend.share) return { ...base, now: { kind: 'private', slot: slot.label }, next: null };
   if (!friend.courses || friend.courses.length === 0) return { ...base, now: { kind: 'unregistered', slot: slot.label }, next: null };
   const courses = friend.courses;

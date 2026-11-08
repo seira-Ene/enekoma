@@ -44,6 +44,8 @@ import {
 } from '@/app/data/studentAccounts';
 import { callAccountApi, isServerUnavailable } from '@/app/data/accountClient';
 import { checkEmailAddress, UNIVERSITY_EMAIL_DOMAIN } from '@/app/data/emailAddress';
+import FeedbackModal from '@/app/components/FeedbackModal';
+import AdminFeedbackModal from '@/app/components/AdminFeedbackModal';
 import { prepareFileForUpload } from '@/app/data/imageUpload';
 import { THEMES, ThemeId, applyTheme, readStoredTheme, saveTheme } from '@/app/data/themes';
 import { calculateGpa, isEarnedGrade, isFailingGrade, isSameCourseName, normalizeGrade, resolveRetakes, sumEarnedCredits, toCourseRecord } from '@/app/data/courseGrades';
@@ -301,6 +303,10 @@ export default function UnifiedAssistantPage() {
   // 管理者およびシステムメンテナンス状態
   const [maintenanceConfig, setMaintenanceConfig] = useState<MaintenanceConfig | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  // お問い合わせ・フィードバック
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [showAdminFeedback, setShowAdminFeedback] = useState(false);
+  const [feedbackNewCount, setFeedbackNewCount] = useState(0);
   // 管理者用：メール送信の記録
   const [showMailLogModal, setShowMailLogModal] = useState(false);
   const [mailLogEntries, setMailLogEntries] = useState<MailLogView[] | null>(null);
@@ -736,6 +742,24 @@ export default function UnifiedAssistantPage() {
     if (isServerUnavailable(res)) return { account: local, offline: true };
     return { error: res.message || 'サーバーに登録できませんでした。' };
   };
+
+  // 管理者モードのとき、お問い合わせの未対応件数を管理者バーに出す
+  useEffect(() => {
+    if (!isAdmin) return;
+    void (async () => {
+      try {
+        const res = await fetch('/api/admin/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ adminCode: sessionStorage.getItem('enekoma_admin_code') || '', action: 'list' })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && Array.isArray(data.items)) setFeedbackNewCount(data.items.filter((i: { status: string }) => i.status === 'new').length);
+      } catch {
+        // 件数が出ないだけなので無視する
+      }
+    })();
+  }, [isAdmin]);
 
   // 管理者用：メール送信の記録を読み込む
   const loadMailLog = async () => {
@@ -2002,6 +2026,13 @@ export default function UnifiedAssistantPage() {
           <div className="flex items-center space-x-2">
             <button
               type="button"
+              onClick={() => setShowAdminFeedback(true)}
+              className="px-2.5 py-1 bg-white text-slate-900 rounded font-bold hover:bg-slate-100 transition shadow-2xs text-xs cursor-pointer"
+            >
+              💬 お問い合わせ{feedbackNewCount > 0 ? `（未対応${feedbackNewCount}）` : ''}
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 setShowMailLogModal(true);
                 void loadMailLog();
@@ -2140,6 +2171,16 @@ export default function UnifiedAssistantPage() {
             👤
           </button>
 
+          {/* お問い合わせ・フィードバック */}
+          <button
+            onClick={() => setShowFeedbackModal(true)}
+            className="w-8 h-8 flex items-center justify-center text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-100 border border-slate-200 sm:border-transparent transition shrink-0 text-sm"
+            title="お問い合わせ・フィードバック"
+            aria-label="お問い合わせ・フィードバック"
+          >
+            💬
+          </button>
+
           {/* 要覧早見表 */}
           <button
             onClick={() => setShowDrawer(true)}
@@ -2270,6 +2311,15 @@ export default function UnifiedAssistantPage() {
         >
           <span>📋</span>
           <span>『学部要覧』早見表</span>
+        </button>
+
+        {/* お問い合わせ・フィードバック（スマホではヘッダーのボタンが隠れるので、ここにも置く） */}
+        <button
+          onClick={() => setShowFeedbackModal(true)}
+          className="flex items-center space-x-1 px-2.5 py-1.5 bg-white text-slate-800 border border-slate-200 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 shadow-2xs active:scale-95 transition hover:bg-slate-50"
+        >
+          <span>💬</span>
+          <span>お問い合わせ・フィードバック</span>
         </button>
 
         {/* 6. システムメンテナンス管理設定 */}
@@ -4936,6 +4986,18 @@ export default function UnifiedAssistantPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* お問い合わせ・フィードバック */}
+      {showFeedbackModal && (
+        <FeedbackModal
+          onClose={() => setShowFeedbackModal(false)}
+          loginId={currentStudent && !isDemoAccountId(currentStudent.id) ? currentStudent.id : undefined}
+          defaultEmail={currentStudent?.email}
+        />
+      )}
+      {isAdmin && showAdminFeedback && (
+        <AdminFeedbackModal onClose={() => setShowAdminFeedback(false)} onCountChange={setFeedbackNewCount} />
       )}
 
       {/* 管理者用：メール送信ログ（直近50件・7日間） */}

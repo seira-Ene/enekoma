@@ -554,7 +554,18 @@ function finalizeTranscriptUpdate(parsed: any) {
 }
 
 // テキスト・OCR出力からのプロフィール更新JSON抽出ユーティリティ（クライアント・サーバー両用）
-export function parseProfileUpdateFromText(text: string, isImage: boolean = false): any {
+/** 貼り付けた表らしいテキストか（タブ区切り、または3行以上） */
+export function looksLikePastedTable(text: string): boolean {
+  return text.includes('\t') || text.split(/\r?\n/).filter((l) => l.trim()).length >= 3;
+}
+
+/**
+ * profile_update のJSONブロックを読み取る。
+ * heuristics が true のときだけ、JSONがなくても成績表・時間割らしいテキストから科目を推定する。
+ * 普通のチャットの文（「GPA」「2限」などを含む）でプロフィールを書き換えないよう、既定ではファイルを添付したときだけにする。
+ */
+export function parseProfileUpdateFromText(text: string, isImage: boolean = false, options: { heuristics?: boolean } = {}): any {
+  const heuristics = options.heuristics ?? isImage;
   if (!text) return null;
 
   // 1. ```profile_update ... ```
@@ -583,6 +594,8 @@ export function parseProfileUpdateFromText(text: string, isImage: boolean = fals
       return finalizeTranscriptUpdate(parsed);
     }
   }
+
+  if (!heuristics) return null;
 
   // 4. 成績通知書のテキスト解析救済（タブ区切り「科目名\t単位数\t評価」、CSV、スペース区切り、マークダウン表など）
   const isTranscriptContext = isImage ||

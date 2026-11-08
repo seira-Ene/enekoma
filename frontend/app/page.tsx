@@ -39,6 +39,7 @@ import {
   PASSWORD_MIN_LENGTH,
   registerNewStudent,
   parseProfileUpdateFromText,
+  looksLikePastedTable,
   extractCompletedCoursesFromText
 } from '@/app/data/studentAccounts';
 import { callAccountApi, isServerUnavailable } from '@/app/data/accountClient';
@@ -1467,7 +1468,8 @@ export default function UnifiedAssistantPage() {
 
       // ユーザー入力テキスト自体からの直接抽出（コピペした「科目名\t単位数\t評価」や時間割）
       if (!updatedViaProfile) {
-        const directTextUpdate = parseProfileUpdateFromText(text, !!currentFile);
+        // 質問文からの推定は、ファイル添付か、表を貼り付けたときだけ（「GPA3.0に届くには？」などで書き換えない）
+        const directTextUpdate = parseProfileUpdateFromText(text, !!currentFile, { heuristics: !!currentFile || looksLikePastedTable(text) });
         if (directTextUpdate) {
           updatedViaProfile = applyProfileUpdate(directTextUpdate);
         }
@@ -2920,7 +2922,7 @@ export default function UnifiedAssistantPage() {
                             type="button"
                             onClick={() => {
                               if (!transcriptPasteText.trim()) return;
-                              const update = parseProfileUpdateFromText(transcriptPasteText.trim(), false);
+                              const update = parseProfileUpdateFromText(transcriptPasteText.trim(), false, { heuristics: true });
                               if (update && Array.isArray(update.completedCourses) && update.completedCourses.length > 0) {
                                 applyProfileUpdate(update);
                                 setTranscriptPasteText('');

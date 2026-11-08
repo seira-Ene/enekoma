@@ -42,11 +42,14 @@ import {
   registerNewStudent,
   parseProfileUpdateFromText,
   looksLikePastedTable,
-  extractCompletedCoursesFromText
+  extractCompletedCoursesFromText,
+  getSessionToken,
+  saveSessionToken
 } from '@/app/data/studentAccounts';
 import { callAccountApi, isServerUnavailable } from '@/app/data/accountClient';
 import { checkEmailAddress, UNIVERSITY_EMAIL_DOMAIN } from '@/app/data/emailAddress';
 import FeedbackModal from '@/app/components/FeedbackModal';
+import FriendsPanel, { syncSharedSchedule } from '@/app/components/FriendsPanel';
 import AdminFeedbackModal from '@/app/components/AdminFeedbackModal';
 import { UPLOAD_ACCEPT, describeAnalysisFailure, prepareFileForUpload } from '@/app/data/imageUpload';
 import {
@@ -265,7 +268,7 @@ export default function UnifiedAssistantPage() {
     saveAccent(next);
   };
   const [showProfileModal, setShowProfileModal] = useState(false);
-  const [profileTab, setProfileTab] = useState<'timetable' | 'completed' | 'reqCourses' | 'basic' | 'courses' | 'minors'>('timetable');
+  const [profileTab, setProfileTab] = useState<'timetable' | 'completed' | 'reqCourses' | 'basic' | 'courses' | 'minors' | 'friends'>('timetable');
   const [reqCourseFilter, setReqCourseFilter] = useState<'all' | 'compulsory' | 'elective'>('all');
   const [profileNotification, setProfileNotification] = useState<string | null>(null);
   // ファイルの読み込み・AI解析中に画面中央に出す表示
@@ -751,11 +754,17 @@ export default function UnifiedAssistantPage() {
     const res = await callAccountApi('register', {
       loginId: local.id, password, name: local.name, department: local.department, grade: local.grade, admissionYear: local.admissionYear
     });
-    if (res.ok && res.account) return { account: linkServerAccount(res.account) };
+    if (res.ok && res.account) {
+      if (res.sessionToken) saveSessionToken(res.account.loginId, res.sessionToken, keepLoggedIn);
+      return { account: linkServerAccount(res.account) };
+    }
     if (res.error === 'id_taken') {
       // 別の端末で先に登録していた場合は、同じパスワードならそのまま紐付ける
       const login = await callAccountApi('login', { loginId: local.id, password });
-      if (login.ok && login.account) return { account: linkServerAccount(login.account) };
+      if (login.ok && login.account) {
+        if (login.sessionToken) saveSessionToken(login.account.loginId, login.sessionToken, keepLoggedIn);
+        return { account: linkServerAccount(login.account) };
+      }
       return { error: 'このIDは別の端末でサーバーに登録済みで、パスワードが違います。そのときのパスワードでログインするか、「パスワード・IDを忘れた方」から再設定してください。' };
     }
     if (isServerUnavailable(res)) return { account: local, offline: true };
@@ -843,6 +852,7 @@ export default function UnifiedAssistantPage() {
 
       const res = await callAccountApi('login', { loginId: id, password: loginPassword });
       if (res.ok && res.account) {
+        if (res.sessionToken) saveSessionToken(res.account.loginId, res.sessionToken, keepLoggedIn);
         finishLogin(linkServerAccount(res.account));
         return;
       }
@@ -1183,6 +1193,7 @@ export default function UnifiedAssistantPage() {
         return;
       }
       const registeredAccount = serverRes.account;
+      if (serverRes.sessionToken) saveSessionToken(registeredAccount.loginId, serverRes.sessionToken, false);
       const mailNotice = regEmail.trim()
         ? serverRes.verificationSent
           ? `${regEmail.trim()}に確認メールを送りました。リンクを開くと、パスワードを忘れたときに使えるようになります。`
@@ -1493,6 +1504,7 @@ export default function UnifiedAssistantPage() {
           ...(currentFile && !text && finalImageType !== 'auto' && currentFile.fileType !== 'csv' && currentFile.fileType !== 'document'
             ? { extract: finalImageType }
             : {}),
+          sessionToken: currentStudent ? getSessionToken(currentStudent.id) : null,
           userProfile
         })
       });
@@ -1950,6 +1962,17 @@ export default function UnifiedAssistantPage() {
       completedCourses: updated
     });
   };
+
+  // フレンドに見せる時間割（曜日・時限・科目名・教室だけ）を送る。共有をOFFにしていればサーバーは保存しない
+  const currentStudentId = currentStudent?.id;
+  const currentStudentLinked = !!currentStudent?.serverLinked;
+  useEffect(() => {
+    if (!currentStudentId || !currentStudentLinked) return;
+    const token = getSessionToken(currentStudentId);
+    if (!token) return;
+    const timer = setTimeout(() => void syncSharedSchedule(token, userProfile.enrolledCourses), 1500);
+    return () => clearTimeout(timer);
+  }, [currentStudentId, currentStudentLinked, userProfile.enrolledCourses]);
 
   const liveDeficiency = analyzeAcademicDeficiency(userProfile);
   const liveDeptData = GAKUBU_YORAN_DEPARTMENTS[userProfile.department] || GAKUBU_YORAN_DEPARTMENTS['情報科学科'];
@@ -2780,14 +2803,15 @@ export default function UnifiedAssistantPage() {
             </div>
 
             {/* タブ切り替え（縮めず、横スクロールなしで全タブを常に表示する） */}
-            <div role="tablist" aria-label="学生履修プロフィールの項目" className="shrink-0 grid grid-cols-3 sm:grid-cols-6 border-b border-slate-200 bg-slate-50">
+            <div role="tablist" aria-label="学生履修プロフィールの項目" className="shrink-0 grid grid-cols-4 sm:grid-cols-7 border-b border-slate-200 bg-slate-50">
               {[
                 { id: 'timetable', label: '📅 今期履修中', detail: `${userProfile.semesterCredits}単位` },
                 { id: 'completed', label: '📜 修得済み科目', detail: `${userProfile.completedCourses.length}件` },
                 { id: 'reqCourses', label: '📌 学科必修​チェック', detail: liveDeficiency.missingMajorReqs.length === 0 ? '完修' : `残${liveDeficiency.missingMajorReqs.length}` },
                 { id: 'basic', label: '⚙️ 基本設定・GPA', detail: `${THEMES.find((t) => t.id === theme)?.label ?? ''}${accent ? `・${accentLabel(accent)}` : ''}` },
                 { id: 'courses', label: '🏅 資格コース' },
-                { id: 'minors', label: '🌐 副専攻', detail: '24種' }
+                { id: 'minors', label: '🌐 副専攻', detail: '24種' },
+                { id: 'friends', label: '👥 フレンド', detail: '空きコマ共有' }
               ].map((tab) => (
                 <button
                   key={tab.id}
@@ -3349,6 +3373,14 @@ export default function UnifiedAssistantPage() {
               })()}
 
               {/* TAB 4: 基本情報・GPA目標 */}
+              {profileTab === 'friends' && (
+                currentStudent ? (
+                  <FriendsPanel loginId={currentStudent.id} serverLinked={!!currentStudent.serverLinked} courses={userProfile.enrolledCourses} />
+                ) : (
+                  <p className="text-xs text-slate-600">フレンド機能を使うには、ログインしてください。</p>
+                )
+              )}
+
               {profileTab === 'basic' && (
                 <div className="space-y-4">
                   {/* デザインテーマ */}

@@ -16,6 +16,10 @@ import { answerTimetableQuery, buildTimetableContext } from '@/app/data/timetabl
 import { answerCurriculumLocally, buildCurriculumContext } from '@/app/data/curriculumContext';
 import { parseProfileUpdateFromText } from '@/app/data/studentAccounts';
 import { ExtractionError, ExtractionKind, extractDocument, MediaPart } from './extraction';
+import { answerFriendStatusQuery, isFriendStatusQuery, mayBeFriendStatusQuery, sanitizeSharedSchedule } from '@/app/data/friendStatus';
+import { get_friends_current_status } from '../friends/friendStore';
+import { authenticate } from '../friends/auth';
+import { requestTime } from '../friends/requestTime';
 
 // 科目の多い成績表（複数ページのPDFなど）の読み取りは1分以上かかることがある
 export const maxDuration = 120;
@@ -276,6 +280,10 @@ const SYSTEM_PROMPT = `
 - **資料館**:
   - 月〜金（平日）: 10:00 - 17:00
   - 土曜日: 10:00 - 13:00
+
+【フレンド（友達）の居場所・空きコマ】
+- 友達が今どこの教室にいるか、空きコマかは、サーバーのツール get_friends_current_status の結果（ログイン中の人の承認済みフレンドの、今の曜限の授業名・教室か空きコマか）だけで答える。結果がないときは推測せず、プロフィールの「フレンド」タブでフレンドを追加して時間割を共有してもらうよう案内する。
+- 友達の成績・GPA・連絡先などは扱わない。
 `;
 
 // 速いモデルから順に試す
@@ -605,6 +613,23 @@ export async function POST(req: NextRequest) {
 
     if (!query && !image) {
       return NextResponse.json({ reply: '質問内容または画像を入力してください。' }, { status: 400 });
+    }
+
+    // フレンドの居場所・空きコマ（ツール get_friends_current_status の結果だけで答え、AIに推測させない）
+    if (query && !image && mayBeFriendStatusQuery(query)) {
+      const me = await authenticate(req, body).catch(() => null);
+      if (me) {
+        const result = await get_friends_current_status(me, requestTime(req));
+        if (isFriendStatusQuery(query, result.friends.map((f) => f.name))) {
+          const myCourses = sanitizeSharedSchedule(userProfile?.enrolledCourses);
+          return NextResponse.json({ reply: answerFriendStatusQuery(query, result, myCourses), source: 'local', tool: 'get_friends_current_status' });
+        }
+      } else if (isFriendStatusQuery(query)) {
+        return NextResponse.json({
+          reply: '友達の空きコマや教室は、フレンド機能で調べられます。サーバーに登録したアカウントでログインし、プロフィールの「フレンド」タブで友達を追加してください（デモアカウントでは使えません）。',
+          source: 'local'
+        });
+      }
     }
 
     // 成績表・時間割の読み取り（会話文なしでJSONだけを返させる）。images は縦長画像を分けたもの

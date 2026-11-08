@@ -19,6 +19,10 @@ export interface ServerAccount {
   passwordHash: string;
   createdAt: string;
   updatedAt: string;
+  // フレンドに渡すコード（英大文字と数字8桁）。最初にフレンド画面を開いたときに作る
+  friendCode?: string;
+  // フレンドに「今の授業・空きコマ」を見せるか。未設定は見せる（true）
+  shareScheduleStatus?: boolean;
 }
 
 export class StorageUnavailableError extends Error {}
@@ -56,7 +60,7 @@ function memoryGet(key: string): string | null {
   return entry.value;
 }
 
-async function kvGet(key: string): Promise<string | null> {
+export async function kvGet(key: string): Promise<string | null> {
   const b = backend();
   if (b.kind === 'memory') return memoryGet(prefix() + key);
   const result = await redisCommand(b.settings, ['GET', prefix() + key]);
@@ -64,7 +68,7 @@ async function kvGet(key: string): Promise<string | null> {
 }
 
 // onlyIfAbsent のときは、すでにあれば保存せず false を返す
-async function kvSet(key: string, value: string, options: { ttlSeconds?: number; onlyIfAbsent?: boolean } = {}): Promise<boolean> {
+export async function kvSet(key: string, value: string, options: { ttlSeconds?: number; onlyIfAbsent?: boolean } = {}): Promise<boolean> {
   const b = backend();
   const full = prefix() + key;
   if (b.kind === 'memory') {
@@ -79,6 +83,15 @@ async function kvSet(key: string, value: string, options: { ttlSeconds?: number;
   return result === 'OK';
 }
 
+export async function kvDel(key: string) {
+  const b = backend();
+  if (b.kind === 'memory') {
+    memory.delete(prefix() + key);
+    return;
+  }
+  await redisCommand(b.settings, ['DEL', prefix() + key]);
+}
+
 async function kvGetDel(key: string): Promise<string | null> {
   const b = backend();
   const full = prefix() + key;
@@ -91,7 +104,7 @@ async function kvGetDel(key: string): Promise<string | null> {
   return typeof result === 'string' ? result : null;
 }
 
-async function setAdd(key: string, member: string) {
+export async function setAdd(key: string, member: string) {
   const b = backend();
   if (b.kind === 'memory') {
     const set = memorySets.get(prefix() + key) || new Set<string>();
@@ -102,7 +115,7 @@ async function setAdd(key: string, member: string) {
   await redisCommand(b.settings, ['SADD', prefix() + key, member]);
 }
 
-async function setRemove(key: string, member: string) {
+export async function setRemove(key: string, member: string) {
   const b = backend();
   if (b.kind === 'memory') {
     memorySets.get(prefix() + key)?.delete(member);
@@ -111,7 +124,7 @@ async function setRemove(key: string, member: string) {
   await redisCommand(b.settings, ['SREM', prefix() + key, member]);
 }
 
-async function setMembers(key: string): Promise<string[]> {
+export async function setMembers(key: string): Promise<string[]> {
   const b = backend();
   if (b.kind === 'memory') return Array.from(memorySets.get(prefix() + key) || []);
   const result = await redisCommand(b.settings, ['SMEMBERS', prefix() + key]);
@@ -237,6 +250,69 @@ export async function consumeToken(kind: TokenKind, token: string): Promise<{ lo
   const raw = await kvGetDel(tokenKey(kind, token));
   return raw ? JSON.parse(raw) : null;
 }
+
+// ---- ログイン中の印（フレンド機能など、ログインのあとにサーバーを呼ぶ機能で使う。保存するのはハッシュだけ） ----
+export const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+const sessionKey = (token: string) => `session:${createHash('sha256').update(token).digest('hex')}`;
+
+export async function createSession(loginId: string): Promise<string> {
+  const token = randomBytes(32).toString('base64url');
+  await kvSet(sessionKey(token), normalizeLoginId(loginId), { ttlSeconds: SESSION_TTL_SECONDS });
+  return token;
+}
+
+/** ログイン中の印からログインIDを返す。期限切れ・不正なら null */
+export async function sessionLoginId(token: string): Promise<string | null> {
+  if (!token || token.length > 200) return null;
+  return kvGet(sessionKey(token));
+}
+
+export async function deleteSession(token: string) {
+  if (token && token.length <= 200) await kvDel(sessionKey(token));
+}
+
+// ---- フレンドコード ----
+// 読み間違えやすい 0/O・1/I は使わない
+const FRIEND_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const FRIEND_CODE_LENGTH = 8;
+const friendCodeKey = (code: string) => `friendcode:${code}`;
+
+export function normalizeFriendCode(code: string): string {
+  return String(code || '').normalize('NFKC').toUpperCase().replace(/[\s-]/g, '');
+}
+
+export const isFriendCodeFormat = (code: string) => new RegExp(`^[${FRIEND_CODE_ALPHABET}]{${FRIEND_CODE_LENGTH}}$`).test(code);
+
+/** フレンドコードを返す。まだなければ、ほかと重ならないコードを作って保存する */
+export async function ensureFriendCode(loginId: string): Promise<string | null> {
+  const account = await getAccount(loginId);
+  if (!account) return null;
+  if (account.friendCode) return account.friendCode;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const bytes = randomBytes(FRIEND_CODE_LENGTH);
+    const code = Array.from(bytes, (b) => FRIEND_CODE_ALPHABET[b % FRIEND_CODE_ALPHABET.length]).join('');
+    if (await kvSet(friendCodeKey(code), account.loginId, { onlyIfAbsent: true })) {
+      await saveAccount({ ...account, friendCode: code });
+      return code;
+    }
+  }
+  throw new Error('Could not allocate a friend code');
+}
+
+export async function loginIdForFriendCode(code: string): Promise<string | null> {
+  const normalized = normalizeFriendCode(code);
+  return isFriendCodeFormat(normalized) ? kvGet(friendCodeKey(normalized)) : null;
+}
+
+export async function setShareScheduleStatus(loginId: string, share: boolean) {
+  const account = await getAccount(loginId);
+  if (!account) return null;
+  const next = { ...account, shareScheduleStatus: share };
+  await saveAccount(next);
+  return next;
+}
+
+export const sharesSchedule = (account: ServerAccount) => account.shareScheduleStatus !== false;
 
 // テスト用：メモリの内容を消す
 export function resetMemoryStoreForTests() {

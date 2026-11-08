@@ -65,6 +65,7 @@ import {
   saveAccent,
   saveTheme
 } from '@/app/data/themes';
+import { readStoredStyle, saveStyle } from '@/app/data/speakingStyle';
 import { calculateGpa, isEarnedGrade, isFailingGrade, isSameCourseName, normalizeGrade, resolveRetakes, sumEarnedCredits, toCourseRecord } from '@/app/data/courseGrades';
 import type { GroupStatus } from '@/app/data/programProgress';
 
@@ -233,6 +234,16 @@ function PcUploadHint() {
 export default function UnifiedAssistantPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
+  // チャットの話し方（「織田信長みたいに話して」で変わり、「普通の話し方に戻して」かチップの✕で戻る）。端末ごとに保存
+  const [speakingStyle, setSpeakingStyle] = useState<string | null>(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 保存した値は描画後にしか読めない
+    setSpeakingStyle(readStoredStyle());
+  }, []);
+  const changeSpeakingStyle = (style: string | null) => {
+    setSpeakingStyle(style);
+    saveStyle(style);
+  };
   const [isLoading, setIsLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -1505,6 +1516,7 @@ export default function UnifiedAssistantPage() {
             ? { extract: finalImageType }
             : {}),
           sessionToken: currentStudent ? getSessionToken(currentStudent.id) : null,
+          speakingStyle,
           userProfile
         })
       });
@@ -1514,6 +1526,7 @@ export default function UnifiedAssistantPage() {
       }
 
       const data = await res.json();
+      if ('speakingStyle' in data) changeSpeakingStyle(data.speakingStyle || null);
       const rawReply = data.reply || '回答を取得できませんでした。';
       const { shortLabel, mainText } = parseResponse(rawReply);
 
@@ -2531,7 +2544,7 @@ export default function UnifiedAssistantPage() {
                     <span className="font-semibold text-slate-900">EneKoma</span>
                     {msg.source === 'gemini' ? (
                       <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 text-[10px] font-medium border border-slate-200">
-                        Gemini {msg.model || '1.5 Flash'}
+                        Gemini{msg.model ? ` ${msg.model}` : ''}
                       </span>
                     ) : (
                       <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 text-[10px] font-medium">
@@ -2733,6 +2746,24 @@ export default function UnifiedAssistantPage() {
             >
               ✕ 解除
             </button>
+          </div>
+        )}
+
+        {/* 話し方の指定（「織田信長みたいに話して」） */}
+        {speakingStyle && (
+          <div data-speaking-style className="flex items-center gap-2 pb-1">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-800 text-xs font-semibold">
+              🎭 話し方: {speakingStyle}風
+              <button
+                type="button"
+                onClick={() => changeSpeakingStyle(null)}
+                aria-label="いつもの話し方に戻す"
+                title="いつもの話し方に戻す"
+                className="ml-0.5 text-indigo-500 hover:text-indigo-900"
+              >
+                ✕
+              </button>
+            </span>
           </div>
         )}
 

@@ -112,7 +112,7 @@ export default function FeedbackModal({ onClose, loginId, defaultEmail }: { onCl
         ) : (
           <form onSubmit={submit} className="p-4 space-y-3 overflow-y-auto text-xs">
             <a href="/voices" className="block text-right text-[11px] text-slate-600 underline underline-offset-2 hover:text-slate-900">
-              ⭐ ほかの人の声・レビューを見る
+              ❓ よくある質問・不具合の対処法を見る
             </a>
             <div role="radiogroup" aria-label="種類" className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
               {(Object.keys(FEEDBACK_CATEGORY_LABELS) as Category[]).map((c) => (

@@ -55,6 +55,8 @@ cd backend && pip install -r requirements.txt && uvicorn main:app --reload --por
 2. `route.ts` が `GEMINI_MODEL_ORDER` の順に1モデルずつ試す。すべて失敗すれば `answerLocally` で応答する。同時に呼ぶと無料枠を2倍使うので並列にしない。思考量は用途で分ける(`*_THINKING_CONFIG`)。チャットと成績表は `minimal`、時間割は `low`。時間割を `minimal` にすると、画質の悪い画像で科目名を読み違えた(架空データでの実測)。変更するときは正答率を測ってから決める。
 3. サーバー通信自体が失敗すると、`page.tsx` がブラウザからGeminiを直接呼ぶ。
 
+Geminiに失敗したときも `/api/chat` は200で `source: 'local'` と `error`（理由）・`errorStatus` を返す。キーがどこにもないのに画像・PDFが送られたときは `needsApiKey: true` を返す。成績表・時間割の読み込み（`handleProfileFileUpload`）はこれを見て、キーの設定が必要か、キーの不備・上限などの理由を表示する。本番のVercelに `GEMINI_API_KEY` がないと、画面でキーを入れた利用者しか画像を読み取れない。
+
 モデル名は `route.ts` と `page.tsx`(直接呼び出しとキーのテスト)の両方にハードコードされているので、変更時は両方を更新する。
 
 添付ファイルは `data/imageUpload.ts` の `prepareFileForUpload` を通す。形式は中身の先頭バイトで判定する（Androidでは `file.type` が空のことがあるため）。500KBを超える画像とHEICは長辺2000px程度のJPEGにし、それ以外は元のまま送る。Vercelはリクエスト本文が約4.5MBを超えると413で弾くので、data URL が `MAX_UPLOAD_DATA_URL_CHARS`（元のファイルで約3MB）を超えるものは送らずに理由を出す。ファイル選択の `accept` は `UPLOAD_ACCEPT` にそろえる（`image/*` を含めるとスマホで写真・カメラを選べ、iPhoneはHEICをJPEGにして渡す）。失敗時の文言は `describeAnalysisFailure` で作り、通知（`profileNotification`）はモーダルより前面に出す。チャット履歴を `localStorage` に保存するときは画像データを除く(`withoutImagePreviews`)。含めると容量を超えて画面全体が落ちる。

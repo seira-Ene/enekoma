@@ -846,6 +846,7 @@ export async function POST(req: NextRequest) {
         reply: sanitizeConversationalReply(`APIの接続状況を確認しました（${friendlyError}）。学内データをもとにお答えしますね！\n\n${localReply}`),
         source: 'local',
         error: friendlyError,
+        errorStatus: lastErrorStatus,
         profileUpdate: fallbackUpdate
       });
     }
@@ -866,6 +867,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       reply: sanitizeConversationalReply(localReply),
       source: 'local',
+      // 画像・PDFはAIなしでは読めない。サーバーにも利用者にもキーがないことを画面に伝える
+      ...(image && !fallbackUpdate ? { needsApiKey: true } : {}),
       profileUpdate: fallbackUpdate
     });
   } catch (error) {

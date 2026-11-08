@@ -1092,6 +1092,10 @@ export default function UnifiedAssistantPage() {
         } else {
           showUploadError('解析結果をカルテに反映できませんでした。');
         }
+      } else if (data.needsApiKey) {
+        showUploadError('AIで読み取るにはGemini APIキーの設定が必要です。プロフィールの「基本設定」でキーを設定するか、ポータルの成績の表をコピーして「テキスト貼付」をお使いください。');
+      } else if (data.source === 'local' && data.error) {
+        showUploadError(`AIで読み取れませんでした（${data.error}）`);
       } else {
         showUploadError('ファイルから科目を読み取れませんでした。文字がはっきり写るように撮り直すか、ポータルの表をコピーして「テキスト貼付」をお試しください。');
       }

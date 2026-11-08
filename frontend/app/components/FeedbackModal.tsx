@@ -1,8 +1,9 @@
 'use client';
 
 // 利用者用：お問い合わせ・フィードバックのフォーム
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { UNIVERSITY_EMAIL_DOMAIN, checkEmailAddress } from '@/app/data/emailAddress';
+import type { PublicFaq } from '@/app/data/faqSearch';
 
 export const FEEDBACK_CATEGORY_LABELS = {
   review: 'レビュー',
@@ -28,6 +29,31 @@ export default function FeedbackModal({ onClose, loginId, defaultEmail }: { onCl
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  // 入力中の内容に近いFAQ（同じ質問・不具合の送信を減らす）
+  const [suggestions, setSuggestions] = useState<PublicFaq[]>([]);
+  const [selfSolved, setSelfSolved] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      if (category === 'review' || message.trim().length < 6) {
+        setSuggestions([]);
+        return;
+      }
+      try {
+        const params = new URLSearchParams({ q: message, mode: 'similar', limit: '3' });
+        const res = await fetch(`/api/faq?${params}`, { signal: controller.signal });
+        const data = await res.json().catch(() => ({}));
+        setSuggestions(Array.isArray(data.items) ? data.items : []);
+      } catch {
+        // 中断や通信エラーのときは候補を出さないだけ
+      }
+    }, 400);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [message, category]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,7 +97,13 @@ export default function FeedbackModal({ onClose, loginId, defaultEmail }: { onCl
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700 text-lg leading-none" aria-label="閉じる">×</button>
         </div>
 
-        {done ? (
+        {selfSolved ? (
+          <div className="p-5 space-y-3 text-sm text-slate-700">
+            <p className="font-semibold text-emerald-700">✓ 解決してよかったです！</p>
+            <p className="text-xs text-slate-500">お問い合わせは送信していません。ほかにも困ったことがあれば、いつでも送ってください。</p>
+            <button type="button" onClick={onClose} className="w-full py-2 bg-slate-900 text-white rounded-md text-xs font-medium">閉じる</button>
+          </div>
+        ) : done ? (
           <div className="p-5 space-y-3 text-sm text-slate-700">
             <p className="font-semibold text-emerald-700">✓ 送信しました。ありがとうございます！</p>
             <p className="text-xs text-slate-500">いただいた内容は運営が確認します。{email.trim() ? '返信が必要な場合は、入力されたメールアドレスに連絡します。' : ''}</p>
@@ -120,6 +152,28 @@ export default function FeedbackModal({ onClose, loginId, defaultEmail }: { onCl
               className="w-full px-3 py-2 border border-slate-300 rounded-md text-xs"
             />
             <div className="text-right text-[10px] text-slate-400 -mt-2">{message.length} / 2000</div>
+
+            {suggestions.length > 0 && (
+              <div className="p-3 rounded-lg border border-amber-300 bg-amber-50 space-y-2" aria-live="polite">
+                <p className="font-bold text-amber-900">💡 こちらの解決策はお試しになりましたか？</p>
+                <ul className="space-y-1.5">
+                  {suggestions.map((f) => (
+                    <li key={f.id} className="bg-white rounded-md border border-amber-200">
+                      <details>
+                        <summary className="cursor-pointer px-2.5 py-2 font-semibold text-slate-900">{f.title}</summary>
+                        <p className="px-2.5 pb-2.5 whitespace-pre-wrap break-words text-slate-700 leading-relaxed">{f.answer}</p>
+                      </details>
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="button" onClick={() => setSelfSolved(true)} className="px-3 py-1.5 bg-emerald-600 text-white rounded-md font-semibold">
+                    ✓ これで解決しました
+                  </button>
+                  <span className="text-[10px] text-amber-900">解決しない場合は、このまま送信してください。</span>
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block font-semibold text-slate-700 mb-1" htmlFor="feedback-email">返信先のメールアドレス（任意）</label>

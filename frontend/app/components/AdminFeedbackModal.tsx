@@ -3,6 +3,7 @@
 // 管理者用：お問い合わせの一覧とステータス管理
 import { useCallback, useEffect, useState } from 'react';
 import { FEEDBACK_CATEGORY_LABELS } from './FeedbackModal';
+import { normalizeForSearch } from '@/app/data/faqSearch';
 
 type Status = 'new' | 'in_progress' | 'resolved' | 'wontfix';
 const STATUS_LABELS: Record<Status, string> = { new: '未対応', in_progress: '対応中', resolved: '対応済み', wontfix: '対応不要' };
@@ -25,7 +26,12 @@ interface Item {
   status: Status;
   adminNote?: string;
   isPublic?: boolean;
+  faqTitle?: string;
+  answer?: string;
+  isFaq?: boolean;
 }
+
+type ItemUpdate = Partial<Pick<Item, 'status' | 'adminNote' | 'isPublic' | 'faqTitle' | 'answer' | 'isFaq'>>;
 
 const adminCode = () => sessionStorage.getItem('enekoma_admin_code') || '';
 const jst = (iso: string) => new Date(new Date(iso).getTime() + 9 * 3600 * 1000).toISOString().replace('T', ' ').slice(0, 16);
@@ -39,7 +45,10 @@ async function adminRequest(body: object) {
 
 export default function AdminFeedbackModal({ onClose, onCountChange }: { onClose: () => void; onCountChange?: (newCount: number) => void }) {
   const [items, setItems] = useState<Item[] | null>(null);
-  const [filter, setFilter] = useState<Status | 'all' | 'public'>('all');
+  const [filter, setFilter] = useState<Status | 'all' | 'public' | 'faq'>('all');
+  const [query, setQuery] = useState('');
+  // 回答・FAQタイトルの書きかけ
+  const [drafts, setDrafts] = useState<Record<string, { faqTitle: string; answer: string }>>({});
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -76,14 +85,17 @@ export default function AdminFeedbackModal({ onClose, onCountChange }: { onClose
 
   const replaceItem = (item: Item) => setItems((list) => (list || []).map((x) => (x.id === item.id ? item : x)));
 
-  const update = async (id: string, fields: { status?: Status; adminNote?: string; isPublic?: boolean }) => {
+  // 成功したら true を返す
+  const update = async (id: string, fields: ItemUpdate): Promise<boolean> => {
     setBusyId(id);
     setError(null);
     try {
       const data = await adminRequest({ action: 'update', id, ...fields });
       replaceItem(data.item);
+      return true;
     } catch (e) {
       setError((e as Error).message);
+      return false;
     } finally {
       setBusyId(null);
     }
@@ -103,7 +115,15 @@ export default function AdminFeedbackModal({ onClose, onCountChange }: { onClose
   };
 
   const counts = (items || []).reduce<Record<string, number>>((acc, i) => ({ ...acc, [i.status]: (acc[i.status] || 0) + 1 }), {});
-  const shown = (items || []).filter((i) => filter === 'all' || (filter === 'public' ? i.isPublic : i.status === filter));
+  const terms = normalizeForSearch(query).split(/\s+/).filter(Boolean);
+  const shown = (items || [])
+    .filter((i) => filter === 'all' || (filter === 'public' ? i.isPublic : filter === 'faq' ? i.isFaq : i.status === filter))
+    .filter((i) => {
+      if (terms.length === 0) return true;
+      const text = normalizeForSearch([i.message, i.faqTitle, i.answer, i.adminNote, i.email, i.loginId].filter(Boolean).join('\n'));
+      return terms.every((term) => text.includes(term));
+    });
+  const draftOf = (item: Item) => drafts[item.id] ?? { faqTitle: item.faqTitle ?? '', answer: item.answer ?? '' };
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="admin-feedback-title">
@@ -120,7 +140,7 @@ export default function AdminFeedbackModal({ onClose, onCountChange }: { onClose
         </div>
 
         <div className="flex flex-wrap gap-1.5 px-4 pt-3 text-[11px]">
-          {(['all', 'new', 'in_progress', 'resolved', 'wontfix', 'public'] as const).map((s) => (
+          {(['all', 'new', 'in_progress', 'resolved', 'wontfix', 'public', 'faq'] as const).map((s) => (
             <button
               key={s}
               type="button"
@@ -131,9 +151,21 @@ export default function AdminFeedbackModal({ onClose, onCountChange }: { onClose
                 ? `すべて（${items?.length ?? 0}）`
                 : s === 'public'
                   ? `公開中（${(items || []).filter((i) => i.isPublic).length}）`
-                  : `${STATUS_LABELS[s]}（${counts[s] || 0}）`}
+                  : s === 'faq'
+                    ? `FAQ公開中（${(items || []).filter((i) => i.isFaq).length}）`
+                    : `${STATUS_LABELS[s]}（${counts[s] || 0}）`}
             </button>
           ))}
+        </div>
+        <div className="px-4 pt-2">
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="本文・回答・メモ・メールアドレスで検索"
+            aria-label="お問い合わせを検索"
+            className="w-full px-3 py-1.5 border border-slate-300 rounded text-xs"
+          />
         </div>
 
         <div className="p-4 overflow-y-auto space-y-2.5 text-xs">
@@ -148,6 +180,7 @@ export default function AdminFeedbackModal({ onClose, onCountChange }: { onClose
                 {item.rating ? <span className="text-amber-500" aria-label={`${item.rating}つ星`}>{'★'.repeat(item.rating)}<span className="text-slate-300">{'★'.repeat(5 - item.rating)}</span></span> : null}
                 <span className="text-slate-500">{jst(item.createdAt)}</span>
                 {item.isPublic && <span className="px-2 py-0.5 rounded border text-[10px] font-bold bg-sky-100 text-sky-800 border-sky-200">公開中</span>}
+                {item.isFaq && <span className="px-2 py-0.5 rounded border text-[10px] font-bold bg-violet-100 text-violet-800 border-violet-200">FAQ公開中</span>}
               </div>
               <p className="whitespace-pre-wrap break-words text-slate-800 leading-relaxed">{item.message}</p>
               <div className="flex flex-wrap gap-x-3 text-[11px] text-slate-500">
@@ -187,6 +220,54 @@ export default function AdminFeedbackModal({ onClose, onCountChange }: { onClose
                   {item.isPublic ? '非公開にする' : '公開する'}
                 </button>
                 <button type="button" disabled={busyId === item.id} onClick={() => void remove(item.id)} className="px-2.5 py-1 text-rose-700 text-xs disabled:opacity-60">削除</button>
+              </div>
+
+              {/* 回答・解決手順とFAQの公開 */}
+              <div className="p-2.5 rounded-md bg-slate-50 border border-slate-200 space-y-1.5" data-faq-editor>
+                <input
+                  value={draftOf(item).faqTitle}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [item.id]: { ...draftOf(item), faqTitle: e.target.value } }))}
+                  placeholder="FAQのタイトル（例: 空き教室が表示されないとき）"
+                  aria-label="FAQのタイトル"
+                  maxLength={100}
+                  className="w-full px-2 py-1 border border-slate-300 rounded text-xs bg-white"
+                />
+                <textarea
+                  value={draftOf(item).answer}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [item.id]: { ...draftOf(item), answer: e.target.value } }))}
+                  placeholder="回答・解決手順（FAQとして公開すると利用者に表示されます）"
+                  aria-label="回答・解決手順"
+                  rows={3}
+                  maxLength={4000}
+                  className="w-full px-2 py-1 border border-slate-300 rounded text-xs bg-white"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={busyId === item.id}
+                    onClick={async () => {
+                      // 保存できたときだけ書きかけを消す
+                      if (await update(item.id, draftOf(item))) setDrafts((d) => { const next = { ...d }; delete next[item.id]; return next; });
+                    }}
+                    className="px-2.5 py-1 border border-slate-300 rounded text-xs bg-white disabled:opacity-60"
+                  >
+                    回答を保存
+                  </button>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={!!item.isFaq}
+                    disabled={busyId === item.id || (!item.isFaq && !item.answer?.trim())}
+                    title={!item.isFaq && !item.answer?.trim() ? '回答を保存してから公開できます' : undefined}
+                    onClick={() => {
+                      if (!item.isFaq && !confirm('FAQとして公開し、利用者の検索結果に表示します。質問文は個人情報を伏せて表示されます。よろしいですか？')) return;
+                      void update(item.id, { isFaq: !item.isFaq });
+                    }}
+                    className={`px-2.5 py-1 rounded text-xs font-semibold border disabled:opacity-50 ${item.isFaq ? 'bg-white text-slate-700 border-slate-300' : 'bg-violet-600 text-white border-violet-600'}`}
+                  >
+                    {item.isFaq ? 'FAQから外す' : 'FAQとして公開（検索対象にする）'}
+                  </button>
+                </div>
               </div>
             </div>
           ))}

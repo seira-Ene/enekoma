@@ -53,13 +53,15 @@ cd backend && pip install -r requirements.txt && uvicorn main:app --reload --por
 
 1. `page.tsx` が質問、APIキー、直近6件の履歴、添付ファイル、プロフィールを `POST /api/chat` に送る。
 2. `route.ts` が `GEMINI_MODEL_ORDER` の順に1モデルずつ試す。すべて失敗すれば `answerLocally` で応答する。同時に呼ぶと無料枠を2倍使うので並列にしない。思考量は用途で分ける(`*_THINKING_CONFIG`)。チャットと成績表は `minimal`、時間割は `low`。時間割を `minimal` にすると、画質の悪い画像で科目名を読み違えた(架空データでの実測)。変更するときは正答率を測ってから決める。
+
+成績表・時間割の読み取り（プロフィール・新規登録の添付、チャットで種類を選び文を書かずに送った添付）は、`extract`（`transcript` / `current_timetable` / `past_timetable`）を付けて送り、`api/chat/extraction.ts` の `extractDocument` が会話文なしのJSON（`responseSchema`、`temperature: 0`、PDFは `mediaResolution` HIGH）で読む。会話文と一緒に出させると、科目が多いほど遅くなり、72科目のPDFは上限時間を超えて全件を失った（架空データ：従来は平均33秒・72科目PDFは失敗、JSONだけにして平均7〜10秒・全172行を抽出）。AIに表の行数（`courseRowCount` / `classCellCount`）を先に数えさせ、読めた件数がそれより少ない・形の崩れた行があるときは思考を1段上げて1回だけ読み直し、それでも足りなければ `extractionWarning` を返して画面で知らせる。縦に長い画像は `prepareFileForUpload(file, undefined, { split: true })` が上下の重なる複数枚（`images`）に分け、重なりで2回出た行はサーバーで1つにする。
 3. サーバー通信自体が失敗すると、`page.tsx` がブラウザからGeminiを直接呼ぶ。
 
 Geminiに失敗したときも `/api/chat` は200で `source: 'local'` と `error`（理由）・`errorStatus` を返す。キーがどこにもないのに画像・PDFが送られたときは `needsApiKey: true` を返す。成績表・時間割の読み込み（`handleProfileFileUpload`）はこれを見て、キーの設定が必要か、キーの不備・上限などの理由を表示する。本番のVercelに `GEMINI_API_KEY` がないと、画面でキーを入れた利用者しか画像を読み取れない。
 
 モデル名は `route.ts` と `page.tsx`(直接呼び出しとキーのテスト)の両方にハードコードされているので、変更時は両方を更新する。
 
-添付ファイルは `data/imageUpload.ts` の `prepareFileForUpload` を通す。形式は中身の先頭バイトで判定する（Androidでは `file.type` が空のことがあるため）。500KBを超える画像とHEICは長辺2000px程度のJPEGにし、それ以外は元のまま送る。Vercelはリクエスト本文が約4.5MBを超えると413で弾くので、data URL が `MAX_UPLOAD_DATA_URL_CHARS`（元のファイルで約3MB）を超えるものは送らずに理由を出す。ファイル選択の `accept` は `UPLOAD_ACCEPT` にそろえる（`image/*` を含めるとスマホで写真・カメラを選べ、iPhoneはHEICをJPEGにして渡す）。失敗時の文言は `describeAnalysisFailure` で作り、通知（`profileNotification`）はモーダルより前面に出す。チャット履歴を `localStorage` に保存するときは画像データを除く(`withoutImagePreviews`)。含めると容量を超えて画面全体が落ちる。
+添付ファイルは `data/imageUpload.ts` の `prepareFileForUpload` を通す。形式は中身の先頭バイトで判定する（Androidでは `file.type` が空のことがあるため）。写真（JPEG・HEIC・WebP）と500KBを超える画像は長辺1600px程度・品質0.85のJPEGにし、写真は明るさの幅を広げる（`stretchContrast`。影や薄い印刷で文字が消えないように）。スクリーンショット（PNG）の明暗は変えない。Vercelはリクエスト本文が約4.5MBを超えると413で弾くので、data URL が `MAX_UPLOAD_DATA_URL_CHARS`（元のファイルで約3MB）を超えるものは送らずに理由を出す。ファイル選択の `accept` は `UPLOAD_ACCEPT` にそろえる（`image/*` を含めるとスマホで写真・カメラを選べ、iPhoneはHEICをJPEGにして渡す）。失敗時の文言は `describeAnalysisFailure` で作り、通知（`profileNotification`）はモーダルより前面に出す。チャット履歴を `localStorage` に保存するときは画像データを除く(`withoutImagePreviews`)。含めると容量を超えて画面全体が落ちる。
 
 ### 時間割の回答
 

@@ -1052,8 +1052,10 @@ export default function UnifiedAssistantPage() {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 120_000);
     try {
-      const prepared = await prepareFileForUpload(file);
-      setUploadBusyMessage(isTimetable ? 'AIが時間割を読み取っています…' : 'AIが成績表を読み取っています…');
+      const prepared = await prepareFileForUpload(file, undefined, { split: true });
+      setUploadBusyMessage(
+        `${isTimetable ? 'AIが時間割を読み取っています…' : 'AIが成績表を読み取っています…'}${prepared.parts.length > 1 ? `（${prepared.parts.length}枚に分けて読み取り中）` : ''}`
+      );
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1064,7 +1066,9 @@ export default function UnifiedAssistantPage() {
             : `【学生履修プロフィール：成績通知書登録】添付ファイル（${file.name}）を解析し、totalEarnedCredits、currentGpa、completedCourses配列のJSONを出力してください。`,
           apiKey: apiKey.trim(),
           image: { mimeType: prepared.mimeType, data: prepared.data },
+          images: prepared.parts,
           imageType: isTimetable ? 'current_timetable' : 'transcript',
+          extract: isTimetable ? 'current_timetable' : 'transcript',
           userProfile
         })
       });
@@ -1087,7 +1091,10 @@ export default function UnifiedAssistantPage() {
 
       if (update) {
         const applied = applyProfileUpdate(update);
-        if (applied) {
+        if (applied && data.extractionWarning) {
+          // 読み取った分は反映し、読み落としの可能性を知らせる
+          showUploadError(`${isTimetable ? '時間割' : '成績表'}を反映しました。ただし、${data.extractionWarning}`);
+        } else if (applied) {
           setProfileNotification(isTimetable ? '✓ 時間割を読み込み、履修中科目・今期単位数を更新しました！' : '✓ 成績通知書を読み込み、修得単位・GPAを更新しました！');
         } else {
           showUploadError('解析結果をカルテに反映できませんでした。');
@@ -1184,6 +1191,7 @@ export default function UnifiedAssistantPage() {
               apiKey: effectiveKey,
               image: { mimeType: regTimetableFile.mimeType, data: regTimetableFile.data },
               imageType: 'current_timetable',
+              ...(regTimetableFile.mimeType.startsWith('text/') ? {} : { extract: 'current_timetable' }),
               userProfile: { department: regDept, grade: regGrade, admissionYear: regAdmissionYear }
             })
           });
@@ -1230,6 +1238,7 @@ export default function UnifiedAssistantPage() {
               apiKey: effectiveKey,
               image: { mimeType: regTranscriptFile.mimeType, data: regTranscriptFile.data },
               imageType: 'transcript',
+              ...(regTranscriptFile.mimeType.startsWith('text/') ? {} : { extract: 'transcript' }),
               userProfile: { department: regDept, grade: regGrade, admissionYear: regAdmissionYear }
             })
           });
@@ -1471,6 +1480,9 @@ export default function UnifiedAssistantPage() {
           history: historyPayload,
           image: currentFile ? { mimeType: currentFile.mimeType, data: currentFile.data } : null,
           imageType: currentFile ? finalImageType : null,
+          ...(currentFile && !text && finalImageType !== 'auto' && currentFile.fileType !== 'csv' && currentFile.fileType !== 'document'
+            ? { extract: finalImageType }
+            : {}),
           userProfile
         })
       });

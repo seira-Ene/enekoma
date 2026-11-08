@@ -156,33 +156,33 @@ export function answerCurriculumLocally(query: string, profile?: { department?: 
 
   if (courses.length > 0 && ASK_WORDS.some((w) => q.includes(w))) {
     const c = VERIFIED_COURSES_CURRICULUM[courses[0]];
-    const parts = [`${c.name}は、${c.description}。`];
-    if (c.requiredCourses.length > 0 && c.requiredCourses.length <= 16) parts.push(`必修科目は${joinNames(c.requiredCourses)}です。`);
-    else if (c.requiredCourses.length > 0) parts.push(`必修科目は${c.requiredCourses.length}科目あり、${joinNames(c.requiredCourses.slice(0, 8))}などです。`);
-    if (c.groupRules?.length) parts.push(`ほかに${c.groupRules.map((r) => r.label).join('、')}という条件があります。`);
+    // 教職は共通科目と学科ごとの教科で科目が多いので、要点だけを返す
     if (c.name === '教職コース') {
       const dept = DEPARTMENTS.find((d) => q.includes(d)) || profile?.department;
       const licenses = dept ? getTeachingLicenses(dept) : [];
-      for (const l of licenses) {
-        const groups = l.groupRules.length ? `、さらに${l.groupRules.map((r) => r.label).join('、')}` : '';
-        parts.push(`${dept}で取れる${l.subject}（${l.levels.join('・')}）では、教科の専門科目として${joinNames(l.requiredCourses)}が必修${groups}が必要です。`);
-      }
-      if (dept && licenses.length === 0) parts.push(`${dept}の教科専門科目の表は要覧にないので、教職センターで確認してくださいね。`);
+      const deptPart = licenses.length > 0
+        ? `${dept}で取れるのは${licenses.map((l) => `${l.subject}（${l.levels.map((lv) => (lv === '中学校一種' ? '中学' : '高校')).join('・')}）`).join('、')}で、教科の専門科目は${licenses
+            .map((l) => (l.requiredCourses.length > 0 ? `${l.subject}が必修${l.requiredCourses.length}科目` : `${l.subject}が選択必修のみ`))
+            .join('、')}です。`
+        : dept ? `${dept}の教科専門科目は要覧にないので、教職センターで確認してください。` : '';
+      return `教職コースは共通の教職科目（必修${c.requiredCourses.length}科目など）に加え、教科の専門科目（中学校一種28単位・高等学校一種36単位）が必要です。${deptPart}窓口は教職センターです（要覧${c.page}）。`;
     }
-    if (c.notes?.[0]) parts.push(`${c.notes[0].replace(/。$/, '')}。`);
-    parts.push(`窓口は${c.window}で、学部要覧の${c.page}に載っていますよ。`);
+    const parts = [`${c.name}は、${c.description}。`];
+    if (c.requiredCourses.length > 0 && c.requiredCourses.length <= 10) parts.push(`必修は${joinNames(c.requiredCourses)}です。`);
+    else if (c.requiredCourses.length > 0) parts.push(`必修は${c.requiredCourses.length}科目で、${joinNames(c.requiredCourses.slice(0, 6))}などです。`);
+    if (c.groupRules?.length) parts.push(`ほかに${c.groupRules.map((r) => r.label).join('、')}が必要です。`);
+    parts.push(`窓口は${c.window}です（要覧${c.page}）。`);
     return parts.join('');
   }
 
   if (minors.length > 0) {
     const m = VERIFIED_MINORS_CURRICULUM[minors[0]];
     const parts = [`${m.name}は、${m.description}。`];
-    if (m.requiredCourses.length > 0) parts.push(`必修科目は${joinNames(m.requiredCourses)}です。`);
-    if (m.groupRules?.length) parts.push(`科目の条件として${m.groupRules.map((r) => r.label).join('、')}が必要です。`);
-    if (m.notes?.[0]) parts.push(`${m.notes[0].replace(/。$/, '')}。`);
+    if (m.requiredCourses.length > 0) parts.push(`必修は${joinNames(m.requiredCourses)}です。`);
+    if (m.groupRules?.length) parts.push(`条件は${m.groupRules.map((r) => r.label).join('、')}です。`);
     parts.push(m.type === 'department'
-      ? `${m.targetDept}の学生はこの副専攻の修了認定を受けられないので気をつけてくださいね。相談は${m.window}で、学部要覧の${m.page}に載っていますよ。`
-      : `どの学科の学生も修了認定を受けられる学際副専攻で、相談は${m.window}です。学部要覧の${m.page}に載っていますよ。`);
+      ? `${m.targetDept}の学生は修了認定を受けられません（要覧${m.page}）。`
+      : `どの学科でも修了認定を受けられます（要覧${m.page}）。`);
     return parts.join('');
   }
   return null;

@@ -4,7 +4,6 @@ import {
 } from '@/app/data/departmentCurriculum';
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  GAKUBU_YORAN_DEPARTMENTS,
   GAKUBU_YORAN_CAP_RULES,
   GAKUBU_YORAN_GPA_RULES,
   GAKUBU_YORAN_COURSES,
@@ -34,12 +33,14 @@ const SYSTEM_PROMPT = `
 2. **全文提示の義務（最重要：文章を途中で絶対に切らないこと）**：
    ・回答は途中で文章が切れることなく、最初から最後まで完全な文章で全文を提示してください。
    ・文末が途切れたり省略されたりする回答は厳禁です。必ず文末（「〜ですよ」「〜してくださいね」など）まで完結させてください。
-   ・質問に対して必要な情報（教室名、時限、科目名、単位数、アドバイス等）は最後まで省略せずに丁寧に回答してください。
-3. **必修と選択必修の明確な区別**：
+   ・質問に対して必要な情報（教室名、時限、科目名、単位数など）は省略しないでください。
+3. **要点を絞って簡潔に**：
+   ・回答は要点だけを2〜4文程度で短く伝えてください。前置き、長い解説、同じ内容の繰り返し、聞かれていない補足は書かないでください。
+4. **必修と選択必修の明確な区別**：
    ・「必修科目」：卒業要件として必ず単位を取らなければならない科目（自主創造の基礎、各学科の指定専門必修など）。
    ・「選択必修科目」：指定されたグループの中から、決められた単位数以上を選んで必ず修得する科目（総合教育科目、外国語科目など）。
    ・質問された際は両者を混同せず、的確に区別して案内してください。
-4. **曜日・時限・教室・教員・授業データの回答**：
+5. **曜日・時限・教室・教員・授業データの回答**：
    ・何曜何限の何教室で誰の何という授業（必修/選択必修）が行われているかを聞かれたら、時間割データに基づき「◯曜◯限の◯◯教室は、◯◯先生の『◯◯（必修/選択必修）』が行われていますよ！」と短く返信してください。
 
 ---
@@ -204,11 +205,13 @@ const SYSTEM_PROMPT = `
 - 決済方法: PayPay〇、交通系IC（モバイル）〇、現金〇（※物理交通系IC直接タッチ×、クレカ直タッチ×）
 - 主な商品・価格:
   - サントリー天然水 550ml: 80円（学内最安値！）
-  - ZONe スカッと透明: 80円（激安エナジードリンク！）
+  - ZONe（エナジードリンク）: 80円
   - GREEN DA・KA・RA やさしい麦茶 600ml: 90円
   - レッドブル（Red Bull）: 170円（コンビニよりお得！）
   - 伊右衛門 特茶/焙じ茶: 100〜110円
   - プレミアムボス 微糖: 130円
+
+- 注意：サントリーの「ZONe」シリーズに「スカッと透明」という商品はない（「スカッと透明」は別会社のプール用ろ過装置のキャッチコピー）。ZONeの透明・白っぽい系統は「ZONe ENERGY [解]」（ライトブルー・マスカット味）や「HYPER ZONe WHITE SODA」（乳白色）。自販機に入っているZONeの具体的な種類は確認できていないので、味や商品名を聞かれたら推測せず「種類は自販機で確認してください」と伝える。
 
 ### 2. 3号館 1階（食堂側・自販機コーナー計4台）
 - ①サントリー白（水メイン）/ アプリ: ジハンピ
@@ -337,45 +340,37 @@ function simulateGpaLocally(currentGpa: number, targetGpa: number, earnedCredits
   const result = simulateGpaEngine(earnedCredits, currentGpa, targetGpa, semesterCredits);
 
   if (!result.isAchievable) {
-    return `現在のGPA ${currentGpa.toFixed(2)} から目標 ${targetGpa.toFixed(2)} には、今期全科目Sでも計算上届きません。来期以降も継続してS・Aを重ねて着実に上げていきましょう！`;
+    return `GPA ${currentGpa.toFixed(2)} から ${targetGpa.toFixed(2)} へは、今期すべてSでも届きません。来期以降も続けて上げていく必要があります。`;
   }
 
-  return `現在のGPA ${currentGpa.toFixed(2)} から目標 ${targetGpa.toFixed(2)} に到達するには、今期${result.courseCount}科目のうちS評価を${result.patternA.sCourses}科目、A評価を${result.patternA.aCourses}科目以上修得するのが目安です！`;
+  return `GPA ${targetGpa.toFixed(2)} に届くには、今期${result.courseCount}科目のうちSを${result.patternA.sCourses}科目、Aを${result.patternA.aCourses}科目以上が目安です。`;
 }
 
-// ローカル履修・不足判定（要覧 p.31-36, 各学科ページ準拠・人間の自然なチャット言葉遣い）
+// ローカル履修・不足判定（要覧 p.31-36, 各学科ページ準拠）。要点だけを短く返す
 function checkRequirementsLocally(profile: UserProfileData): string {
   const analysis = analyzeAcademicDeficiency(profile || ({} as UserProfileData));
-  const deptData = GAKUBU_YORAN_DEPARTMENTS[analysis.department] || GAKUBU_YORAN_DEPARTMENTS['情報科学科'];
+  const lines: string[] = [];
 
-  const parts: string[] = [];
-  parts.push(`${analysis.department}の${analysis.grade}年次の履修状況を確認しました！`);
-
-  // 学科必修科目
-  if (analysis.missingMajorReqs.length > 0) {
-    const reqNames = analysis.missingMajorReqs.map((r) => `${r.name}（${r.credits}単位）`).join('、');
-    parts.push(`まず学科の必修科目ですが、まだ修得できていない科目として ${reqNames} があります。次期の履修登録で優先して入れておくのが安心ですよ。`);
+  const missing = analysis.missingMajorReqs;
+  if (missing.length > 0) {
+    const names = missing.slice(0, 5).map((r) => r.name).join('、');
+    lines.push(`${analysis.department}の未修得の必修は${missing.length}科目（${names}${missing.length > 5 ? 'など' : ''}）です。`);
   } else {
-    parts.push(`学科の主要な必修科目はすべて順調に修得できています！`);
+    lines.push(`${analysis.department}の必修はすべて修得済みです。`);
   }
 
-  // マイルストーン
-  if (analysis.milestonesStatus.length > 0) {
-    const warnings = analysis.milestonesStatus.map((ms) => `${ms.timing}に向けて ${ms.condition} が必要です（満たせないと${ms.consequence}）`).join('。');
-    parts.push(`進級や卒業研究の条件として、${warnings}ので気をつけてくださいね。`);
+  // 条件を満たせていない進級・着手要件だけを伝える
+  for (const ms of analysis.milestonesStatus.filter((m) => m.isWarning)) {
+    lines.push(`${ms.timing}までに${ms.condition}が必要です。`);
   }
-
-  // コース・副専攻
-  if (analysis.coursesAnalysis.length > 0 || analysis.minorsAnalysis.length > 0) {
-    const courseNotes = analysis.coursesAnalysis.map((c) => `${c.name}は${c.reqCredits}単位必要で、相談窓口は${c.window}です。${c.note}`).join(' ');
-    const minorNotes = analysis.minorsAnalysis.map((m) => m.warning ? `${m.name}について、${m.warning}` : `${m.name}は修了に16単位以上必要です。${m.note}`).join(' ');
-    parts.push(`選択しているコースや副専攻については、${courseNotes} ${minorNotes}`);
+  for (const c of analysis.coursesAnalysis) {
+    lines.push(c.isFulfilled ? `${c.name}は要件を満たしています。` : `${c.name}は${c.earnedCredits}／${c.reqCredits}単位です。`);
   }
-
-  // 卒業単位
-  parts.push(`卒業に必要な124単位のうち、現在は ${analysis.earnedCredits}単位 を修得しています。専門科目は必修${deptData.majorReq}単位と選択${deptData.majorOpt}単位（合計${deptData.majorTotal}単位）、総合教育科目12単位、外国語${deptData.gaikokugoReq}単位などが要件になっています。計画的に進めていきましょう！`);
-
-  return parts.join('\n\n');
+  for (const m of analysis.minorsAnalysis) {
+    lines.push(!m.isValid ? `${m.name}は所属学科の関係で修了認定を受けられません。` : `${m.name}は${m.earnedCredits}／16単位です。`);
+  }
+  lines.push(`卒業まであと${analysis.remainingCredits}単位です（${analysis.earnedCredits}／124単位）。`);
+  return lines.join('\n');
 }
 
 // ローカルエンジン（オフライン・API未設定時の高精度フォールバック・人間の自然なチャット言葉遣い）
@@ -386,6 +381,15 @@ function answerLocally(query: string, userProfile?: UserProfileData): string {
   // 時間割に関する質問は実データから回答する
   const timetableAnswer = answerTimetableQuery(q, userProfile);
   if (timetableAnswer) return timetableAnswer;
+
+  // 0. 必修と選択必修の違いの質問
+  if (q.includes('必修') && ['違い', '何が違う', 'どう違う', '違うの'].some((k) => q.includes(k))) {
+    return '必修は全科目の修得が必要な科目、選択必修は指定のグループから決められた単位数を選んで修得する科目です。どちらも足りないと卒業できません。';
+  }
+
+  // 0.01 資格コース・教職・副専攻：要覧の表を書き写したデータから答える
+  const curriculumAnswer = answerCurriculumLocally(query, userProfile);
+  if (curriculumAnswer) return curriculumAnswer;
 
   // 0. 各学科の必修科目・選択必修科目・単位数の完全回答（12学科対応）
   const depts = [
@@ -398,44 +402,30 @@ function answerLocally(query: string, userProfile?: UserProfileData): string {
   if (matchedDept && (q.includes('必修') || q.includes('科目') || q.includes('単位') || q.includes('卒業') || q.includes('カリキュラム'))) {
     const info = getDepartmentCurriculum(matchedDept);
     if (info) {
-      const askCompulsory = q.includes('必修') && !q.includes('選択必修のみ');
+      // 「選択必修」の中の「必修」は数えない
+      const askCompulsory = q.replace(/選択必修/g, '').includes('必修');
       const askElective = q.includes('選択必修') || q.includes('選択');
+
+      const shortList = (list: { name: string }[]) => `${list.slice(0, 8).map((c) => c.name).join('、')}${list.length > 8 ? `など${list.length}科目` : ''}`;
 
       // 必修のみの質問
       if (askCompulsory && !askElective) {
-        const reqList = info.requiredCourses.map((c) => `${c.name}（${c.credits}単位）`).join('、');
-        return `${matchedDept}の必修科目は${info.requiredSummary}です。具体的には、${reqList}があり、すべて修得する必要がありますよ！`;
+        return `${matchedDept}の必修は計${info.majorReqCredits}単位で、${shortList(info.requiredCourses)}です。すべて修得が必要です。`;
       }
 
       // 選択必修のみの質問
       if (askElective && !askCompulsory) {
-        const eleList = info.electiveRequiredCourses.map((c) => `${c.name}（${c.credits}単位）`).join('、');
-        return `${matchedDept}の選択必修科目は${info.electiveSummary}です。対象科目には、${eleList}があり、指定の群から必要な単位数を満たすように選択します！`;
+        return `${matchedDept}の選択必修は計${info.majorElectiveCredits}単位で、${shortList(info.electiveRequiredCourses)}から選びます。`;
       }
 
       // 必修と選択必修の両方、またはカリキュラム全体の質問
-      const reqList = info.requiredCourses.slice(0, 10).map((c) => `${c.name}（${c.credits}単位）`).join('、');
-      const eleList = info.electiveRequiredCourses.slice(0, 8).map((c) => `${c.name}（${c.credits}単位）`).join('、');
-      return `${matchedDept}の専門科目は、必修科目（${info.majorReqCredits}単位）と選択必修科目（${info.majorElectiveCredits}単位）に明確に分かれています。必修科目は${info.requiredSummary}で、${reqList}などすべて修得が必須です。選択必修科目は${info.electiveSummary}で、${eleList}などの指定群から規定単位を選んで修得しますよ！`;
+      return `${matchedDept}の専門科目は必修${info.majorReqCredits}単位と選択必修${info.majorElectiveCredits}単位です。必修は${shortList(info.requiredCourses)}です。`;
     }
   }
 
-  // 0.01 資格コース・教職・副専攻：要覧の表を書き写したデータから答える
-  const curriculumAnswer = answerCurriculumLocally(query, userProfile);
-  if (curriculumAnswer) return curriculumAnswer;
-
-  // 0. 必修と選択必修の違いの質問
-  if (q.includes('必修') && (q.includes('違い') || q.includes('選択必修') || q.includes('何が違う') || q.includes('どう違う'))) {
-    return '必修科目は卒業のために絶対に修得しなければならない科目（自主創造の基礎や専門必修など）で、落とすと卒業できません。選択必修科目は指定されたグループの中から規定単位数以上を選んで必ず修得する科目ですよ。どちらも卒業に関わる重要科目なので、優先して履修してくださいね！';
-  }
-
-  // 1. CAP制・年間履修上限についての質問
+  // 1. CAP制・年間履修上限（要覧 p.35-36）
   if (['上限', 'cap', '何単位まで履修', '年間単位', '履修登録上限', '40単位'].some((k) => qLower.includes(k))) {
-    return (
-      `文理学部では、学習効果を高めるために年間の履修登録上限が40単位と決められていますよ。これは修得単位ではなく、履修登録する単位数の上限です。\n\n` +
-      `なお、教職科目や司書科目、集中講義などはこの40単位の上限に含まれない仕組みになっています。\n\n` +
-      `また、前年度の成績でGPAが3.20以上ある場合など、成績優秀者には年間44単位まで登録できる特別措置も用意されています！`
-    );
+    return '年間の履修登録の上限は40単位です。前年度に20単位以上修得していれば、GPA2.0以上で44単位、2.5以上で46単位、3.0以上で48単位まで増えます。届出済みのコース科目や集中授業は上限に含みません。';
   }
 
   // 2. GPAシミュレーション要求判定
@@ -454,10 +444,7 @@ function answerLocally(query: string, userProfile?: UserProfileData): string {
 
   // 4. 成績表画像・OCR言及時
   if (['成績表', '通知書', '画像', 'ocr', '読み取'].some((k) => qLower.includes(k))) {
-    return (
-      `成績表や時間割の画像・ファイルを送っていただければ、履修科目やGPA、評価を自動で読み取ってプロフィールに反映できますよ！\n\n` +
-      `右上のAPI設定からGemini APIキーを入れておくと自動解析がスムーズに動きます。もしAPIキーがなくても、右上のプロフィールから手動で単位数やGPAを設定すれば、いつでも不足単位の判定やGPAシミュレーションが使えますので安心してくださいね。`
-    );
+    return '成績表や時間割の画像を送ると、科目・評価・GPAを読み取ってカルテに反映します。読み取りにはGemini APIキーの設定が必要です。';
   }
 
   // 12. 教室番号直接入力判定（「3306」「3505」「421」「124」等の直打ち・質問）
@@ -467,81 +454,71 @@ function answerLocally(query: string, userProfile?: UserProfileData): string {
       const r = mRoom[1].toUpperCase();
 
       if (r === '411') {
-        return '4号館の411教室ですね！4号館の1階にあって、正面玄関を入って左側（男子トイレ側）に進むとありますよ。1階には給水所（冷水機）やトイレ前のゴミ箱も設置されているので便利です。';
+        return '411教室は4号館1階、正面玄関を入って左側（男子トイレ側）です。';
       } else if (r === '412') {
-        return '4号館の412教室ですね！4号館の1階にあって、正面玄関を入って右側（女子トイレ側）に進むとありますよ。1階には給水所（冷水機）やトイレ前のゴミ箱も設置されています。';
+        return '412教室は4号館1階、正面玄関を入って右側（女子トイレ側）です。';
       } else if (r === '421') {
-        return '4号館の421教室ですね！4号館の2階にあって、階段を登って左側（男子トイレ側）にありますよ。トイレ前にゴミ箱があります。給水所は1階をご利用くださいね。';
+        return '421教室は4号館2階、階段を上って左側（男子トイレ側）です。';
       } else if (r === '422') {
-        return '4号館の422教室ですね！4号館の2階にあって、階段を登って右側（女子トイレ側）にありますよ。トイレ前にゴミ箱があります。給水所は1階をご利用くださいね。';
+        return '422教室は4号館2階、階段を上って右側（女子トイレ側）です。';
       } else if (r === '431') {
-        return '4号館の431教室ですね！4号館の3階にあって、階段を登って右側（男子トイレ側）にありますよ。トイレ前にゴミ箱が設置されています。';
+        return '431教室は4号館3階、階段を上って右側（男子トイレ側）です。';
       } else if (r === '432') {
-        return '4号館の432教室ですね！4号館の3階にあって、階段を登って左側（女子トイレ側）にありますよ。トイレ前にゴミ箱が設置されています。';
+        return '432教室は4号館3階、階段を上って左側（女子トイレ側）です。';
       } else if (r === '441') {
-        return '4号館の441教室ですね！4号館の4階にあって、階段を登って右側奥（男子トイレ側の奥）にありますよ。手前が442教室です。';
+        return '441教室は4号館4階、階段を上って右側の奥（男子トイレ側）です。';
       } else if (r === '442') {
-        return '4号館の442教室ですね！4号館の4階にあって、階段を登って右側手前（男子トイレ側の手前）にありますよ。奥が441教室です。';
+        return '442教室は4号館4階、階段を上って右側の手前（男子トイレ側）です。';
       } else if (r === '443') {
-        return '4号館の443教室ですね！4号館の4階にあって、階段を登って左側手前（女子トイレ側の手前）にありますよ。奥が444教室です。';
+        return '443教室は4号館4階、階段を上って左側の手前（女子トイレ側）です。';
       } else if (r === '444') {
-        return '4号館の444教室ですね！4号館の4階にあって、階段を登って左側奥（女子トイレ側の奥）にありますよ。手前が443教室です。';
+        return '444教室は4号館4階、階段を上って左側の奥（女子トイレ側）です。';
       } else if (r.startsWith('3') && r.length === 4) {
         const fl = r[1];
         const sub = parseInt(r.slice(2), 10);
         const sideGuide = sub <= 5 ? 'エスカレーターを出て右側（男子トイレ側）' : 'エスカレーターを出て左側（女子トイレ側）';
-        return `3号館の${r}教室ですね！3号館の${fl}階にあって、${sideGuide}に進むとありますよ。ゴミ箱は各フロアに設置されています。`;
+        return `${r}教室は3号館${fl}階、${sideGuide}です。`;
       } else if (['122', '123', '124'].includes(r)) {
-        return `1号館の${r}教室ですね！1号館の2階にあって、階段を登って左側に進むとありますよ（奥に女子トイレがあります）。`;
+        return `${r}教室は1号館2階、階段を上って左側です。`;
       } else if (['125', '126', '127A', '127B'].includes(r)) {
-        return `1号館の${r}教室ですね！1号館の2階にあって、階段を登って右側に進むとありますよ（手前に男子トイレ、奥に女子トイレがあります）。`;
+        return `${r}教室は1号館2階、階段を上って右側です。`;
       } else if (r === '130') {
-        return '1号館の130教室ですね！1号館の3階にあって、階段を登って正面にありますよ。左奥に男子トイレ、右奥に女子トイレがあります。';
+        return '130教室は1号館3階、階段を上って正面です。';
       } else if (['131', '132', '133', '134', '138'].includes(r)) {
-        return `1号館の${r}教室ですね！1号館の3階にあって、階段を登って左側に進むとありますよ（奥に男子トイレがあります）。`;
+        return `${r}教室は1号館3階、階段を上って左側です。`;
       } else if (['135', '136', '137A', '137B', '139'].includes(r)) {
-        return `1号館の${r}教室ですね！1号館の3階にあって、階段を登って右側に進むとありますよ（奥に女子トイレがあります）。`;
+        return `${r}教室は1号館3階、階段を上って右側です。`;
       } else if (r === '141') {
-        return '1号館の141教室ですね！1号館の4階にあって階段を登って正面にあります。なお、1号館の4階と5階にはトイレがありませんので、2階か3階のトイレを使ってくださいね。';
+        return '141教室は1号館4階、階段を上って正面です。4・5階にトイレはありません。';
       } else if (r === '151') {
-        return '1号館の151教室ですね！1号館の5階にあって階段を登って正面にあります。1号館の4階と5階にはトイレがありませんので、2階か3階のトイレを使ってくださいね。';
+        return '151教室は1号館5階、階段を上って正面です。4・5階にトイレはありません。';
       } else if (r.startsWith('2') && r.length === 4) {
-        return `2号館の${r}教室ですね！2号館の${r[1]}階にありますよ。注意点として、2号館の中には自販機やゴミ箱が置かれていないので他号館を利用してくださいね。`;
+        return `${r}教室は2号館${r[1]}階です。2号館には自販機とゴミ箱がありません。`;
       } else {
-        return `${r}教室ですね！キャンパス構内にありますので、各号館のフロア案内板もあわせて確認してみてくださいね。`;
+        return `${r}教室の場所は登録がありません。各号館の案内板で確認してください。`;
       }
     }
   }
 
   // 13. 施設営業時間案内
   if (['図書館', '図書室', '本を借りる', '地下書庫'].some((k) => qLower.includes(k))) {
-    return (
-      '文理学部の図書館（図書館棟）の開館時間ですね！平日（月曜から金曜）は朝9時から夜20時まで、土曜日は朝9時から19時まで開いていますよ。日曜や祝日はお休みです。地下書庫の利用や貸出手続きは閉館の30分前までなので、時間に少し余裕を持って行ってみてくださいね。'
-    );
+    return '図書館は平日9:00〜20:00、土曜9:00〜19:00です（日曜・祝日は休館）。地下書庫と貸出は閉館30分前までです。';
   }
 
   if (['コンピュータセンター', 'コンセ', 'cc', 'wifi', 'wi-fi', '学内pc', 'パソコン室'].some((k) => qLower.includes(k))) {
-    return (
-      '3号館にあるコンピュータセンターの窓口ですね！平日は朝9時から18時まで、土曜日は朝9時から13時まで受付しています。日曜と祝日はお休みです。学内Wi-Fi（CHS-Wi-Fi）の接続設定やアカウントの相談、パソコン室の利用などで困ったときは窓口で気軽に相談できますよ。'
-    );
+    return 'コンピュータセンター（3号館）の窓口は平日9:00〜18:00、土曜9:00〜13:00です。Wi-Fiやアカウントの相談はここで受け付けています。';
   }
 
   if (['ラーニングコモンズ', 'ラーニング・コモンズ', 'コモンズ', 'lc'].some((k) => qLower.includes(k))) {
-    return (
-      '本館1階のラーニング・コモンズですね！平日は朝8時から18時まで、土曜日は朝8時から17時まで開放されています。日曜・祝日はお休みです。グループワークや自習、パソコンの利用、プレゼンの練習などにとても使いやすいスペースですよ。サポートデスクも平日の10時から18時まで開いています。'
-    );
+    return 'ラーニング・コモンズ（本館1階）は平日8:00〜18:00、土曜8:00〜17:00です。サポートデスクは平日10:00〜18:00です。';
   }
 
   if (['教務', '教務課', '事務', '事務窓口', '証明書', '学務'].some((k) => qLower.includes(k))) {
-    return (
-      '本館1階の教務課・事務室ですね！窓口の受付時間は平日の朝9時から17時まで、土曜日は朝9時から13時までとなっています。日曜・祝日はお休みです。履修相談や各種届け出を受け付けていて、自動発行機で証明書を取る場合は窓口終了の15分前まで利用できますよ。'
-    );
+    return '教務課（本館1階）の窓口は平日9:00〜17:00、土曜9:00〜13:00です。証明書の自動発行機は窓口終了の15分前までです。';
   }
 
   if (['資料館', '博物館'].some((k) => qLower.includes(k))) {
-    return (
-      '8号館にある文理学部資料館ですね！平日は10時から17時まで、土曜日は10時から13時まで開館していて、日曜・祝日はお休みです。入館は無料で、歴史や民俗、学術資料などの展示を見ることができますよ。'
-    );
+    return '文理学部資料館（8号館）は平日10:00〜17:00、土曜10:00〜13:00で、入館無料です。';
   }
 
   // 14. コース科目案内
@@ -549,9 +526,7 @@ function answerLocally(query: string, userProfile?: UserProfileData): string {
     (c) => q.includes(c.name) || (c.name === '教職コース' && q.includes('教職'))
   );
   if (courseHit) {
-    return (
-      `${courseHit.name}についてですね！${courseHit.target}を目指すコースです。申請や相談の窓口は本館1階の教務課（${courseHit.window}）になります。単位の取り扱いとしては${courseHit.creditsRule}となっていて、主な科目に${courseHit.keyRequiredCourses.slice(0, 3).join('や')}などがあります。受講を考えている場合は学期始めに忘れずに届出をしてくださいね。`
-    );
+    return `${courseHit.name}は${courseHit.target}のためのコースで、必要単位は${courseHit.requiredCredits}単位、窓口は${courseHit.window}です。主な科目は${courseHit.keyRequiredCourses.slice(0, 3).join('、')}などです。`;
   }
 
   // 15. 副専攻案内
@@ -559,52 +534,36 @@ function answerLocally(query: string, userProfile?: UserProfileData): string {
     (m) => q.includes(m.name) || (q.includes('副専攻') && q.includes(m.name.replace('副専攻', '')))
   );
   if (minorHit) {
-    return (
-      `${minorHit.name}についてですね！指定された科目を16単位以上修得して卒業時に申請すると、卒業証書と一緒に修了証書がもらえますよ。事前の履修届出は不要です。窓口は${minorHit.window}で、おすすめの科目として${minorHit.recommendedCourses.slice(0, 3).join('や')}などがあります。${minorHit.ruleNotice}という点に気をつけて履修を進めてみてくださいね。`
-    );
+    return `${minorHit.name}は指定科目を16単位以上修得すると、卒業時に修了証書がもらえます（窓口：${minorHit.window}）。${minorHit.ruleNotice}`;
   }
 
   if (q.includes('副専攻')) {
-    return (
-      `文理学部の副専攻制度ですね！主専攻の勉強に加えて、決められた科目を16単位以上修得すると卒業時に修了認定が受けられる制度です。事前の履修申請は不要なので、自分の興味に合わせて自由に挑戦できますよ。\n\n全学科の学生が履修できる学際副専攻として、グローバル・コミュニケーション、ダイバーシティ、データサイエンス、科学リテラシー、地域デザインの5つがあります。また、他学科の学びを深める19の学科副専攻も用意されています。自分の所属学科と同じ学科副専攻は取れないルールになっているので、他分野の科目を上手に取り入れてみてくださいね！`
-    );
+    return '副専攻は指定科目を16単位以上修得すると卒業時に修了認定を受けられる制度で、事前の登録は不要です。全24種あり、所属学科と同じ学科副専攻は取れません。';
   }
 
   // 16. 自販機・設備
   if (['給水', '冷水機', 'ウォーターサーバー'].some((k) => qLower.includes(k))) {
-    return (
-      '学内の給水所（冷水機）ですね！現在は4号館の1階エントランスホールにある給水所が利用可能で、マイボトルに給水できますよ。なお、4号館の2階から4階の給水所は現在使えないので、1階のものをご利用くださいね。'
-    );
+    return '使える給水所は4号館1階のエントランスホールだけです（2〜4階は停止中）。';
   }
 
   if (['ゴミ箱', 'ごみ箱', 'ゴミ', 'ごみ'].some((k) => qLower.includes(k))) {
-    return (
-      '学内のゴミ箱の設置場所ですね！1号館と3号館は各フロアに設置されていて、4号館は各階のトイレ前に設置されています。気をつけていただきたい点として、2号館の中にはゴミ箱や自販機が置かれていないので、お隣の号館のものを使ってくださいね。'
-    );
+    return 'ゴミ箱は1号館・3号館の各フロアと、4号館の各階トイレ前にあります。2号館にはありません。';
   }
 
   if (['クレカ', 'クレジットカード', 'タッチ決済', 'コンタクトレス'].some((k) => qLower.includes(k))) {
-    return (
-      'クレジットカードのタッチ決済が使える自販機をお探しですね！3号館の1階食堂側にあるコカ・コーラの赤い自販機で、VisaやMastercardなどのタッチ決済がそのまま使えますよ。サントリーの青い自販機も、ジハンピのQRコードからPayPayなどで支払うことができます。'
-    );
+    return 'クレジットカードのタッチ決済は、3号館1階食堂側のコカ・コーラの赤い自販機で使えます。';
   }
 
   if (['コーラ', 'ペプシ', 'coca', 'pepsi'].some((k) => qLower.includes(k))) {
-    return (
-      'コーラの自販機ですね！3号館1階の食堂側に2種類ありますよ。赤い自販機にはコカ・コーラ（140円）が入っていて、クレジットカードタッチや交通系IC、Coke ONが使えます。青い自販機にはペプシコーラ生（100円）が入っていてお得ですよ。'
-    );
+    return 'コーラは3号館1階の食堂側にあります。赤い自販機のコカ・コーラが140円、青い自販機のペプシコーラ生が100円です。';
   }
 
   if (q.includes('80円') || ['水', '天然水', 'ミネラルウォーター'].some((k) => qLower.includes(k))) {
-    return (
-      '学内最安の80円ドリンクですね！サントリー天然水やZONeが80円で買える自販機は、4号館1階の自販機コーナーや、3号館1階の食堂側にありますよ。ジハンピ経由のPayPayや交通系IC、現金で購入できます。'
-    );
+    return '80円の天然水とZONeは、4号館1階と3号館1階食堂側の自販機で買えます。';
   }
 
   // デフォルト案内
-  return (
-    '文理学部の学生アシスタントです！履修登録や卒業要件、CAP制の40単位制限、目標GPAのシミュレーション、全24種類の副専攻、キャンパスの空き教室や自販機の場所など、大学生活で気になることがあれば何でも聞いてくださいね。例えば「今空いてる教室ある？」「あと何単位必要？」「GPA3.0にするにはどうすればいい？」など、お気軽にチャットしてください！'
-  );
+  return '文理学部の履修アシスタントです。空き教室、必修や卒業要件、GPA、副専攻などを聞いてください。';
 }
 
 export async function GET() {

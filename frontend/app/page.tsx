@@ -217,6 +217,16 @@ const QUICK_CHIPS: QuickChip[] = [
   { label: '給水所・ゴミ箱の場所', query: '給水所とゴミ箱の場所を教えて', category: 'campus' },
 ];
 
+/** 成績表・時間割の添付欄の下に出す案内（スマホの写真で読み取れないときはパソコンからPDF・スクリーンショットを） */
+function PcUploadHint() {
+  return (
+    <p data-pc-upload-hint className="flex items-start gap-1.5 px-2.5 py-2 rounded-md border border-blue-200 bg-blue-50 text-[11px] leading-relaxed text-blue-900">
+      <span aria-hidden="true">💡</span>
+      <span>スマホの撮影画像で読み取りがうまくいかない場合は、パソコンからPDFやスクリーンショットを送信していただくと、より正確・確実に読み込めます。</span>
+    </p>
+  );
+}
+
 export default function UnifiedAssistantPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -2842,6 +2852,8 @@ export default function UnifiedAssistantPage() {
                     </div>
                   </div>
 
+                  <PcUploadHint />
+
                   {/* 登録科目一覧テーブル */}
                   <div className="border border-slate-200 rounded-lg overflow-hidden">
                     <table className="w-full text-xs text-left border-collapse">
@@ -2989,6 +3001,8 @@ export default function UnifiedAssistantPage() {
                         </label>
                       </div>
                     </div>
+
+                    <PcUploadHint />
 
                     {/* コピペ用テキスト入力欄（スマホ・PC両対応） */}
                     {showTranscriptPasteBox && (
@@ -4929,6 +4943,8 @@ export default function UnifiedAssistantPage() {
                       </div>
                     </div>
                   </div>
+
+                  <PcUploadHint />
 
                   {/* 登録ボタン & AI解析インジケーター */}
                   <div className="pt-2">

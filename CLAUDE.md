@@ -14,6 +14,7 @@ EneKoma(エネコマ)は、日本大学文理学部(CHS)の学生向けAIチャ�
 | 空き教室・構内ナビ | 今の時限の空き教室、自販機・ゴミ箱・各課窓口を案内 | `findFreeRooms`(`data/courses.ts`), `SYSTEM_PROMPT` と `answerLocally`(`route.ts`) |
 | 履修サポート | 重複チェック、空きコマ提案、友達との空きコマ照合、必修組み込みの時間割案、移動判定、科目・教員・教室の逆引き | `answerTimetableQuery`(`data/timetableAssistant.ts`) |
 | デザインテーマ | デフォルト・かわいい・かっこいいの切り替え(プロフィールの基本設定タブ) | `data/themes.ts`, `globals.css`, `layout.tsx` |
+| お問い合わせ | レビュー・ご意見・質問・不具合報告の受付と、管理者画面でのステータス管理 | `components/FeedbackModal.tsx`, `components/AdminFeedbackModal.tsx`, `api/feedback/`, `api/admin/feedback/` |
 
 ## コマンド
 
@@ -100,6 +101,7 @@ AIの回答末尾に置く ` ```profile_update ` JSONブロックでプロフィ
 - メールアドレスは `checkEmailAddress`（`data/emailAddress.ts`）で画面とサーバーの両方で確認する。大学のドメイン（`@g.nihon-u.ac.jp`）に似ているのに違うもの（`.ac.jo` など）や、よくある打ち間違い（`gmail.con` など）は登録させない。入力欄では大学のアドレスの登録を案内する。
 - メールの送信は `app/api/account/mailer.ts`。本番はGmail（`GMAIL_USER` と `GMAIL_APP_PASSWORD`、nodemailerでsmtp.gmail.com:465）で送る。送信元はそのGmailアドレスで、`MAIL_FROM` で表示名だけ変えられる。Gmailの送信上限は1日約500通。送信のたびに `[mail] sent` / `[mail] failed` の1行ログ（日本時間・宛先のユーザー名を伏せたアドレス・件名・Gmailの応答・messageId）を出す。本文とリンクは出さない。同じ内容を直近50件・7日間Redisにも残し（`app/api/account/mailLog.ts`）、管理者モードの「📧 メール送信ログ」（`/api/admin/mail-log`、`ADMIN_SECRET_KEY` で認証）で見られる。送らなかった場合も `skipped` と理由（account_not_found・email_not_verified・rate_limited など）を残す。Vercel Hobbyの実行ログは約1時間で消え、`vercel logs` でも実行ログは取れないので、届かない報告はこの画面で確認する。Resend（`MAIL_PROVIDER=resend`、`RESEND_API_KEY`、`MAIL_FROM`）にも切り替えられる。ローカル開発で未設定ならサーバーのログに出し、Vercel上で未設定ならメール機能は503を返す。リンクのドメインは `APP_BASE_URL`、なければVercelの本番URLを使う（Hostヘッダーは使わない）。Redisのない環境では、ローカル開発だけメモリに保存する。
 - メンテナンス設定だけはサーバー側のRedisに保存する(「運用ルール」参照)。
+- お問い合わせは `api/feedback/feedbackStore.ts` がRedisに保存する（新しい順に最大500件、ステータスは未対応・対応中・対応済み・対応不要）。送信は同じ接続元から1時間に5件まで。成績などのカルテの内容は送らない。管理者用APIの認証は `api/_lib/adminAuth.ts` の `rejectUnlessAdmin` を使う。
 - デザインテーマはアカウントではなく端末ごとに `localStorage` の `enekoma_theme` に保存する。`layout.tsx` の `<head>` のスクリプトが描画前に `<html data-theme>` を付けるので、再読み込みでちらつかない。
 
 ### 資格コース・教職・副専攻のデータ

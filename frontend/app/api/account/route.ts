@@ -2,6 +2,7 @@
 // 成績・時間割・チャットはサーバーに送らず、これまで通り端末に保存する
 import { NextRequest, NextResponse } from 'next/server';
 import { INITIAL_DEMO_ACCOUNTS, PASSWORD_MIN_LENGTH } from '@/app/data/studentAccounts';
+import { checkEmailAddress } from '@/app/data/emailAddress';
 import {
   accountsForEmail,
   allowAttempt,
@@ -55,7 +56,6 @@ function appBaseUrl(request: NextRequest): string {
 }
 
 const isValidLoginId = (id: string) => /^[A-Za-z0-9._-]{3,32}$/.test(id);
-const isValidEmail = (email: string) => email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const isValidPassword = (pw: string) => pw.length >= PASSWORD_MIN_LENGTH && pw.length <= 128;
 const isDemoId = (id: string) => Object.keys(INITIAL_DEMO_ACCOUNTS).includes(id);
 
@@ -90,7 +90,11 @@ async function handle(request: NextRequest, body: Body) {
       if (!isValidLoginId(loginId)) return fail(400, 'invalid_login_id', 'ログインIDは半角英数字（3〜32文字）で入力してください。');
       if (isDemoId(loginId)) return fail(400, 'reserved', 'このIDはデモアカウント用のため使えません。');
       if (!isValidPassword(password)) return fail(400, 'weak_password', `パスワードは${PASSWORD_MIN_LENGTH}文字以上にしてください。`);
-      if (email && !isValidEmail(email)) return fail(400, 'invalid_email', 'メールアドレスの形式が正しくありません。');
+      if (email) {
+        // 形式と、大学のドメインなどの打ち間違い（.ac.jo など）を確認する
+        const check = checkEmailAddress(email);
+        if (!check.ok) return fail(400, 'invalid_email', check.message);
+      }
       if (!(await allowAttempt(`register:${ip}`, 10, 3600))) return fail(429, 'rate_limited', '登録の回数が多すぎます。しばらくしてからお試しください。');
       const grade = Math.min(6, Math.max(1, Number(body.grade) || 1));
       const account = await createAccount({
@@ -212,7 +216,8 @@ async function handle(request: NextRequest, body: Body) {
       }
 
       const email = normalizeEmail(str(body.email, 300));
-      if (!isValidEmail(email)) return fail(400, 'invalid_email', 'メールアドレスの形式が正しくありません。');
+      const check = checkEmailAddress(email);
+      if (!check.ok) return fail(400, 'invalid_email', check.message);
       if (!isMailConfigured()) {
         await recordMailLog({ status: 'skipped', to: maskEmail(email), subject: VERIFY_SUBJECT, reason: 'not_configured（メール送信の環境変数が未設定）' });
         return fail(503, 'mail_not_configured', 'メール送信の準備がまだできていないため、確認メールを送れません。');

@@ -14,6 +14,8 @@ import {
   GAKUBU_YORAN_CAP_RULES,
   GAKUBU_YORAN_GPA_RULES,
   analyzeAcademicDeficiency,
+  electivesForTrack,
+  findDepartmentTrack,
   simulateGpaEngine,
   CourseRecord,
   EnrolledCourseItem,
@@ -47,7 +49,19 @@ import { checkEmailAddress, UNIVERSITY_EMAIL_DOMAIN } from '@/app/data/emailAddr
 import FeedbackModal from '@/app/components/FeedbackModal';
 import AdminFeedbackModal from '@/app/components/AdminFeedbackModal';
 import { prepareFileForUpload } from '@/app/data/imageUpload';
-import { THEMES, ThemeId, applyTheme, readStoredTheme, saveTheme } from '@/app/data/themes';
+import {
+  ACCENT_PRESETS,
+  AccentColor,
+  THEMES,
+  ThemeId,
+  accentLabel,
+  applyTheme,
+  makeAccent,
+  readStoredAccent,
+  readStoredTheme,
+  saveAccent,
+  saveTheme
+} from '@/app/data/themes';
 import { calculateGpa, isEarnedGrade, isFailingGrade, isSameCourseName, normalizeGrade, resolveRetakes, sumEarnedCredits, toCourseRecord } from '@/app/data/courseGrades';
 import type { GroupStatus } from '@/app/data/programProgress';
 
@@ -224,13 +238,21 @@ export default function UnifiedAssistantPage() {
   const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_PROFILE);
   // デザインテーマ（端末ごとに localStorage に保存。初回の描画前に layout.tsx のスクリプトが適用済み）
   const [theme, setTheme] = useState<ThemeId>(() => readStoredTheme());
+  // メインの色（null ならテーマの色のまま）
+  const [accent, setAccent] = useState<AccentColor | null>(() => readStoredAccent());
   // 開発時の Strict Mode の再マウントなどで data-theme が消えても付け直す
   useLayoutEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+    applyTheme(theme, accent);
+  }, [theme, accent]);
   const changeTheme = (id: ThemeId) => {
     setTheme(id);
     saveTheme(id);
+  };
+  const changeAccent = (hex: string | null) => {
+    const next = hex ? makeAccent(hex) : null;
+    if (hex && !next) return;
+    setAccent(next);
+    saveAccent(next);
   };
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [profileTab, setProfileTab] = useState<'timetable' | 'completed' | 'reqCourses' | 'basic' | 'courses' | 'minors'>('timetable');
@@ -2752,7 +2774,7 @@ export default function UnifiedAssistantPage() {
                 { id: 'timetable', label: '📅 今期履修中', detail: `${userProfile.semesterCredits}単位` },
                 { id: 'completed', label: '📜 修得済み科目', detail: `${userProfile.completedCourses.length}件` },
                 { id: 'reqCourses', label: '📌 学科必修​チェック', detail: liveDeficiency.missingMajorReqs.length === 0 ? '完修' : `残${liveDeficiency.missingMajorReqs.length}` },
-                { id: 'basic', label: '⚙️ 基本設定・GPA', detail: THEMES.find((t) => t.id === theme)?.label },
+                { id: 'basic', label: '⚙️ 基本設定・GPA', detail: `${THEMES.find((t) => t.id === theme)?.label ?? ''}${accent ? `・${accentLabel(accent)}` : ''}` },
                 { id: 'courses', label: '🏅 資格コース' },
                 { id: 'minors', label: '🌐 副専攻', detail: '24種' }
               ].map((tab) => (
@@ -3090,7 +3112,9 @@ export default function UnifiedAssistantPage() {
               {/* TAB 3: 必修・選択必修科目チェックリスト（完全区分・単位数明記） */}
               {profileTab === 'reqCourses' && (() => {
                 const compulsoryList = liveDeptData.requiredCourses.map((c) => ({ ...c, isElective: false }));
-                const electiveList = (liveDeptData.electiveRequiredCourses || []).map((c) => ({ ...c, isElective: true }));
+                // カテゴリ・コースを選んでいれば、その区分の選択必修だけを出す
+                const selectedTrack = findDepartmentTrack(liveDeptData, userProfile.departmentTrack);
+                const electiveList = electivesForTrack(liveDeptData, userProfile.departmentTrack).map((c) => ({ ...c, isElective: true }));
                 const combinedList = [...compulsoryList, ...electiveList];
                 const displayedList = combinedList.filter((c) => {
                   if (reqCourseFilter === 'compulsory') return !c.isElective;
@@ -3117,10 +3141,45 @@ export default function UnifiedAssistantPage() {
                           必修: {liveDeptData.majorReq}単位
                         </span>
                         <span className="px-2 py-0.5 rounded font-bold bg-amber-100 text-amber-900 border border-amber-300">
-                          選択必修: {liveDeptData.majorOpt}単位
+                          選択必修: {selectedTrack?.electiveCredits ?? liveDeptData.majorOpt}単位
                         </span>
                       </div>
                     </div>
+
+                    {/* 選択必修の区分（カテゴリ・コース）を選ぶ */}
+                    {liveDeptData.tracks && liveDeptData.tracks.length > 0 && (
+                      <div className="p-2.5 rounded-lg border border-amber-200 bg-amber-50/60 space-y-1.5">
+                        <div id="track-picker-label" className="text-xs font-semibold text-slate-800">
+                          選択する{liveDeptData.trackLabel || '区分'}:
+                        </div>
+                        <div role="radiogroup" aria-labelledby="track-picker-label" className="flex flex-wrap gap-1.5">
+                          {[{ id: '', label: '未選択（すべて表示）' }, ...liveDeptData.tracks].map((track) => {
+                            const selected = (selectedTrack?.id ?? '') === track.id;
+                            return (
+                              <button
+                                key={track.id || 'none'}
+                                type="button"
+                                role="radio"
+                                aria-checked={selected}
+                                data-track-option={track.id || 'none'}
+                                onClick={() => saveProfile({ ...userProfile, departmentTrack: track.id || undefined })}
+                                className={`px-2.5 py-1 rounded-md border text-[11px] font-medium transition ${
+                                  selected ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                                }`}
+                              >
+                                {selected && '✓ '}
+                                {track.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <p className="text-[10px] text-slate-600">
+                          {selectedTrack
+                            ? `${selectedTrack.rule}。選択必修には、この${liveDeptData.trackLabel || '区分'}の科目だけを表示しています。`
+                            : `${liveDeptData.trackLabel || '区分'}を選ぶと、その選択必修の科目だけを表示します。`}
+                        </p>
+                      </div>
+                    )}
 
                     {/* フィルター切り替えタブ */}
                     <div className="flex items-center justify-between">
@@ -3176,7 +3235,8 @@ export default function UnifiedAssistantPage() {
                         <div className="p-4 text-center text-xs text-slate-400">該当する科目がありません</div>
                       ) : (
                         displayedList.map((req) => {
-                          const isCompleted = userProfile.completedCourses.some((c) => c.name === req.name);
+                          // 修得済み科目と同じ判定（全角半角・ローマ数字の違いを無視し、不合格は数えない）
+                          const isCompleted = hasEarnedCourse(req.name);
                           return (
                             <label
                               key={req.name + req.group}
@@ -3294,6 +3354,64 @@ export default function UnifiedAssistantPage() {
                         );
                       })}
                     </div>
+
+                    {/* メインの色。テーマのフォント・角丸・明暗はそのままで、色だけを変える */}
+                    <div className="mt-3 flex items-center justify-between text-xs">
+                      <span id="accent-picker-label" className="font-semibold text-slate-800">メインの色:</span>
+                      <span className="text-[10px] text-slate-500">{accentLabel(accent)}</span>
+                    </div>
+                    <div role="radiogroup" aria-labelledby="accent-picker-label" className="mt-1.5 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={!accent}
+                        aria-label="テーマの色"
+                        title="テーマの色"
+                        onClick={() => changeAccent(null)}
+                        className={`h-8 px-2.5 rounded-full border text-[10px] font-semibold bg-white text-slate-700 ${
+                          !accent ? 'border-slate-800 ring-2 ring-slate-800/30' : 'border-slate-300'
+                        }`}
+                      >
+                        テーマの色
+                      </button>
+                      {ACCENT_PRESETS.map((preset) => {
+                        const selected = accent?.hex === preset.hex;
+                        return (
+                          <button
+                            key={preset.hex}
+                            type="button"
+                            role="radio"
+                            aria-checked={selected}
+                            aria-label={preset.label}
+                            title={preset.label}
+                            data-accent-option={preset.hex}
+                            onClick={() => changeAccent(preset.hex)}
+                            className={`relative w-8 h-8 rounded-full border border-black/10 ${selected ? 'ring-2 ring-offset-2 ring-slate-800' : ''}`}
+                            style={{ backgroundColor: preset.hex }}
+                          >
+                            {selected && <span className="absolute inset-0 flex items-center justify-center text-white text-xs font-bold" aria-hidden="true">✓</span>}
+                          </button>
+                        );
+                      })}
+                      {/* 好きな色。見本は選んだ色そのもので表示する */}
+                      <label
+                        className={`relative w-8 h-8 rounded-full border border-black/10 cursor-pointer overflow-hidden ${
+                          accent && !ACCENT_PRESETS.some((p) => p.hex === accent.hex) ? 'ring-2 ring-offset-2 ring-slate-800' : ''
+                        }`}
+                        style={{ background: accent && !ACCENT_PRESETS.some((p) => p.hex === accent.hex) ? accent.hex : 'conic-gradient(#ef4444, #eab308, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444)' }}
+                        title="好きな色を選ぶ"
+                      >
+                        <span className="sr-only">好きな色を選ぶ</span>
+                        <input
+                          type="color"
+                          value={accent?.hex ?? '#2563eb'}
+                          onChange={(e) => changeAccent(e.target.value)}
+                          aria-label="好きな色を選ぶ"
+                          className="absolute inset-0 opacity-0 cursor-pointer"
+                        />
+                      </label>
+                    </div>
+                    <p className="mt-1.5 text-[10px] text-slate-500 leading-snug">文字が読みやすい明るさに自動で調整します。成功・注意・エラーの色は変わりません。</p>
                   </div>
 
                   {/* アカウント・メール連携 */}

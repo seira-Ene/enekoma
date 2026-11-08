@@ -13,7 +13,7 @@ EneKoma(エネコマ)は、日本大学文理学部(CHS)の学生向けAIチャ�
 | 目標GPA逆算 | 今期S・Aを何単位取れば目標GPAに届くかを提案 | `simulateGpaEngine`(`data/gakubuYoran.ts`) |
 | 空き教室・構内ナビ | 今の時限の空き教室、自販機・ゴミ箱・各課窓口を案内 | `findFreeRooms`(`data/courses.ts`), `SYSTEM_PROMPT` と `answerLocally`(`route.ts`) |
 | 履修サポート | 重複チェック、空きコマ提案、友達との空きコマ照合、必修組み込みの時間割案、移動判定、科目・教員・教室の逆引き | `answerTimetableQuery`(`data/timetableAssistant.ts`) |
-| デザインテーマ | デフォルト・かわいい・かっこいいの切り替え(プロフィールの基本設定タブ) | `data/themes.ts`, `globals.css`, `layout.tsx` |
+| デザインテーマ | デフォルト・かわいい・かっこいいの切り替えと、メインの色(おすすめの色・好きな色)の選択(プロフィールの基本設定タブ) | `data/themes.ts`, `globals.css`, `layout.tsx` |
 | お問い合わせ・ユーザーの声 | レビュー・ご意見・質問・不具合報告の受付、管理者画面でのステータス管理と公開の切り替え、公開分を `/voices` に匿名で表示 | `components/FeedbackModal.tsx`, `components/AdminFeedbackModal.tsx`, `api/feedback/`, `api/admin/feedback/` |
 
 ## コマンド
@@ -104,7 +104,11 @@ AIの回答末尾に置く ` ```profile_update ` JSONブロックでプロフィ
 - お問い合わせは `api/feedback/feedbackStore.ts` がRedisに保存する（新しい順に最大500件、ステータスは未対応・対応中・対応済み・対応不要）。送信は同じ接続元から1時間に5件まで。成績などのカルテの内容は送らない。管理者用APIの認証は `api/_lib/adminAuth.ts` の `rejectUnlessAdmin` を使う。管理者が「公開する」にしたものだけを `/voices`（`app/voices/page.tsx`）と `GET /api/feedback` に出す。メール・ログインID・端末情報・管理メモは出さず、本文中のメールアドレス・電話番号・7桁以上の数字は `anonymizeText` で伏せる。受け付けると、`after` で応答のあとに管理者へ通知メールを送る（`api/feedback/notify.ts`。送信先は `ADMIN_EMAIL`、なければ `GMAIL_USER`）。送信に失敗しても保存と完了表示には影響させず、結果はメール送信ログに残す。
 - FAQ（よくある質問・不具合の対処法）は、お問い合わせに管理者が回答（`answer`、任意で `faqTitle`）を保存し、「FAQとして公開」（`isFaq`）にしたものだけを `listPublicFaq` で出す。回答がないと公開できず、回答を消すとFAQから外れる。質問文は `anonymizeText` で伏せる。検索は `data/faqSearch.ts`（キーワードのAND検索と、入力中の文に似たものを探す `findSimilarFaq`）で、`/voices` の `FaqSearch` と `GET /api/faq`（`mode=similar` はフォームの「こちらの解決策はお試しになりましたか？」用）が使う。「これで解決しました」を押すと送信しない。
 - 検索とSNS向けの情報は `app/siteConfig.ts`（サイト名・説明・キーワード・URL）にまとめ、`layout.tsx` のメタデータ、`robots.ts`、`sitemap.ts` で使う。OGP画像は `app/opengraph-image.png` と `twitter-image.png`（1200×630）。`/api/` と `/admin` はクロールさせない。
-- デザインテーマはアカウントではなく端末ごとに `localStorage` の `enekoma_theme` に保存する。`layout.tsx` の `<head>` のスクリプトが描画前に `<html data-theme>` を付けるので、再読み込みでちらつかない。
+- デザインテーマはアカウントではなく端末ごとに `localStorage` の `enekoma_theme` に保存する。`layout.tsx` の `<head>` のスクリプトが描画前に `<html data-theme>` を付けるので、再読み込みでちらつかない。メインの色も同じく端末ごとに `enekoma_accent` に保存し、同じスクリプトが `data-accent` と `--accent-h`・`--accent-k` を付ける。
+
+### 学科の選択必修の区分
+
+情報科学科のカテゴリ4〜6、社会福祉学科のコース、体育学科のF群・G群のように、学生がどれか1つを選ぶ区分は `tracks`(`data/departmentCurriculum.ts`)に持つ。選んだ区分はプロフィールの `departmentTrack` に保存し、`electivesForTrack`(`data/gakubuYoran.ts`)でほかの区分の選択必修を除く。未選択ならすべて出す。学科必修チェックの修得判定は修得済み科目と同じ `hasEarnedCourse`(名前の表記ゆれを無視し、不合格は数えない)を使う。
 
 ### 資格コース・教職・副専攻のデータ
 
@@ -124,6 +128,7 @@ Tailwind v4 のユーティリティは `--color-slate-900` などの変数を�
 - かっこいい: 各色の濃淡を反転したダーク配色(`white` も暗くなる)で、indigo/blue をシアン系にし、角丸を小さくし、Zen Kaku Gothic New を使う。新しい色を使うときは、反転後も読めるか確認する。
 - テーマ用フォントは `preload: false` なので、選んだ端末だけが読み込む。フォントは `--theme-font` 経由で `font-sans` と `body` に効かせる。
 - テーマを追加するときは `THEMES`(`data/themes.ts`)と `globals.css` の両方に足す。
+- メインの色は、選んだ色の色相と鮮やかさだけを使い、`html[data-accent]` で slate と indigo・blue を置き換える。明るさは段階ごとに固定しているので、どの色でも文字が読める。emerald・amber・rose(成功・注意・エラー)は変えない。テーマのフォントと角丸はそのまま。かっこいいテーマでは暗い配色の段階を使う。
 
 ### カリキュラムの分岐
 

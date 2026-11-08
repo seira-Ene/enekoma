@@ -10,6 +10,17 @@ export interface DepartmentCurriculumCourse {
   note?: string;
 }
 
+// 学生がどれか1つを選ぶ選択必修の区分（情報科学科のカテゴリ4〜6、社会福祉学科のコース、体育学科のF群・G群）
+export interface DepartmentTrack {
+  id: string;
+  label: string;
+  // この区分に属する選択必修科目の group
+  groups: string[];
+  rule: string;
+  // この区分を選んだときに必要な選択必修の単位数（学科全体の majorElectiveCredits と違うとき）
+  electiveCredits?: number;
+}
+
 export interface DepartmentCurriculumInfo {
   department: string;
   majorReqCredits: number;
@@ -18,6 +29,9 @@ export interface DepartmentCurriculumInfo {
   electiveSummary: string;
   requiredCourses: DepartmentCurriculumCourse[];
   electiveRequiredCourses: DepartmentCurriculumCourse[];
+  // 選ぶ区分の呼び方（「カテゴリ」「コース」など）と選択肢
+  trackLabel?: string;
+  tracks?: DepartmentTrack[];
 }
 
 export const VERIFIED_12_DEPARTMENTS_CURRICULUM: Record<string, DepartmentCurriculumInfo> = {
@@ -524,6 +538,25 @@ export const VERIFIED_12_DEPARTMENTS_CURRICULUM: Record<string, DepartmentCurric
         "group": "福祉社会創造コース科目群",
         "year": 3
       }
+    ],
+    "trackLabel": "コース",
+    "tracks": [
+      {
+        "id": "socialwork",
+        "label": "ソーシャルワークコース",
+        "groups": [
+          "ソーシャルワークコース科目群"
+        ],
+        "rule": "ソーシャルワークコース科目群の科目を履修（2年次から）"
+      },
+      {
+        "id": "welfare",
+        "label": "福祉社会創造コース",
+        "groups": [
+          "福祉社会創造コース科目群"
+        ],
+        "rule": "福祉社会創造コース科目群の科目を履修（2年次から）"
+      }
     ]
   },
   "教育学科": {
@@ -945,6 +978,25 @@ export const VERIFIED_12_DEPARTMENTS_CURRICULUM: Record<string, DepartmentCurric
         "category": "選択必修",
         "group": "G群（合計8単位）",
         "year": 4
+      }
+    ],
+    "trackLabel": "卒業研究・卒業論文",
+    "tracks": [
+      {
+        "id": "f",
+        "label": "F群（卒業研究1・2）",
+        "groups": [
+          "F群（合計4単位）"
+        ],
+        "rule": "F群から4単位"
+      },
+      {
+        "id": "g",
+        "label": "G群（卒業論文）",
+        "groups": [
+          "G群（合計8単位）"
+        ],
+        "rule": "G群から8単位"
       }
     ]
   },
@@ -1956,7 +2008,7 @@ export const VERIFIED_12_DEPARTMENTS_CURRICULUM: Record<string, DepartmentCurric
     "majorReqCredits": 38,
     "majorElectiveCredits": 22,
     "requiredSummary": "カテゴリ1(16単位)＋カテゴリ2(8単位)＋カテゴリ3(4単位)＋カテゴリ7(10単位)＝計38単位",
-    "electiveSummary": "3コース選択必修（応用講義群22単位 または ソフトウェア12単位 または 次世代社会6単位）",
+    "electiveSummary": "次の(1)〜(3)のいずれか：(1)カテゴリ4から22単位以上 (2)カテゴリ5の12単位すべて (3)カテゴリ6の6単位すべて",
     "requiredCourses": [
       {
         "name": "情報処理入門1",
@@ -2101,25 +2153,246 @@ export const VERIFIED_12_DEPARTMENTS_CURRICULUM: Record<string, DepartmentCurric
     ],
     "electiveRequiredCourses": [
       {
-        "name": "カテゴリ4（応用講義群から22単位取得）",
-        "credits": 22,
+        "name": "線形代数1",
+        "credits": 2,
         "category": "選択必修",
-        "group": "選択必修コース条件1",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 2
+      },
+      {
+        "name": "線形代数2",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 2
+      },
+      {
+        "name": "解析学1",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 2
+      },
+      {
+        "name": "解析学2",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 2
+      },
+      {
+        "name": "代数学",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 2
+      },
+      {
+        "name": "離散数学",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 2
+      },
+      {
+        "name": "確率論",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 2
+      },
+      {
+        "name": "データ科学",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 2
+      },
+      {
+        "name": "マルチメディア表現",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 2
+      },
+      {
+        "name": "オートマトンと形式言語",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
         "year": 3
       },
       {
-        "name": "カテゴリ5（ソフトウェアクリエイション群全12単位取得）",
-        "credits": 12,
+        "name": "論理と計算",
+        "credits": 2,
         "category": "選択必修",
-        "group": "選択必修コース条件2",
+        "group": "カテゴリ4（22単位以上）",
         "year": 3
       },
       {
-        "name": "カテゴリ6（次世代社会コミュニティ情報科学群全6単位取得）",
-        "credits": 6,
+        "name": "情報理論",
+        "credits": 2,
         "category": "選択必修",
-        "group": "選択必修コース条件3",
+        "group": "カテゴリ4（22単位以上）",
         "year": 3
+      },
+      {
+        "name": "グラフ理論",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 3
+      },
+      {
+        "name": "数理計画",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 3
+      },
+      {
+        "name": "幾何学",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 3
+      },
+      {
+        "name": "情報セキュリティ",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 3
+      },
+      {
+        "name": "データベース",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 3
+      },
+      {
+        "name": "ヒューマンインタフェース",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 3
+      },
+      {
+        "name": "コンピューティング",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 3
+      },
+      {
+        "name": "アルゴリズム",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 3
+      },
+      {
+        "name": "画像情報処理と機械学習",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ4（22単位以上）",
+        "year": 3
+      },
+      {
+        "name": "ソフトウェアクリエイション1",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ5（12単位すべて）",
+        "year": 2,
+        "note": "1と2、3と4、5と6はそれぞれ同時に履修（要覧 p.125）"
+      },
+      {
+        "name": "ソフトウェアクリエイション2",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ5（12単位すべて）",
+        "year": 2
+      },
+      {
+        "name": "ソフトウェアクリエイション3",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ5（12単位すべて）",
+        "year": 3
+      },
+      {
+        "name": "ソフトウェアクリエイション4",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ5（12単位すべて）",
+        "year": 3
+      },
+      {
+        "name": "ソフトウェアクリエイション5",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ5（12単位すべて）",
+        "year": 3
+      },
+      {
+        "name": "ソフトウェアクリエイション6",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ5（12単位すべて）",
+        "year": 3
+      },
+      {
+        "name": "次世代社会コミュニティ情報科学1",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ6（6単位すべて）",
+        "year": 2
+      },
+      {
+        "name": "次世代社会コミュニティ情報科学2",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ6（6単位すべて）",
+        "year": 3
+      },
+      {
+        "name": "次世代社会コミュニティ情報科学3",
+        "credits": 2,
+        "category": "選択必修",
+        "group": "カテゴリ6（6単位すべて）",
+        "year": 3,
+        "note": "履修にはいずれかの副専攻の修了条件を満たすこと（要覧 p.125）"
+      }
+    ],
+    "trackLabel": "カテゴリ",
+    "tracks": [
+      {
+        "id": "cat4",
+        "electiveCredits": 22,
+        "label": "カテゴリ4（応用講義群）",
+        "groups": [
+          "カテゴリ4（22単位以上）"
+        ],
+        "rule": "カテゴリ4の中から22単位以上を修得"
+      },
+      {
+        "id": "cat5",
+        "electiveCredits": 12,
+        "label": "カテゴリ5（ソフトウェアクリエイション）",
+        "groups": [
+          "カテゴリ5（12単位すべて）"
+        ],
+        "rule": "カテゴリ5の12単位をすべて修得"
+      },
+      {
+        "id": "cat6",
+        "electiveCredits": 6,
+        "label": "カテゴリ6（次世代社会コミュニティ情報科学）",
+        "groups": [
+          "カテゴリ6（6単位すべて）"
+        ],
+        "rule": "カテゴリ6の6単位をすべて修得"
       }
     ]
   },

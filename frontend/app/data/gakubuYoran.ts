@@ -10,6 +10,7 @@ import {
 } from './coursesAndMinorsCurriculum';
 import {
   VERIFIED_12_DEPARTMENTS_CURRICULUM,
+  DepartmentTrack,
   DepartmentCurriculumCourse
 } from './departmentCurriculum';
 // 日本大学文理学部（CHS）公式ナレッジベース：『学部要覧（令和7年度 / 2025年度）』
@@ -56,6 +57,9 @@ export interface DepartmentGraduationReq {
   electiveRequiredCourses?: RequiredCourseItem[]; // 学科ごとの選択必修科目リスト
   electiveCategories?: ElectiveCategory[];
   milestones?: ProgressionMilestone[];
+  // 学生がどれか1つを選ぶ選択必修の区分（departmentCurriculum.ts の tracks）
+  trackLabel?: string;
+  tracks?: DepartmentTrack[];
 }
 
 // =========================================================================
@@ -783,10 +787,29 @@ Object.entries(VERIFIED_12_DEPARTMENTS_CURRICULUM).forEach(([deptName, info]) =>
         category: '選択必修' as const,
         group: c.group,
         note: c.note
-      }))
+      })),
+      trackLabel: info.trackLabel,
+      tracks: info.tracks
     };
   }
 });
+
+/** 選んだ区分（tracks の id）。その学科にない id なら undefined */
+export function findDepartmentTrack(deptData: DepartmentGraduationReq, trackId: string | undefined): DepartmentTrack | undefined {
+  return trackId ? deptData.tracks?.find((t) => t.id === trackId) : undefined;
+}
+
+/**
+ * 表示・判定に使う選択必修科目。区分を選んでいれば、ほかの区分の科目を除く。
+ * 区分のない学科や、まだ選んでいないときはすべて返す。
+ */
+export function electivesForTrack(deptData: DepartmentGraduationReq, trackId: string | undefined): RequiredCourseItem[] {
+  const all = deptData.electiveRequiredCourses || [];
+  const track = findDepartmentTrack(deptData, trackId);
+  if (!track || !deptData.tracks) return all;
+  const otherGroups = new Set(deptData.tracks.filter((t) => t.id !== track.id).flatMap((t) => t.groups));
+  return all.filter((c) => !c.group || !otherGroups.has(c.group));
+}
 
 // 2. 学部要覧 p.35-36「履修科目登録単位数の上限（CAP制）」完全準拠データ
 // =========================================================================
@@ -1230,6 +1253,7 @@ export interface UserProfileData {
   selectedCourses: string[]; // 複数選択可
   selectedMinors: string[];  // 複数選択可
   admissionYear?: 'reiwa7_or_later' | 'reiwa6_or_earlier'; // 入学年度・カリキュラム体系
+  departmentTrack?: string; // 選択必修の区分（情報科学科のカテゴリ4〜6など。tracks の id）
   completedCourses?: CourseRecord[];
   enrolledCourses?: EnrolledCourseItem[]; // 今期履修中科目
 }
@@ -1328,8 +1352,8 @@ export function analyzeAcademicDeficiency(profile: UserProfileData): DeficiencyR
     }
   });
 
-  // 2. 選択必修科目（指定群・コースから規定単位の修得が必要）
-  (deptData.electiveRequiredCourses || []).forEach((req) => {
+  // 2. 選択必修科目（指定群・コースから規定単位の修得が必要）。区分を選んでいれば、その区分の科目だけ
+  electivesForTrack(deptData, profile.departmentTrack).forEach((req) => {
     const isCompleted = hasCompleted({ name: req.name }, earnedNames);
 
     if (isCompleted) {

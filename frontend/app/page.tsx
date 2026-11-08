@@ -42,6 +42,7 @@ import {
   extractCompletedCoursesFromText
 } from '@/app/data/studentAccounts';
 import { callAccountApi, isServerUnavailable } from '@/app/data/accountClient';
+import { checkEmailAddress, UNIVERSITY_EMAIL_DOMAIN } from '@/app/data/emailAddress';
 import { prepareFileForUpload } from '@/app/data/imageUpload';
 import { THEMES, ThemeId, applyTheme, readStoredTheme, saveTheme } from '@/app/data/themes';
 import { calculateGpa, isEarnedGrade, isFailingGrade, isSameCourseName, normalizeGrade, resolveRetakes, sumEarnedCredits, toCourseRecord } from '@/app/data/courseGrades';
@@ -889,6 +890,11 @@ export default function UnifiedAssistantPage() {
     e.preventDefault();
     if (!currentStudent) return;
     setAccountMessage(null);
+    const check = checkEmailAddress(accountEmailInput);
+    if (!check.ok) {
+      setAccountMessage({ ok: false, text: check.message });
+      return;
+    }
     setIsAuthBusy(true);
     try {
       const res = await callAccountApi('set_email', { loginId: currentStudent.id, password: accountCurrentPassword, email: accountEmailInput.trim() });
@@ -1102,6 +1108,13 @@ export default function UnifiedAssistantPage() {
     if (!regName.trim()) {
       setAuthError('お名前またはニックネームを入力してください。');
       return;
+    }
+    if (regEmail.trim()) {
+      const check = checkEmailAddress(regEmail);
+      if (!check.ok) {
+        setAuthError(check.message);
+        return;
+      }
     }
     if (regPassword.trim().length < PASSWORD_MIN_LENGTH) {
       setAuthError(`パスワードは${PASSWORD_MIN_LENGTH}文字以上にしてください。パスワードを忘れたときはメールで再設定できます。`);
@@ -3267,7 +3280,7 @@ export default function UnifiedAssistantPage() {
                               type="email"
                               value={accountEmailInput}
                               onChange={(e) => setAccountEmailInput(e.target.value)}
-                              placeholder={currentStudent.email ? '新しいメールアドレス' : 'メールアドレス'}
+                              placeholder={`例: xxx@${UNIVERSITY_EMAIL_DOMAIN}`}
                               autoComplete="email"
                               className="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-md text-xs bg-white"
                             />
@@ -3275,6 +3288,7 @@ export default function UnifiedAssistantPage() {
                               確認メールを送る
                             </button>
                           </form>
+                          <p className="-mt-1 text-[10px] font-semibold text-amber-800">※大学のメールアドレス（@{UNIVERSITY_EMAIL_DOMAIN}）を登録してください</p>
                           <form onSubmit={handleChangeAccountPassword} className="flex gap-2">
                             <input
                               type="password"
@@ -4467,12 +4481,13 @@ export default function UnifiedAssistantPage() {
                         type="email"
                         value={regEmail}
                         onChange={(e) => setRegEmail(e.target.value)}
-                        placeholder="example@example.com"
+                        placeholder={`例: xxx@${UNIVERSITY_EMAIL_DOMAIN}`}
                         autoComplete="email"
                         className="w-full px-3 py-2 border border-slate-300 rounded-md text-xs"
                         disabled={isRegistering}
                       />
-                      <p className="mt-1 text-[10px] text-slate-500">パスワードやログインIDを忘れたときに使います。確認メールのリンクを開くと登録が完了します。</p>
+                      <p className="mt-1 text-[10px] font-semibold text-amber-800">※大学のメールアドレス（@{UNIVERSITY_EMAIL_DOMAIN}）を登録してください</p>
+                      <p className="mt-0.5 text-[10px] text-slate-500">パスワードやログインIDを忘れたときに使います。確認メールのリンクを開くと登録が完了します。</p>
                     </div>
                   </div>
 

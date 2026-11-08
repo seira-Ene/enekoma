@@ -135,22 +135,23 @@ const STORAGE_KEY_REMEMBERED_LOGIN = 'enekoma_remembered_login';
 export const REMEMBER_LOGIN_DAYS = 30;
 
 // アカウント一覧の取得（未初期化時はデモアカウントを投入）
+// デモアカウントの初期データの複製を返す。元の INITIAL_DEMO_ACCOUNTS を返すと、新規登録した
+// アカウントがそこに書き足され、再読み込みするまでデモ扱いになってしまう
+const demoAccountsCopy = (): Record<string, StudentAccount> => JSON.parse(JSON.stringify(INITIAL_DEMO_ACCOUNTS));
+
 export function loadAllAccounts(): Record<string, StudentAccount> {
-  if (typeof window === 'undefined') return INITIAL_DEMO_ACCOUNTS;
+  if (typeof window === 'undefined') return demoAccountsCopy();
   try {
     const raw = localStorage.getItem(STORAGE_KEY_ACCOUNTS);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEY_ACCOUNTS, JSON.stringify(INITIAL_DEMO_ACCOUNTS));
-      return INITIAL_DEMO_ACCOUNTS;
-    }
-    const parsed = JSON.parse(raw);
+    const parsed = raw ? JSON.parse(raw) : null;
     if (!parsed || Object.keys(parsed).length === 0) {
-      localStorage.setItem(STORAGE_KEY_ACCOUNTS, JSON.stringify(INITIAL_DEMO_ACCOUNTS));
-      return INITIAL_DEMO_ACCOUNTS;
+      const initial = demoAccountsCopy();
+      localStorage.setItem(STORAGE_KEY_ACCOUNTS, JSON.stringify(initial));
+      return initial;
     }
     return parsed;
   } catch {
-    return INITIAL_DEMO_ACCOUNTS;
+    return demoAccountsCopy();
   }
 }
 

@@ -2,6 +2,7 @@
 // ローカル開発でRedisがなければメモリに置く。Vercel上でRedisがなければ使えない扱いにする
 import { randomBytes } from 'crypto';
 import { deploymentEnv, redisCommand, redisSettings } from '../_lib/redis';
+import type { PublicFaq } from '@/app/data/faqSearch';
 
 export const FEEDBACK_CATEGORIES = ['review', 'opinion', 'question', 'bug'] as const;
 export type FeedbackCategory = (typeof FEEDBACK_CATEGORIES)[number];
@@ -21,6 +22,10 @@ export interface FeedbackItem {
   adminNote?: string;
   // 管理者が公開を許可したものだけ「ユーザーの声」に表示する（既定は非公開）
   isPublic?: boolean;
+  // FAQ（よくある質問・不具合対処法）：管理者の回答・解決手順と、検索に出すかどうか
+  faqTitle?: string;
+  answer?: string;
+  isFaq?: boolean;
   updatedAt?: string;
 }
 
@@ -97,7 +102,9 @@ export async function listFeedback(): Promise<FeedbackItem[]> {
   });
 }
 
-export async function updateFeedback(id: string, fields: { status?: FeedbackStatus; adminNote?: string; isPublic?: boolean }): Promise<FeedbackItem | null> {
+export type FeedbackUpdate = Partial<Pick<FeedbackItem, 'status' | 'adminNote' | 'isPublic' | 'faqTitle' | 'answer' | 'isFaq'>>;
+
+export async function updateFeedback(id: string, fields: FeedbackUpdate): Promise<FeedbackItem | null> {
   const b = backend();
   const current = b.kind === 'memory'
     ? memory.get(id) || null
@@ -142,4 +149,25 @@ export async function listPublicFeedback(limit = 100): Promise<PublicFeedback[]>
       ...(i.category === 'review' && i.rating ? { rating: i.rating } : {}),
       message: anonymizeText(i.message)
     }));
+}
+
+const jstDate = (iso: string) => new Date(new Date(iso).getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+
+/** FAQとして公開され、回答があるものだけを、個人情報を伏せて新しい順に返す */
+export async function listPublicFaq(): Promise<PublicFaq[]> {
+  const items = await listFeedback();
+  return items
+    .filter((i) => i.isFaq && i.answer?.trim())
+    .map((i) => {
+      const question = anonymizeText(i.message);
+      return {
+        id: i.id,
+        title: i.faqTitle?.trim() || (question.length > 40 ? `${question.slice(0, 40)}…` : question),
+        question,
+        answer: i.answer!.trim(),
+        category: i.category,
+        resolved: i.status === 'resolved',
+        date: jstDate(i.createdAt)
+      };
+    });
 }

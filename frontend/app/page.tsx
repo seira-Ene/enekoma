@@ -48,7 +48,7 @@ import { callAccountApi, isServerUnavailable } from '@/app/data/accountClient';
 import { checkEmailAddress, UNIVERSITY_EMAIL_DOMAIN } from '@/app/data/emailAddress';
 import FeedbackModal from '@/app/components/FeedbackModal';
 import AdminFeedbackModal from '@/app/components/AdminFeedbackModal';
-import { prepareFileForUpload } from '@/app/data/imageUpload';
+import { UPLOAD_ACCEPT, describeAnalysisFailure, prepareFileForUpload } from '@/app/data/imageUpload';
 import {
   ACCENT_PRESETS,
   AccentColor,
@@ -258,6 +258,12 @@ export default function UnifiedAssistantPage() {
   const [profileTab, setProfileTab] = useState<'timetable' | 'completed' | 'reqCourses' | 'basic' | 'courses' | 'minors'>('timetable');
   const [reqCourseFilter, setReqCourseFilter] = useState<'all' | 'compulsory' | 'elective'>('all');
   const [profileNotification, setProfileNotification] = useState<string | null>(null);
+  // ファイルの読み込み・AI解析中に画面中央に出す表示
+  const [uploadBusyMessage, setUploadBusyMessage] = useState<string | null>(null);
+  const showUploadError = (message: string) => {
+    setProfileNotification(`⚠️ ${message}`);
+    setTimeout(() => setProfileNotification((current) => (current === `⚠️ ${message}` ? null : current)), 9000);
+  };
   const [showTranscriptPasteBox, setShowTranscriptPasteBox] = useState(false);
   const [transcriptPasteText, setTranscriptPasteText] = useState('');
 
@@ -489,38 +495,19 @@ export default function UnifiedAssistantPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  // ファイル選択（画像・PDF・CSV・表計算・文書など全形式対応）
+  // ファイル選択（写真・PDF・テキスト）。形式は中身から判定し、写真は縮小してから添付する
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
-    const fileName = file.name;
-    const lower = fileName.toLowerCase();
-    let fileType: 'image' | 'pdf' | 'csv' | 'document' = 'document';
-    let mimeType = file.type || 'application/octet-stream';
-
-    if (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(lower)) {
-      fileType = 'image';
-      mimeType = file.type || 'image/jpeg';
-    } else if (file.type === 'application/pdf' || lower.endsWith('.pdf')) {
-      fileType = 'pdf';
-      mimeType = 'application/pdf';
-    } else if (file.type.includes('csv') || lower.endsWith('.csv')) {
-      fileType = 'csv';
-      mimeType = 'text/csv';
-    } else if (file.type.includes('text') || lower.endsWith('.txt')) {
-      fileType = 'document';
-      mimeType = 'text/plain';
-    } else if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
-      fileType = 'document';
-      mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-    }
-
-    e.target.value = '';
-    prepareFileForUpload(file, mimeType)
+    setUploadBusyMessage('ファイルを準備しています…');
+    prepareFileForUpload(file)
       .then((prepared) => {
+        const fileType: 'image' | 'pdf' | 'csv' | 'document' =
+          prepared.kind === 'image' ? 'image' : prepared.kind === 'pdf' ? 'pdf' : prepared.mimeType === 'text/csv' ? 'csv' : 'document';
         setAttachedFile({
-          name: fileName,
+          name: file.name,
           size: file.size,
           mimeType: prepared.mimeType,
           data: prepared.data,
@@ -529,10 +516,8 @@ export default function UnifiedAssistantPage() {
           imageType: 'current_timetable' // 初期値：今期の時間割
         });
       })
-      .catch(() => {
-        setProfileNotification('⚠️ ファイルを読み込めませんでした。');
-        setTimeout(() => setProfileNotification(null), 5000);
-      });
+      .catch((error) => showUploadError(describeAnalysisFailure({ error })))
+      .finally(() => setUploadBusyMessage(null));
   };
 
   // レスポンス整形（チャットUI向けに記号や装飾を除去し自然な言葉遣いに）
@@ -1029,22 +1014,11 @@ export default function UnifiedAssistantPage() {
   // 新規登録時の添付ファイル選択
   const handleRegFileSelect = (e: React.ChangeEvent<HTMLInputElement>, target: 'timetable' | 'transcript') => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
-    let mimeType = file.type || 'application/octet-stream';
-    const lower = file.name.toLowerCase();
-    if (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(lower)) {
-      mimeType = file.type || 'image/jpeg';
-    } else if (file.type === 'application/pdf' || lower.endsWith('.pdf')) {
-      mimeType = 'application/pdf';
-    } else if (file.type.includes('csv') || lower.endsWith('.csv')) {
-      mimeType = 'text/csv';
-    } else if (file.type.includes('text') || lower.endsWith('.txt')) {
-      mimeType = 'text/plain';
-    }
-
-    e.target.value = '';
-    prepareFileForUpload(file, mimeType)
+    setUploadBusyMessage('ファイルを準備しています…');
+    prepareFileForUpload(file)
       .then((prepared) => {
         const item = {
           name: file.name,
@@ -1058,80 +1032,75 @@ export default function UnifiedAssistantPage() {
           setRegTranscriptFile(item);
         }
       })
-      .catch(() => {
-        setAuthError('ファイルを読み込めませんでした。');
-      });
+      .catch((error) => setAuthError(describeAnalysisFailure({ error })))
+      .finally(() => setUploadBusyMessage(null));
   };
 
   // 学生履修プロフィールモーダル内からの直接ファイル添付・AI一括読み込み
   const handleProfileFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: 'timetable' | 'transcript') => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
     const isTimetable = target === 'timetable';
     if (isTimetable) setIsAnalyzingTimetable(true);
     else setIsAnalyzingTranscript(true);
+    setProfileNotification(null);
+    setUploadBusyMessage('ファイルを準備しています…');
 
-    setProfileNotification(isTimetable ? '時間割ファイルをAI解析中（履修科目を抽出しています）...' : '成績通知書ファイルをAI解析中（単位・GPA・科目を抽出しています）...');
-
-    let mimeType = file.type || 'application/octet-stream';
-    const lower = file.name.toLowerCase();
-    if (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(lower)) {
-      mimeType = file.type || 'image/jpeg';
-    } else if (file.type === 'application/pdf' || lower.endsWith('.pdf')) {
-      mimeType = 'application/pdf';
-    } else if (file.type.includes('csv') || lower.endsWith('.csv')) {
-      mimeType = 'text/csv';
-    } else if (file.type.includes('text') || lower.endsWith('.txt')) {
-      mimeType = 'text/plain';
-    }
-
-    e.target.value = '';
+    // スマホの回線でいつまでも待たせないよう、2分で打ち切る
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 120_000);
     try {
-      const { data: dataUrl, mimeType: uploadMimeType } = await prepareFileForUpload(file, mimeType);
+      const prepared = await prepareFileForUpload(file);
+      setUploadBusyMessage(isTimetable ? 'AIが時間割を読み取っています…' : 'AIが成績表を読み取っています…');
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           query: isTimetable
             ? `【学生履修プロフィール：時間割登録】添付ファイル（${file.name}）を解析し、今期履修中科目のenrolledCourses配列のJSONを出力してください。`
             : `【学生履修プロフィール：成績通知書登録】添付ファイル（${file.name}）を解析し、totalEarnedCredits、currentGpa、completedCourses配列のJSONを出力してください。`,
           apiKey: apiKey.trim(),
-          image: { mimeType: uploadMimeType, data: dataUrl },
+          image: { mimeType: prepared.mimeType, data: prepared.data },
           imageType: isTimetable ? 'current_timetable' : 'transcript',
           userProfile
         })
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        let update = data.profileUpdate || parseProfileUpdateFromText(data.reply, true);
+      if (!res.ok) {
+        showUploadError(describeAnalysisFailure({ status: res.status }));
+        return;
+      }
+      const data = await res.json();
+      let update = data.profileUpdate || parseProfileUpdateFromText(data.reply, true);
 
-        // CSV・テキスト・TSVの直接解析フォールバック（UTF-8日本語完全対応）
-        if (!update && (mimeType === 'text/csv' || mimeType === 'text/plain' || lower.endsWith('.txt') || lower.endsWith('.csv') || lower.endsWith('.tsv'))) {
-          try {
-            const decoded = decodeBase64Utf8(dataUrl);
-            update = parseProfileUpdateFromText(decoded, true);
-          } catch (e) {}
+      // CSV・テキスト・TSVの直接解析フォールバック（UTF-8日本語完全対応）
+      if (!update && prepared.kind === 'text') {
+        try {
+          update = parseProfileUpdateFromText(decodeBase64Utf8(prepared.data), true);
+        } catch {
+          // 下の「読み取れませんでした」を出す
         }
+      }
 
-        if (update) {
-          const applied = applyProfileUpdate(update);
-          if (applied) {
-            setProfileNotification(isTimetable ? '✓ 時間割を読み込み、履修中科目・今期単位数を更新しました！' : '✓ 成績通知書を読み込み、修得単位・GPAを更新しました！');
-            setTimeout(() => setProfileNotification(null), 6000);
-          } else {
-            setProfileNotification('⚠️ 解析結果をカルテに反映できませんでした。');
-          }
+      if (update) {
+        const applied = applyProfileUpdate(update);
+        if (applied) {
+          setProfileNotification(isTimetable ? '✓ 時間割を読み込み、履修中科目・今期単位数を更新しました！' : '✓ 成績通知書を読み込み、修得単位・GPAを更新しました！');
+          setTimeout(() => setProfileNotification(null), 6000);
         } else {
-          setProfileNotification('⚠️ ファイルから科目を読み取れませんでした。画像や文字が鮮明かご確認ください。');
+          showUploadError('解析結果をカルテに反映できませんでした。');
         }
       } else {
-        setProfileNotification('⚠️ 解析サーバーとの通信に失敗しました。');
+        showUploadError('ファイルから科目を読み取れませんでした。文字がはっきり写るように撮り直すか、ポータルの表をコピーして「テキスト貼付」をお試しください。');
       }
-    } catch (err: any) {
-      setProfileNotification(`⚠️ 解析エラー: ${err?.message || '不明なエラー'}`);
+    } catch (error) {
+      showUploadError(describeAnalysisFailure({ error }));
     } finally {
+      clearTimeout(timer);
+      setUploadBusyMessage(null);
       if (isTimetable) setIsAnalyzingTimetable(false);
       else setIsAnalyzingTranscript(false);
     }
@@ -2260,10 +2229,29 @@ export default function UnifiedAssistantPage() {
         </div>
       </header>
 
-      {/* プロフィール自動反映時の通知トースト */}
+      {/* プロフィール自動反映時の通知トースト（プロフィール画面などのモーダルより前に出す） */}
       {profileNotification && (
-        <div className="bg-slate-800 text-white text-xs sm:text-sm py-2 px-4 text-center font-medium shadow-sm transition">
+        <div
+          role={profileNotification.startsWith('⚠️') ? 'alert' : 'status'}
+          aria-live="polite"
+          data-upload-toast
+          onClick={() => setProfileNotification(null)}
+          className={`fixed z-[70] left-1/2 -translate-x-1/2 top-[calc(env(safe-area-inset-top,0px)+12px)] w-[calc(100%-24px)] max-w-md px-4 py-3 rounded-xl shadow-lg text-xs sm:text-sm font-medium leading-relaxed cursor-pointer ${
+            profileNotification.startsWith('⚠️') ? 'bg-rose-700 text-white' : 'bg-slate-800 text-white'
+          }`}
+        >
           {profileNotification}
+        </div>
+      )}
+
+      {/* ファイルの準備・AI解析中（画面中央） */}
+      {uploadBusyMessage && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-6" role="status" aria-live="polite" data-upload-busy>
+          <div className="w-full max-w-xs rounded-2xl bg-white px-6 py-5 shadow-xl flex flex-col items-center gap-3 text-center">
+            <span className="h-10 w-10 rounded-full border-4 border-slate-200 border-t-slate-800 animate-spin" aria-hidden="true" />
+            <p className="text-sm font-semibold text-slate-900">{uploadBusyMessage}</p>
+            <p className="text-[11px] text-slate-500">写真は自動で小さくしてから送ります。画面を閉じずにお待ちください。</p>
+          </div>
         </div>
       )}
 
@@ -2709,7 +2697,7 @@ export default function UnifiedAssistantPage() {
             type="file"
             ref={fileInputRef}
             onChange={handleFileSelect}
-            accept="*"
+            accept={UPLOAD_ACCEPT}
             className="hidden"
           />
           <button
@@ -2827,12 +2815,12 @@ export default function UnifiedAssistantPage() {
                       </p>
                     </div>
                     <div className="flex-shrink-0">
-                      <label className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-indigo-900 text-white rounded-md text-xs font-semibold hover:bg-indigo-800 cursor-pointer transition shadow-2xs">
+                      <label className="w-full sm:w-auto min-h-11 sm:min-h-0 inline-flex items-center justify-center space-x-1.5 px-3 py-2.5 sm:py-1.5 bg-indigo-900 text-white rounded-md text-xs font-semibold hover:bg-indigo-800 cursor-pointer transition shadow-2xs">
                         <span>📎</span>
                         <span>{isAnalyzingTimetable ? 'AI解析中...' : '時間割ファイルを添付'}</span>
                         <input
                           type="file"
-                          accept="*/*"
+                          accept={UPLOAD_ACCEPT}
                           disabled={isAnalyzingTimetable}
                           onChange={(e) => handleProfileFileUpload(e, 'timetable')}
                           className="hidden"
@@ -2966,21 +2954,21 @@ export default function UnifiedAssistantPage() {
                           写真・スクリーンショット・PDF添付、またはポータルの表をコピー＆ペーストで即座に反映できます。
                         </p>
                       </div>
-                      <div className="flex items-center space-x-1.5 shrink-0">
+                      <div className="grid grid-cols-2 sm:flex sm:items-center gap-1.5 shrink-0">
                         <button
                           type="button"
                           onClick={() => setShowTranscriptPasteBox(!showTranscriptPasteBox)}
-                          className="px-2.5 py-1.5 bg-white border border-emerald-300 text-emerald-800 rounded-md text-xs font-semibold hover:bg-emerald-50 transition shadow-2xs flex items-center space-x-1"
+                          className="min-h-11 sm:min-h-0 px-2.5 py-2.5 sm:py-1.5 bg-white border border-emerald-300 text-emerald-800 rounded-md text-xs font-semibold hover:bg-emerald-50 transition shadow-2xs flex items-center justify-center space-x-1"
                         >
                           <span>📋</span>
                           <span>{showTranscriptPasteBox ? '貼付欄を閉じる' : 'テキスト貼付'}</span>
                         </button>
-                        <label className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-900 text-white rounded-md text-xs font-semibold hover:bg-emerald-800 cursor-pointer transition shadow-2xs">
+                        <label className="min-h-11 sm:min-h-0 inline-flex items-center justify-center space-x-1.5 px-3 py-2.5 sm:py-1.5 bg-emerald-900 text-white rounded-md text-xs font-semibold hover:bg-emerald-800 cursor-pointer transition shadow-2xs">
                           <span>📎</span>
                           <span>{isAnalyzingTranscript ? 'AI解析中...' : '成績表を添付'}</span>
                           <input
                             type="file"
-                            accept="*/*"
+                            accept={UPLOAD_ACCEPT}
                             disabled={isAnalyzingTranscript}
                             onChange={(e) => handleProfileFileUpload(e, 'transcript')}
                             className="hidden"
@@ -2999,13 +2987,34 @@ export default function UnifiedAssistantPage() {
                           大学ポータル（NU-Web等）の成績画面からコピーしたテキスト（タブ区切り、CSV、スペース区切り等）をそのまま貼り付けてください。
                         </p>
                         <textarea
-                          rows={4}
+                          rows={5}
                           value={transcriptPasteText}
                           onChange={(e) => setTranscriptPasteText(e.target.value)}
+                          aria-label="成績テキスト"
+                          autoCapitalize="off"
+                          autoCorrect="off"
+                          spellCheck={false}
                           placeholder={'例（ポータル表からそのままペースト）：\n科目名\t単位数\t評価\n日本語表現法\t2\tA\nキャリアデザイン\t2\tS\n情報リテラシー\t2\tB\n体育実技\t1\t合格'}
-                          className="w-full p-2 border border-slate-300 rounded-md text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-700 bg-slate-50/50"
+                          className="block w-full max-w-full min-h-28 max-h-[40vh] resize-y p-2 border border-slate-300 rounded-md text-base sm:text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-700 bg-slate-50/50"
                         />
-                        <div className="flex justify-end space-x-2">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          {typeof navigator !== 'undefined' && !!navigator.clipboard?.readText && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  const text = await navigator.clipboard.readText();
+                                  if (text.trim()) setTranscriptPasteText(text);
+                                  else showUploadError('クリップボードが空です。ポータルの成績の表をコピーしてから押してください。');
+                                } catch {
+                                  showUploadError('クリップボードを読み取れませんでした。入力欄を長押しして「ペースト」を選んでください。');
+                                }
+                              }}
+                              className="mr-auto min-h-11 sm:min-h-0 px-2.5 py-2 sm:py-1 border border-emerald-300 text-emerald-800 rounded-md text-xs font-semibold bg-white"
+                            >
+                              📋 コピーした内容を貼り付け
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => {
@@ -4856,7 +4865,7 @@ export default function UnifiedAssistantPage() {
                             <span className="font-medium">時間割ファイルを選択</span>
                             <input
                               type="file"
-                              accept="*/*"
+                              accept={UPLOAD_ACCEPT}
                               onChange={(e) => handleRegFileSelect(e, 'timetable')}
                               className="hidden"
                               disabled={isRegistering}
@@ -4898,7 +4907,7 @@ export default function UnifiedAssistantPage() {
                             <span className="font-medium">成績通知書を選択</span>
                             <input
                               type="file"
-                              accept="*/*"
+                              accept={UPLOAD_ACCEPT}
                               onChange={(e) => handleRegFileSelect(e, 'transcript')}
                               className="hidden"
                               disabled={isRegistering}

@@ -5,6 +5,9 @@
 // MAIL_PROVIDER を指定しなければ、設定のあるサービスを使う（両方あればGmail）
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
+import { maskEmail, recordMailLog } from './mailLog';
+
+export { maskEmail };
 
 export interface MailMessage {
   to: string;
@@ -33,26 +36,16 @@ export function isMailConfigured(): boolean {
   return provider() !== 'none';
 }
 
-// ---- 送信結果のログ（1通につき1行。本文・リンク・パスワードは出さない） ----
-/** 宛先のユーザー名部分を伏せる（例: taro.yamada@example.com → ta***@example.com）。ドメインは配送の切り分けに使うので残す */
-export function maskEmail(address: string): string {
-  const at = address.lastIndexOf('@');
-  if (at <= 0) return '***';
-  const local = address.slice(0, at);
-  return `${local.slice(0, Math.min(2, local.length - 1))}***${address.slice(at)}`;
-}
-
-function jstTimestamp(date = new Date()): string {
-  return new Date(date.getTime() + 9 * 60 * 60 * 1000).toISOString().replace('Z', '+09:00');
-}
-
-// ログの値に改行が入ると1行にならないので、空白にまとめる
-const oneLine = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
-
-export function logMailResult(entry: { provider: string; to: string; subject: string; ok: boolean; response?: unknown; detail?: unknown }) {
-  const line = `[mail] ${entry.ok ? 'sent' : 'failed'} at=${jstTimestamp()} provider=${entry.provider} to=${maskEmail(entry.to)} subject="${oneLine(entry.subject)}" response="${oneLine(entry.response)}"${entry.detail ? ` detail="${oneLine(entry.detail)}"` : ''}`;
-  if (entry.ok) console.info(line);
-  else console.error(line);
+// ---- 送信結果の記録（1通につき1行。実行ログとRedisに残す。本文・リンク・パスワードは出さない） ----
+async function logMailResult(entry: { provider: string; to: string; subject: string; ok: boolean; response?: unknown; detail?: unknown }) {
+  await recordMailLog({
+    status: entry.ok ? 'sent' : 'failed',
+    provider: entry.provider,
+    to: maskEmail(entry.to),
+    subject: entry.subject,
+    response: entry.response === undefined ? undefined : String(entry.response),
+    detail: entry.detail === undefined ? undefined : String(entry.detail)
+  });
 }
 
 // ---- Gmail（SMTP） ----
@@ -99,7 +92,7 @@ async function sendWithGmail(message: MailMessage): Promise<MailResult> {
     const info = await getGmailTransport().sendMail({ from: gmailFrom(), to: message.to, subject: message.subject, text: message.text });
     // response は Gmail の応答（例: 250 2.0.0 OK ... - gsmtp）。宛先を断られたら rejected に入る
     const rejected = (info.rejected || []).length;
-    logMailResult({
+    await logMailResult({
       provider: 'gmail',
       to: message.to,
       subject: message.subject,
@@ -111,7 +104,7 @@ async function sendWithGmail(message: MailMessage): Promise<MailResult> {
   } catch (error) {
     const e = error as { code?: string; responseCode?: number; response?: string; message?: string };
     const isAuthError = e.code === 'EAUTH' || e.responseCode === 535;
-    logMailResult({
+    await logMailResult({
       provider: 'gmail',
       to: message.to,
       subject: message.subject,
@@ -137,10 +130,10 @@ async function sendWithResend(message: MailMessage): Promise<MailResult> {
       signal: AbortSignal.timeout(8000)
     });
     const body = await response.text().catch(() => '');
-    logMailResult({ provider: 'resend', to: message.to, subject: message.subject, ok: response.ok, response: `${response.status} ${body}` });
+    await logMailResult({ provider: 'resend', to: message.to, subject: message.subject, ok: response.ok, response: `${response.status} ${body}` });
     return response.ok ? { sent: true } : { sent: false, reason: 'failed' };
   } catch (error) {
-    logMailResult({ provider: 'resend', to: message.to, subject: message.subject, ok: false, response: (error as Error)?.message || error });
+    await logMailResult({ provider: 'resend', to: message.to, subject: message.subject, ok: false, response: (error as Error)?.message || error });
     return { sent: false, reason: 'failed' };
   }
 }
@@ -153,8 +146,10 @@ export async function sendMail(message: MailMessage): Promise<MailResult> {
       return sendWithResend(message);
     case 'log':
       console.info(`[mail:dev] To: ${message.to}\nSubject: ${message.subject}\n\n${message.text}`);
+      await logMailResult({ provider: 'log', to: message.to, subject: message.subject, ok: true, response: 'ローカル開発のためログに出力' });
       return { sent: true };
     default:
+      await recordMailLog({ status: 'skipped', to: maskEmail(message.to), subject: message.subject, reason: 'not_configured' });
       return { sent: false, reason: 'not_configured' };
   }
 }

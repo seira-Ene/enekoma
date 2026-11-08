@@ -20,6 +20,7 @@ import {
   updateProfile
 } from './accountStore';
 import { isMailConfigured, sendMail } from './mailer';
+import { maskEmail, maskIdentifier, recordMailLog } from './mailLog';
 
 const RESET_TTL_SECONDS = 30 * 60;
 const VERIFY_TTL_SECONDS = 24 * 60 * 60;
@@ -60,13 +61,18 @@ const isDemoId = (id: string) => Object.keys(INITIAL_DEMO_ACCOUNTS).includes(id)
 
 const MAIL_SIGNATURE = '\n\n――\nエネコマ（日本大学文理学部 履修アシスタント）\nこのメールは送信専用です。';
 
+const VERIFY_SUBJECT = '【エネコマ】メールアドレスの確認';
+
 async function sendVerification(request: NextRequest, account: ServerAccount, email: string): Promise<boolean> {
-  if (!(await allowAttempt(`mail:${normalizeEmail(email)}`, 3, 3600))) return false;
+  if (!(await allowAttempt(`mail:${normalizeEmail(email)}`, 3, 3600))) {
+    await recordMailLog({ status: 'skipped', to: maskEmail(email), subject: VERIFY_SUBJECT, reason: 'rate_limited（同じアドレスへの送信は1時間に3通まで）' });
+    return false;
+  }
   const token = await issueToken('verify', { loginId: account.loginId, email: normalizeEmail(email) }, VERIFY_TTL_SECONDS);
   const url = `${appBaseUrl(request)}/?verify_email=${encodeURIComponent(token)}`;
   const result = await sendMail({
     to: email,
-    subject: '【エネコマ】メールアドレスの確認',
+    subject: VERIFY_SUBJECT,
     text: `${account.name}さん（ログインID: ${account.loginId}）\n\nエネコマにこのメールアドレスが登録されました。下のリンクを開くと確認が完了し、パスワードやログインIDを忘れたときにこのアドレスで再設定・確認できるようになります。リンクの有効期限は24時間です。\n\n${url}\n\n心当たりがない場合は、このメールを破棄してください。${MAIL_SIGNATURE}`
   });
   return result.sent;
@@ -114,17 +120,40 @@ async function handle(request: NextRequest, body: Body) {
 
     case 'request_password_reset':
     case 'request_login_id': {
-      if (!isMailConfigured()) return fail(503, 'mail_not_configured', 'メール送信の準備がまだできていません。管理者にお問い合わせください。');
-      if (!(await allowAttempt(`forgot-ip:${ip}`, 10, 3600))) return fail(429, 'rate_limited', '申し込みの回数が多すぎます。しばらくしてからお試しください。');
       const identifier = str(body.identifier, 300).trim();
+      const subject = action === 'request_login_id' ? '【エネコマ】ログインIDのお知らせ' : '【エネコマ】パスワード再設定のご案内';
+      const skip = (reason: string) => recordMailLog({ status: 'skipped', to: maskIdentifier(identifier), subject, reason });
+      if (!isMailConfigured()) {
+        await skip('not_configured（メール送信の環境変数が未設定）');
+        return fail(503, 'mail_not_configured', 'メール送信の準備がまだできていません。管理者にお問い合わせください。');
+      }
+      if (!(await allowAttempt(`forgot-ip:${ip}`, 10, 3600))) {
+        await skip('rate_limited（同じ接続元からの申し込みは1時間に10回まで）');
+        return fail(429, 'rate_limited', '申し込みの回数が多すぎます。しばらくしてからお試しください。');
+      }
       const accounts = identifier.includes('@')
         ? await accountsForEmail(identifier)
         : action === 'request_password_reset'
           ? [await getAccount(identifier)].filter((a): a is ServerAccount => !!a?.email)
           : [];
       const email = accounts[0]?.email;
+      if (!email) {
+        // 送らなかった理由を管理者が確認できるようにする（利用者への応答は変えない）
+        if (identifier.includes('@')) await skip('no_verified_account（このアドレスで確認済みのアカウントがない）');
+        else if (action === 'request_login_id') await skip('invalid_identifier（ID確認はメールアドレスで申し込む）');
+        else {
+          const account = await getAccount(identifier);
+          await skip(!account
+            ? 'account_not_found（このログインIDはサーバーに未登録）'
+            : account.pendingEmail
+              ? 'email_not_verified（確認メールのリンクがまだ開かれていない）'
+              : 'no_email（メールアドレスが未登録）');
+        }
+      }
       // 同じアドレスへの送信は1時間に3回まで。超えても応答は変えない（アカウントの有無を推測させない）
-      if (email && (await allowAttempt(`mail:${email}`, 3, 3600))) {
+      const allowed = email ? await allowAttempt(`mail:${email}`, 3, 3600) : false;
+      if (email && !allowed) await skip('rate_limited（同じアドレスへの送信は1時間に3通まで）');
+      if (email && allowed) {
         if (action === 'request_login_id') {
           const list = accounts.map((a) => `・${a.loginId}（${a.name}さん・${a.department}）`).join('\n');
           await sendMail({
@@ -184,7 +213,10 @@ async function handle(request: NextRequest, body: Body) {
 
       const email = normalizeEmail(str(body.email, 300));
       if (!isValidEmail(email)) return fail(400, 'invalid_email', 'メールアドレスの形式が正しくありません。');
-      if (!isMailConfigured()) return fail(503, 'mail_not_configured', 'メール送信の準備がまだできていないため、確認メールを送れません。');
+      if (!isMailConfigured()) {
+        await recordMailLog({ status: 'skipped', to: maskEmail(email), subject: VERIFY_SUBJECT, reason: 'not_configured（メール送信の環境変数が未設定）' });
+        return fail(503, 'mail_not_configured', 'メール送信の準備がまだできていないため、確認メールを送れません。');
+      }
       const updated = await updateProfile(account.loginId, { pendingEmail: email });
       const verificationSent = updated ? await sendVerification(request, updated, email) : false;
       if (!verificationSent) return fail(429, 'mail_failed', '確認メールを送れませんでした。しばらくしてからお試しください。');

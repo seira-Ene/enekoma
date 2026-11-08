@@ -115,6 +115,18 @@ interface MaintenanceConfig {
 
 const CHS_DEPARTMENTS = Object.keys(GAKUBU_YORAN_DEPARTMENTS);
 
+// 管理者画面に出すメール送信の記録（app/api/account/mailLog.ts の MailLogEntry と同じ形）
+interface MailLogView {
+  at: string;
+  status: 'sent' | 'failed' | 'skipped';
+  provider?: string;
+  to: string;
+  subject?: string;
+  response?: string;
+  detail?: string;
+  reason?: string;
+}
+
 // コース・副専攻の科目群（a群から4単位以上、A又はB など）の達成状況
 function RequirementGroups({ groups }: { groups: GroupStatus[] }) {
   if (groups.length === 0) return null;
@@ -287,6 +299,11 @@ export default function UnifiedAssistantPage() {
   // 管理者およびシステムメンテナンス状態
   const [maintenanceConfig, setMaintenanceConfig] = useState<MaintenanceConfig | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  // 管理者用：メール送信の記録
+  const [showMailLogModal, setShowMailLogModal] = useState(false);
+  const [mailLogEntries, setMailLogEntries] = useState<MailLogView[] | null>(null);
+  const [mailLogError, setMailLogError] = useState<string | null>(null);
+  const [isLoadingMailLog, setIsLoadingMailLog] = useState(false);
   const [showAdminLoginModal, setShowAdminLoginModal] = useState<boolean>(false);
   const [adminCodeInput, setAdminCodeInput] = useState<string>('');
   const [adminAuthError, setAdminAuthError] = useState<string | null>(null);
@@ -716,6 +733,29 @@ export default function UnifiedAssistantPage() {
     }
     if (isServerUnavailable(res)) return { account: local, offline: true };
     return { error: res.message || 'サーバーに登録できませんでした。' };
+  };
+
+  // 管理者用：メール送信の記録を読み込む
+  const loadMailLog = async () => {
+    setIsLoadingMailLog(true);
+    setMailLogError(null);
+    try {
+      const res = await fetch('/api/admin/mail-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminCode: sessionStorage.getItem('enekoma_admin_code') || '' })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMailLogError(data.error || '読み込めませんでした。');
+        return;
+      }
+      setMailLogEntries(data.entries || []);
+    } catch {
+      setMailLogError('サーバーに接続できませんでした。');
+    } finally {
+      setIsLoadingMailLog(false);
+    }
   };
 
   // ログインフォーム送信
@@ -1945,6 +1985,16 @@ export default function UnifiedAssistantPage() {
             </span>
           </div>
           <div className="flex items-center space-x-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowMailLogModal(true);
+                void loadMailLog();
+              }}
+              className="px-2.5 py-1 bg-white text-slate-900 rounded font-bold hover:bg-slate-100 transition shadow-2xs text-xs cursor-pointer"
+            >
+              📧 メール送信ログ
+            </button>
             <button
               type="button"
               onClick={() => setShowAdminControlModal(true)}
@@ -4866,6 +4916,55 @@ export default function UnifiedAssistantPage() {
               >
                 閉じる
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 管理者用：メール送信ログ（直近50件・7日間） */}
+      {isAdmin && showMailLogModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[85dvh] flex flex-col border border-slate-200">
+            <div className="flex flex-wrap items-start justify-between gap-2 p-4 border-b border-slate-100">
+              <div className="min-w-0 flex-1 basis-56">
+                <h3 className="font-bold text-slate-900 text-sm">📧 メール送信ログ</h3>
+                <p className="text-[11px] text-slate-500">直近50件を7日間保存。宛先は伏せ字で、本文・リンク・パスワードは保存していません。</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+                <button type="button" onClick={() => void loadMailLog()} disabled={isLoadingMailLog} className="px-2.5 py-1 text-xs border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-60">
+                  {isLoadingMailLog ? '読み込み中…' : '再読み込み'}
+                </button>
+                <button type="button" onClick={() => setShowMailLogModal(false)} className="px-2.5 py-1 text-xs bg-slate-900 text-white rounded">
+                  閉じる
+                </button>
+              </div>
+            </div>
+            <div className="p-4 overflow-y-auto space-y-2 text-xs">
+              {mailLogError && <div className="p-2 rounded bg-rose-50 border border-rose-200 text-rose-700">{mailLogError}</div>}
+              {mailLogEntries && mailLogEntries.length === 0 && !mailLogError && (
+                <p className="text-slate-500">記録はまだありません。メールを送る操作をしてから「再読み込み」を押してください。</p>
+              )}
+              {mailLogEntries?.map((e, i) => (
+                <div
+                  key={`${e.at}-${i}`}
+                  className={`p-2.5 rounded-lg border ${
+                    e.status === 'sent' ? 'border-emerald-200 bg-emerald-50' : e.status === 'failed' ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-semibold text-slate-900">
+                    <span className={e.status === 'sent' ? 'text-emerald-700' : e.status === 'failed' ? 'text-rose-700' : 'text-amber-800'}>
+                      {e.status === 'sent' ? '送信' : e.status === 'failed' ? '失敗' : '送信せず'}
+                    </span>
+                    <span className="font-normal text-slate-500">{e.at.replace('T', ' ').slice(0, 19)}</span>
+                    <span>{e.to}</span>
+                    {e.provider && <span className="font-normal text-slate-500">via {e.provider}</span>}
+                  </div>
+                  {e.subject && <div className="text-slate-700">{e.subject}</div>}
+                  {e.reason && <div className="text-amber-900">理由：{e.reason}</div>}
+                  {e.response && <div className="text-slate-600 break-all">応答：{e.response}</div>}
+                  {e.detail && <div className="text-slate-500 break-all">{e.detail}</div>}
+                </div>
+              ))}
             </div>
           </div>
         </div>

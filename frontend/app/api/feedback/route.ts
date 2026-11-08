@@ -1,8 +1,19 @@
 // お問い合わせ・フィードバックの受付（レビュー・ご意見・質問・不具合報告）
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { checkEmailAddress } from '@/app/data/emailAddress';
 import { allowAttempt, StorageUnavailableError } from '../account/accountStore';
-import { addFeedback, FEEDBACK_CATEGORIES, FeedbackCategory, FeedbackStorageUnavailableError } from './feedbackStore';
+import { addFeedback, FEEDBACK_CATEGORIES, FeedbackCategory, FeedbackItem, FeedbackStorageUnavailableError } from './feedbackStore';
+import { notifyAdminOfFeedback } from './notify';
+
+// 管理者への通知メールは、応答を返したあとに送る（送信の遅れや失敗で、保存や完了表示を止めない）
+function notifyAfterResponse(item: FeedbackItem) {
+  try {
+    after(() => notifyAdminOfFeedback(item));
+  } catch {
+    // リクエストの外（テストなど）で after が使えないときは、待たずに送る
+    void notifyAdminOfFeedback(item);
+  }
+}
 
 const MESSAGE_MIN = 5;
 const MESSAGE_MAX = 2000;
@@ -47,6 +58,7 @@ export async function POST(request: NextRequest) {
       ...(typeof body.loginId === 'string' && body.loginId.trim() ? { loginId: body.loginId.trim().slice(0, 32) } : {}),
       ...(category === 'bug' ? { userAgent: (request.headers.get('user-agent') || '').slice(0, 200) } : {})
     });
+    notifyAfterResponse(item);
     return NextResponse.json({ ok: true, id: item.id });
   } catch (error) {
     if (!(error instanceof FeedbackStorageUnavailableError || error instanceof StorageUnavailableError)) console.error('Feedback error:', error);

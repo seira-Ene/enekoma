@@ -14,6 +14,7 @@ EneKoma(エネコマ)は、日本大学文理学部(CHS)の学生向けAIチャ�
 | 空き教室・構内ナビ | 今の時限の空き教室、自販機・ゴミ箱・各課窓口を案内 | `findFreeRooms`(`data/courses.ts`), `SYSTEM_PROMPT` と `answerLocally`(`route.ts`) |
 | 履修サポート | 重複チェック、空きコマ提案、友達との空きコマ照合、必修組み込みの時間割案、移動判定、科目・教員・教室の逆引き | `answerTimetableQuery`(`data/timetableAssistant.ts`) |
 | デザインテーマ | デフォルト・かわいい・かっこいいの切り替えと、メインの色(おすすめの色・好きな色)の選択(プロフィールの基本設定タブ) | `data/themes.ts`, `globals.css`, `layout.tsx` |
+| フレンド | フレンドコードで申請・承認、フレンドの今の曜限の授業（科目名・教室）か空きコマかを表示、共有のON/OFF、チャットで「今だれが空きコマ？」に回答 | `components/FriendsPanel.tsx`, `api/friends/`, `data/friendStatus.ts` |
 | お問い合わせ・ユーザーの声 | レビュー・ご意見・質問・不具合報告の受付、管理者画面でのステータス管理と公開の切り替え、公開分を `/voices` に匿名で表示 | `components/FeedbackModal.tsx`, `components/AdminFeedbackModal.tsx`, `api/feedback/`, `api/admin/feedback/` |
 
 ## コマンド
@@ -97,7 +98,7 @@ AIの回答末尾に置く ` ```profile_update ` JSONブロックでプロフィ
 
 データベースはない。
 
-- プロフィール、成績、時間割、チャット履歴、APIキーはブラウザの `localStorage` / `sessionStorage` に保存する。サーバーには送らない。
+- プロフィール、成績、時間割、チャット履歴、APIキーはブラウザの `localStorage` / `sessionStorage` に保存する。サーバーには送らない。例外はフレンド機能で、共有をONにしている人の今期の時間割のうち、曜日・時限・科目名・教室だけをサーバーに送る（下記）。
 - ログイン情報（ログインID・氏名・学科・学年・メールアドレス・パスワードのscryptハッシュ）だけは、`/api/account`（`app/api/account/`）がRedisに保存する。パスワードの照合はサーバーで行い、サーバーに登録したアカウントは端末にパスワードを残さない（`serverLinked`）。
 - パスワード再設定とログインIDの確認は、確認済みのメールアドレスに送るリンク（再設定30分・確認24時間、1回限り、保存はトークンのハッシュだけ）で行う。応答はアカウントの有無で変えない。ログインは同じIDに15分で10回まで、同じアドレスへのメールは1時間に3通まで。
 - 以前の端末内だけのアカウントは、次のログインでサーバーに登録する（パスワードが8文字未満なら新しいパスワードを決めてもらう）。デモアカウント（`INITIAL_DEMO_ACCOUNTS`）は端末内だけで、サーバーには登録できない。
@@ -105,6 +106,8 @@ AIの回答末尾に置く ` ```profile_update ` JSONブロックでプロフィ
 - メールアドレスは `checkEmailAddress`（`data/emailAddress.ts`）で画面とサーバーの両方で確認する。大学のドメイン（`@g.nihon-u.ac.jp`）に似ているのに違うもの（`.ac.jo` など）や、よくある打ち間違い（`gmail.con` など）は登録させない。入力欄では大学のアドレスの登録を案内する。
 - メールの送信は `app/api/account/mailer.ts`。本番はGmail（`GMAIL_USER` と `GMAIL_APP_PASSWORD`、nodemailerでsmtp.gmail.com:465）で送る。送信元はそのGmailアドレスで、`MAIL_FROM` で表示名だけ変えられる。Gmailの送信上限は1日約500通。送信のたびに `[mail] sent` / `[mail] failed` の1行ログ（日本時間・宛先のユーザー名を伏せたアドレス・件名・Gmailの応答・messageId）を出す。本文とリンクは出さない。同じ内容を直近50件・7日間Redisにも残し（`app/api/account/mailLog.ts`）、管理者モードの「📧 メール送信ログ」（`/api/admin/mail-log`、`ADMIN_SECRET_KEY` で認証）で見られる。送らなかった場合も `skipped` と理由（account_not_found・email_not_verified・rate_limited など）を残す。Vercel Hobbyの実行ログは約1時間で消え、`vercel logs` でも実行ログは取れないので、届かない報告はこの画面で確認する。Resend（`MAIL_PROVIDER=resend`、`RESEND_API_KEY`、`MAIL_FROM`）にも切り替えられる。ローカル開発で未設定ならサーバーのログに出し、Vercel上で未設定ならメール機能は503を返す。リンクのドメインは `APP_BASE_URL`、なければVercelの本番URLを使う（Hostヘッダーは使わない）。Redisのない環境では、ローカル開発だけメモリに保存する。
 - メンテナンス設定だけはサーバー側のRedisに保存する(「運用ルール」参照)。
+- ログイン・登録の応答で、ログイン中の印（`sessionToken`）を返す。サーバーはハッシュだけを30日間保存する（`createSession`）。端末ではログインIDと同じく `sessionStorage` の `enekoma_session` に置き、「ログイン状態を保持する」のときだけ `localStorage` の `enekoma_remembered_session` にも置く。アカウントを切り替えると消す（`setCurrentStudentId`）。この印がない以前のログインでは、フレンド画面でパスワードを聞き直す。
+- フレンド機能（`api/friends/`）：フレンドコード（読み間違えやすい0/O・1/Iを除く英数8桁、`ensureFriendCode`）で申請し、相手が承認すると friendships の status が accepted になる。相手に返すのは名前とフレンドコードだけで、ログインIDは返さない。共有設定（`shareScheduleStatus`、既定ON）がONの人の時間割は `sanitizeSharedSchedule` で曜日・時限・科目名・教室だけにして保存し、OFFにしたら消す。今のコマの判定は `campusSlotAt`（日本時間、休み時間は次の時限、日曜と5限のあとは授業時間外）と `friendStatusAt`。チャットでフレンドの居場所・空きコマを聞かれたら、`api/chat/route.ts` がツール `get_friends_current_status` を呼び、その結果だけから `answerFriendStatusQuery` で答える（AIに推測させない。「空き教室」「先生は誰」は時間割の検索のまま）。テストでは `ENEKOMA_ALLOW_TIME_OVERRIDE=1` のときだけ `x-enekoma-now` ヘッダーで時刻を固定できる（本番では無視）。
 - お問い合わせは `api/feedback/feedbackStore.ts` がRedisに保存する（新しい順に最大500件、ステータスは未対応・対応中・対応済み・対応不要）。送信は同じ接続元から1時間に5件まで。成績などのカルテの内容は送らない。管理者用APIの認証は `api/_lib/adminAuth.ts` の `rejectUnlessAdmin` を使う。管理者が「公開する」にしたものだけを `/voices`（`app/voices/page.tsx`）と `GET /api/feedback` に出す。メール・ログインID・端末情報・管理メモは出さず、本文中のメールアドレス・電話番号・7桁以上の数字は `anonymizeText` で伏せる。受け付けると、`after` で応答のあとに管理者へ通知メールを送る（`api/feedback/notify.ts`。送信先は `ADMIN_EMAIL`、なければ `GMAIL_USER`）。送信に失敗しても保存と完了表示には影響させず、結果はメール送信ログに残す。
 - FAQ（よくある質問・不具合の対処法）は、お問い合わせに管理者が回答（`answer`、任意で `faqTitle`）を保存し、「FAQとして公開」（`isFaq`）にしたものだけを `listPublicFaq` で出す。回答がないと公開できず、回答を消すとFAQから外れる。質問文は `anonymizeText` で伏せる。検索は `data/faqSearch.ts`（キーワードのAND検索と、入力中の文に似たものを探す `findSimilarFaq`）で、`/voices` の `FaqSearch` と `GET /api/faq`（`mode=similar` はフォームの「こちらの解決策はお試しになりましたか？」用）が使う。「これで解決しました」を押すと送信しない。
 - 検索とSNS向けの情報は `app/siteConfig.ts`（サイト名・説明・キーワード・URL）にまとめ、`layout.tsx` のメタデータ、`robots.ts`、`sitemap.ts` で使う。OGP画像は `app/opengraph-image.png` と `twitter-image.png`（1200×630）。`/api/` と `/admin` はクロールさせない。

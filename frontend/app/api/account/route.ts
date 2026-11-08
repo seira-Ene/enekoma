@@ -10,6 +10,7 @@ import {
   confirmEmail,
   consumeToken,
   createAccount,
+  createSession,
   getAccount,
   issueToken,
   normalizeEmail,
@@ -108,7 +109,8 @@ async function handle(request: NextRequest, body: Body) {
       });
       if (!account) return fail(409, 'id_taken', 'このログインIDはすでに登録されています。');
       const verificationSent = email ? await sendVerification(request, account, email) : false;
-      return NextResponse.json({ ok: true, account: publicAccount(account), verificationSent, mailConfigured: isMailConfigured() });
+      const sessionToken = await createSession(account.loginId);
+      return NextResponse.json({ ok: true, account: publicAccount(account), verificationSent, mailConfigured: isMailConfigured(), sessionToken });
     }
 
     case 'login': {
@@ -119,7 +121,7 @@ async function handle(request: NextRequest, body: Body) {
       if (!allowed) return fail(429, 'rate_limited', 'ログインの試行回数が多すぎます。15分ほど待ってからお試しください。');
       const account = await checkLogin(loginId, password);
       if (!account) return fail(401, 'invalid', 'ログインIDまたはパスワードが違います。');
-      return NextResponse.json({ ok: true, account: publicAccount(account) });
+      return NextResponse.json({ ok: true, account: publicAccount(account), sessionToken: await createSession(account.loginId) });
     }
 
     case 'request_password_reset':

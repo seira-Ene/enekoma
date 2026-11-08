@@ -133,6 +133,49 @@ const STORAGE_KEY_ACCOUNTS = 'enekoma_accounts_db';
 const STORAGE_KEY_CURRENT_ID = 'enekoma_current_student_id';
 const STORAGE_KEY_REMEMBERED_LOGIN = 'enekoma_remembered_login';
 export const REMEMBER_LOGIN_DAYS = 30;
+// ログイン時にサーバーから受け取る印（フレンド機能などで使う）。ログインと同じく、通常はタブを閉じると消え、
+// 「ログイン状態を保持する」を選んだときだけ30日間この端末に残す。パスワードは残さない
+const STORAGE_KEY_SESSION = 'enekoma_session';
+const STORAGE_KEY_REMEMBERED_SESSION = 'enekoma_remembered_session';
+
+export function saveSessionToken(loginId: string, token: string, remember: boolean, now: number = Date.now()): void {
+  if (typeof window === 'undefined' || !token) return;
+  try {
+    sessionStorage.setItem(STORAGE_KEY_SESSION, JSON.stringify({ loginId, token }));
+    if (remember) {
+      localStorage.setItem(STORAGE_KEY_REMEMBERED_SESSION, JSON.stringify({ loginId, token, expiresAt: now + REMEMBER_LOGIN_DAYS * 24 * 60 * 60 * 1000 }));
+    }
+  } catch {
+    // 保存できなくても、ログイン自体はできる（フレンド機能でパスワードを聞き直す）
+  }
+}
+
+/** そのアカウントの印。なければ null */
+export function getSessionToken(loginId: string, now: number = Date.now()): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const current = JSON.parse(sessionStorage.getItem(STORAGE_KEY_SESSION) || 'null');
+    if (current?.loginId === loginId && typeof current.token === 'string') return current.token;
+    const remembered = JSON.parse(localStorage.getItem(STORAGE_KEY_REMEMBERED_SESSION) || 'null');
+    if (remembered?.loginId === loginId && typeof remembered.token === 'string' && now < remembered.expiresAt) return remembered.token;
+  } catch {
+    // 壊れた値は使わない
+  }
+  return null;
+}
+
+/** 別のアカウントの印を消す（loginId を省くとすべて消す） */
+export function clearSessionToken(exceptLoginId?: string | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    for (const [storage, key] of [[sessionStorage, STORAGE_KEY_SESSION], [localStorage, STORAGE_KEY_REMEMBERED_SESSION]] as const) {
+      const value = JSON.parse(storage.getItem(key) || 'null');
+      if (!exceptLoginId || value?.loginId !== exceptLoginId) storage.removeItem(key);
+    }
+  } catch {
+    // 消せないときは何もしない
+  }
+}
 
 // アカウント一覧の取得（未初期化時はデモアカウントを投入）
 // デモアカウントの初期データの複製を返す。元の INITIAL_DEMO_ACCOUNTS を返すと、新規登録した
@@ -213,6 +256,7 @@ export function setCurrentStudentId(id: string | null): void {
   if (typeof window === 'undefined') return;
   // ログアウトや別アカウントへの切り替えで、保持していた前のログインを引き継がない
   if (id !== readRememberedLogin()) forgetLogin();
+  clearSessionToken(id);
   if (id) {
     sessionStorage.setItem(STORAGE_KEY_CURRENT_ID, id);
     // 旧バージョンのlocalStorage永続キーがあれば削除

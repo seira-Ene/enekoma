@@ -19,6 +19,8 @@ export interface AccountApiResult {
   loginId?: string;
   verificationSent?: boolean;
   mailConfigured?: boolean;
+  // ログイン・登録のときに受け取る印（フレンド機能などで使う）
+  sessionToken?: string;
   // サーバーに届かなかった（オフライン・タイムアウト）
   network?: boolean;
 }

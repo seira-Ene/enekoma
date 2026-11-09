@@ -49,7 +49,7 @@ import {
 import { callAccountApi, isServerUnavailable } from '@/app/data/accountClient';
 import { checkEmailAddress, UNIVERSITY_EMAIL_DOMAIN } from '@/app/data/emailAddress';
 import FeedbackModal from '@/app/components/FeedbackModal';
-import FriendsPanel, { syncSharedSchedule } from '@/app/components/FriendsPanel';
+import FriendsPanel, { sendOffline, sendPresence, syncSharedSchedule } from '@/app/components/FriendsPanel';
 import AdminFeedbackModal from '@/app/components/AdminFeedbackModal';
 import { UPLOAD_ACCEPT, describeAnalysisFailure, prepareFileForUpload } from '@/app/data/imageUpload';
 import {
@@ -1986,6 +1986,28 @@ export default function UnifiedAssistantPage() {
     const timer = setTimeout(() => void syncSharedSchedule(token, userProfile.enrolledCourses), 1500);
     return () => clearTimeout(timer);
   }, [currentStudentId, currentStudentLinked, userProfile.enrolledCourses]);
+
+  // オンライン状態：アプリを開いて見ている間は1分ごとに知らせ、閉じる・ログアウト・切り替えでオフラインにする
+  useEffect(() => {
+    if (!currentStudentId || !currentStudentLinked) return;
+    const token = getSessionToken(currentStudentId);
+    if (!token) return;
+    const beat = () => {
+      if (document.visibilityState === 'visible') void sendPresence(token);
+    };
+    beat();
+    const timer = setInterval(beat, 60_000);
+    const onVisible = () => (document.visibilityState === 'visible' ? beat() : undefined);
+    const onLeave = () => sendOffline(token);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pagehide', onLeave);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pagehide', onLeave);
+      sendOffline(token);
+    };
+  }, [currentStudentId, currentStudentLinked]);
 
   const liveDeficiency = analyzeAcademicDeficiency(userProfile);
   const liveDeptData = GAKUBU_YORAN_DEPARTMENTS[userProfile.department] || GAKUBU_YORAN_DEPARTMENTS['情報科学科'];

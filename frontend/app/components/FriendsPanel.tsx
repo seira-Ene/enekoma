@@ -2,7 +2,7 @@
 
 // フレンド機能（フレンドコード方式）。フレンドに見せるのは名前と、今の授業（科目名・教室）か空きコマかだけ
 import { useCallback, useEffect, useState } from 'react';
-import { cardBadges, slotHeading, type FriendCurrentStatus, type FriendSlotStatus, type CampusSlot } from '@/app/data/friendStatus';
+import { cardBadges, comparePresence, presenceLabel, slotHeading, type FriendCurrentStatus, type FriendSlotStatus, type CampusSlot } from '@/app/data/friendStatus';
 import { getSessionToken, saveSessionToken } from '@/app/data/studentAccounts';
 import { callAccountApi } from '@/app/data/accountClient';
 
@@ -44,6 +44,22 @@ async function callFriendsApi(token: string, action: string, payload: Record<str
   } catch {
     return { ok: false, http: 0, message: 'サーバーに接続できませんでした。通信環境を確認してください。' };
   }
+}
+
+/** アプリを開いていることを知らせる（フレンドの一覧で「オンライン」と出る。共有OFFならサーバーは保存しない） */
+export function sendPresence(token: string) {
+  return callFriendsApi(token, 'heartbeat');
+}
+
+/** アプリを閉じる・ログアウトするときに「オフライン」にする（ページを閉じても届くように sendBeacon を使う） */
+export function sendOffline(token: string) {
+  const body = JSON.stringify({ action: 'offline', sessionToken: token });
+  try {
+    if (navigator.sendBeacon?.('/api/friends', new Blob([body], { type: 'application/json' }))) return;
+  } catch {
+    // 下の fetch で送る
+  }
+  void fetch('/api/friends', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
 }
 
 /** 端末の時間割を、共有してよい項目（曜日・時限・科目名・教室）だけにする */
@@ -169,11 +185,16 @@ export default function FriendsPanel({ loginId, serverLinked, courses }: Props) 
   };
 
   const statusOf = (friendCode: string) => statuses.find((s) => s.friendCode === friendCode);
+  // オンラインの人を上に。オフラインの人も全員出す
+  const sortedFriends = [...(me?.friends ?? [])].sort((a, b) =>
+    comparePresence({ name: a.name, presence: statusOf(a.friendCode)?.presence }, { name: b.name, presence: statusOf(b.friendCode)?.presence })
+  );
+  const onlineCount = statuses.filter((s) => s.presence?.online).length;
 
   return (
     <div className="space-y-3 text-xs" data-friends-panel>
       <p className="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
-        🔒 フレンドに見せるのは、名前と、今の曜限の授業（科目名・教室）か空きコマかだけです。成績・GPA・ログインID・メールアドレスは見せません。
+        🔒 フレンドに見せるのは、名前と、今の曜限の授業（科目名・教室）か空きコマか、オンラインかどうかだけです。成績・GPA・ログインID・メールアドレスは見せません。
       </p>
 
       {loadError && <p className="text-rose-700">{loadError}</p>}
@@ -209,7 +230,7 @@ export default function FriendsPanel({ loginId, serverLinked, courses }: Props) 
       <div className="p-3 rounded-lg border border-slate-200 bg-white flex items-center justify-between gap-3">
         <div>
           <div className="font-semibold text-slate-800">フレンドに今の状況を共有する</div>
-          <div className="text-[11px] text-slate-500">オフにすると、フレンドには「非公開」と表示され、時間割はサーバーから消えます。</div>
+          <div className="text-[11px] text-slate-500">オフにすると、フレンドには「非公開」と表示され、時間割とオンライン状態はサーバーから消えます。</div>
         </div>
         <button
           type="button"
@@ -300,17 +321,38 @@ export default function FriendsPanel({ loginId, serverLinked, courses }: Props) 
       {/* フレンド一覧 */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <span className="font-semibold text-slate-800">フレンド（{me?.friends.length ?? 0}人）</span>
+          <span className="font-semibold text-slate-800">
+            フレンド（{me?.friends.length ?? 0}人{onlineCount > 0 ? `・オンライン${onlineCount}人` : ''}）
+          </span>
           <span className="text-[11px] text-slate-500">{slot ? slotHeading(slot) : ''}</span>
         </div>
         {me && me.friends.length === 0 && <p className="text-slate-500">まだフレンドがいません。友達のフレンドコードを入力して申請してください。</p>}
-        {me?.friends.map((f) => {
+        {sortedFriends.map((f) => {
           const s = statusOf(f.friendCode);
+          const presence = s?.presence;
           const badges = s && slot ? cardBadges(s, slot) : null;
           return (
-            <div key={f.friendCode} data-friend-card={f.name} className="p-3 rounded-lg border border-slate-200 bg-white">
+            <div
+              key={f.friendCode}
+              data-friend-card={f.name}
+              data-online={presence ? String(presence.online) : undefined}
+              className="p-3 rounded-lg border border-slate-200 bg-white"
+            >
               <div className="flex items-center justify-between gap-2">
-                <span className="font-bold text-slate-900 text-sm">{f.name}</span>
+                <span className="flex items-center gap-2 min-w-0">
+                  {presence && (
+                    <span
+                      aria-hidden="true"
+                      className={`shrink-0 w-2.5 h-2.5 rounded-full ${presence.online ? 'bg-emerald-500 ring-2 ring-emerald-200' : 'bg-slate-300'}`}
+                    />
+                  )}
+                  <span className="font-bold text-slate-900 text-sm truncate">{f.name}</span>
+                  {presence && (
+                    <span data-presence className={`shrink-0 text-[11px] ${presence.online ? 'text-emerald-700 font-semibold' : 'text-slate-500'}`}>
+                      {presenceLabel(presence)}
+                    </span>
+                  )}
+                </span>
                 <button
                   type="button"
                   disabled={busy}

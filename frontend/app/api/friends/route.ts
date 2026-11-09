@@ -12,10 +12,9 @@ import {
 } from '../account/accountStore';
 import { sanitizeSharedSchedule } from '@/app/data/friendStatus';
 import {
-  deletePresence,
+  deleteCampusStatus,
   deleteSharedSchedule,
-  markOffline,
-  touchPresence,
+  saveCampusStatus,
   get_friends_current_status,
   listFriends,
   removeFriendship,
@@ -45,17 +44,19 @@ async function handle(request: NextRequest, body: Record<string, unknown>) {
   const account = await getAccount(me);
   if (!account) return fail(401, 'unauthorized', 'アカウントが見つかりませんでした。もう一度ログインしてください。');
 
-  // アプリを開いている印（オンライン状態）。共有をOFFにしている人は保存しない
   const now = requestTime(request);
-  if (body.action !== 'offline' && sharesSchedule(account)) await touchPresence(me, now);
 
   switch (body.action) {
-    case 'heartbeat':
-      return NextResponse.json({ ok: true });
-
-    case 'offline':
-      if (sharesSchedule(account)) await markOffline(me, now);
-      return NextResponse.json({ ok: true });
+    // 校内か校外か（端末で判定した結果だけ。緯度・経度は受け取らない）。null は位置情報をオフにした
+    case 'campus': {
+      if (!sharesSchedule(account) || body.onCampus === null) {
+        await deleteCampusStatus(me);
+        return NextResponse.json({ ok: true, shared: false });
+      }
+      if (typeof body.onCampus !== 'boolean') return fail(400, 'invalid_body', '不正なリクエストです。');
+      await saveCampusStatus(me, body.onCampus, now);
+      return NextResponse.json({ ok: true, shared: true });
+    }
 
     case 'me': {
       const friendCode = await ensureFriendCode(me);
@@ -76,11 +77,8 @@ async function handle(request: NextRequest, body: Record<string, unknown>) {
     case 'set_sharing': {
       const share = body.share === true;
       await setShareScheduleStatus(me, share);
-      if (!share) await Promise.all([deleteSharedSchedule(me), deletePresence(me)]);
-      else {
-        await touchPresence(me, now);
-        if (Array.isArray(body.courses)) await saveSharedSchedule(me, sanitizeSharedSchedule(body.courses));
-      }
+      if (!share) await Promise.all([deleteSharedSchedule(me), deleteCampusStatus(me)]);
+      else if (Array.isArray(body.courses)) await saveSharedSchedule(me, sanitizeSharedSchedule(body.courses));
       return NextResponse.json({ ok: true, shareScheduleStatus: share });
     }
 

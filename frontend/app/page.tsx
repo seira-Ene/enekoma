@@ -6,7 +6,7 @@ import {
   getCourseCurriculum,
   getMinorCurriculum
 } from '@/app/data/coursesAndMinorsCurriculum';
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useLayoutEffect, useRef } from 'react';
 import {
   GAKUBU_YORAN_DEPARTMENTS,
   GAKUBU_YORAN_COURSES,
@@ -49,7 +49,11 @@ import {
 import { callAccountApi, isServerUnavailable } from '@/app/data/accountClient';
 import { checkEmailAddress, UNIVERSITY_EMAIL_DOMAIN } from '@/app/data/emailAddress';
 import FeedbackModal from '@/app/components/FeedbackModal';
-import FriendsPanel, { sendOffline, sendPresence, syncSharedSchedule } from '@/app/components/FriendsPanel';
+import FriendsPanel, { sendCampusStatus, syncSharedSchedule } from '@/app/components/FriendsPanel';
+import AttendancePanel from '@/app/components/AttendancePanel';
+import LocationCard from '@/app/components/LocationCard';
+import { geoErrorReason, isOnCampus, readLocationEnabled, saveLocationEnabled, type LocationState } from '@/app/data/campusLocation';
+import { addObservation, autoAttendanceUpdates, readAttendance, readObservations, recordKey, saveAttendance } from '@/app/data/attendance';
 import AdminFeedbackModal from '@/app/components/AdminFeedbackModal';
 import { UPLOAD_ACCEPT, describeAnalysisFailure, prepareFileForUpload } from '@/app/data/imageUpload';
 import {
@@ -240,6 +244,14 @@ export default function UnifiedAssistantPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 保存した値は描画後にしか読めない
     setSpeakingStyle(readStoredStyle());
   }, []);
+  // 位置情報（校内 / 校外）と自動出欠。オンにしたかは端末ごとに保存
+  const [locationEnabled, setLocationEnabled] = useState(false);
+  const [locationState, setLocationState] = useState<LocationState>({ kind: 'off' });
+  const [attendanceVersion, setAttendanceVersion] = useState(0);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 保存した値は描画後にしか読めない
+    setLocationEnabled(readLocationEnabled());
+  }, []);
   const changeSpeakingStyle = (style: string | null) => {
     setSpeakingStyle(style);
     saveStyle(style);
@@ -279,7 +291,7 @@ export default function UnifiedAssistantPage() {
     saveAccent(next);
   };
   const [showProfileModal, setShowProfileModal] = useState(false);
-  const [profileTab, setProfileTab] = useState<'timetable' | 'completed' | 'reqCourses' | 'basic' | 'courses' | 'minors' | 'friends'>('timetable');
+  const [profileTab, setProfileTab] = useState<'timetable' | 'completed' | 'reqCourses' | 'basic' | 'courses' | 'minors' | 'friends' | 'attendance'>('timetable');
   const [reqCourseFilter, setReqCourseFilter] = useState<'all' | 'compulsory' | 'elective'>('all');
   const [profileNotification, setProfileNotification] = useState<string | null>(null);
   // ファイルの読み込み・AI解析中に画面中央に出す表示
@@ -1987,27 +1999,86 @@ export default function UnifiedAssistantPage() {
     return () => clearTimeout(timer);
   }, [currentStudentId, currentStudentLinked, userProfile.enrolledCourses]);
 
-  // オンライン状態：アプリを開いて見ている間は1分ごとに知らせ、閉じる・ログアウト・切り替えでオフラインにする
+  // 位置情報（校内 / 校外）：オンにしている間、画面を見ていれば2分ごとに確かめる。緯度・経度はこの端末の中だけで使い、
+  // 判定した「校内か校外か」だけを、出欠の記録（端末）とフレンドへの共有（サーバー）に使う
+  const locationRefs = useRef({ id: currentStudentId, linked: currentStudentLinked, courses: userProfile.enrolledCourses });
   useEffect(() => {
-    if (!currentStudentId || !currentStudentLinked) return;
-    const token = getSessionToken(currentStudentId);
-    if (!token) return;
-    const beat = () => {
-      if (document.visibilityState === 'visible') void sendPresence(token);
+    locationRefs.current = { id: currentStudentId, linked: currentStudentLinked, courses: userProfile.enrolledCourses };
+  });
+  const lastCampusSent = useRef<{ on: boolean; at: number } | null>(null);
+  const runAttendance = useCallback(() => {
+    const { id, courses } = locationRefs.current;
+    const accountId = id || 'guest';
+    const records = readAttendance(accountId);
+    const updates = autoAttendanceUpdates(courses, readObservations(), records);
+    if (updates.length === 0) return;
+    for (const u of updates) records[recordKey(u)] = u;
+    saveAttendance(accountId, records);
+    setAttendanceVersion((v) => v + 1);
+  }, []);
+  useEffect(() => {
+    if (!locationEnabled) return;
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 使えないことを画面に伝える
+      setLocationState({ kind: 'error', reason: 'unsupported' });
+      return;
+    }
+    let alive = true;
+    setLocationState((s) => (s.kind === 'off' ? { kind: 'checking' } : s));
+    const check = () => {
+      if (document.visibilityState !== 'visible') return;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (!alive) return;
+          const on = isOnCampus({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy });
+          if (on === null) {
+            setLocationState({ kind: 'error', reason: 'inaccurate' });
+            return;
+          }
+          const now = Date.now();
+          setLocationState(on ? { kind: 'on_campus', at: now } : { kind: 'off_campus', at: now });
+          addObservation(on, now);
+          runAttendance();
+          // フレンドへ：変わったときと、5分ごと
+          const { id, linked } = locationRefs.current;
+          const token = id && linked ? getSessionToken(id) : null;
+          const last = lastCampusSent.current;
+          if (token && (!last || last.on !== on || now - last.at >= 5 * 60 * 1000)) {
+            lastCampusSent.current = { on, at: now };
+            void sendCampusStatus(token, on);
+          }
+        },
+        (err) => {
+          if (alive) setLocationState({ kind: 'error', reason: geoErrorReason(err.code) });
+        },
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 }
+      );
     };
-    beat();
-    const timer = setInterval(beat, 60_000);
-    const onVisible = () => (document.visibilityState === 'visible' ? beat() : undefined);
-    const onLeave = () => sendOffline(token);
+    check();
+    const timer = setInterval(check, 2 * 60 * 1000);
+    // 授業が終わった回の「欠席」「未確認」を決めるため、位置が変わらなくても1分ごとに見直す
+    const attendanceTimer = setInterval(runAttendance, 60 * 1000);
+    const onVisible = () => (document.visibilityState === 'visible' ? check() : undefined);
     document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('pagehide', onLeave);
     return () => {
+      alive = false;
       clearInterval(timer);
+      clearInterval(attendanceTimer);
       document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('pagehide', onLeave);
-      sendOffline(token);
     };
-  }, [currentStudentId, currentStudentLinked]);
+  }, [locationEnabled, runAttendance]);
+  const toggleLocation = (enabled: boolean) => {
+    saveLocationEnabled(enabled);
+    setLocationEnabled(enabled);
+    setLocationState(enabled ? { kind: 'checking' } : { kind: 'off' });
+    if (!enabled) {
+      // フレンドには「位置情報なし」と出るようにする
+      lastCampusSent.current = null;
+      const token = currentStudentId && currentStudentLinked ? getSessionToken(currentStudentId) : null;
+      if (token) void sendCampusStatus(token, null);
+    }
+  };
+  const locationProps = { enabled: locationEnabled, state: locationEnabled ? locationState : ({ kind: 'off' } as LocationState), onToggle: toggleLocation };
 
   const liveDeficiency = analyzeAcademicDeficiency(userProfile);
   const liveDeptData = GAKUBU_YORAN_DEPARTMENTS[userProfile.department] || GAKUBU_YORAN_DEPARTMENTS['情報科学科'];
@@ -2856,7 +2927,7 @@ export default function UnifiedAssistantPage() {
             </div>
 
             {/* タブ切り替え（縮めず、横スクロールなしで全タブを常に表示する） */}
-            <div role="tablist" aria-label="学生履修プロフィールの項目" className="shrink-0 grid grid-cols-4 sm:grid-cols-7 border-b border-slate-200 bg-slate-50">
+            <div role="tablist" aria-label="学生履修プロフィールの項目" className="shrink-0 grid grid-cols-4 sm:grid-cols-8 border-b border-slate-200 bg-slate-50">
               {[
                 { id: 'timetable', label: '📅 今期履修中', detail: `${userProfile.semesterCredits}単位` },
                 { id: 'completed', label: '📜 修得済み科目', detail: `${userProfile.completedCourses.length}件` },
@@ -2864,7 +2935,8 @@ export default function UnifiedAssistantPage() {
                 { id: 'basic', label: '⚙️ 基本設定・GPA', detail: `${THEMES.find((t) => t.id === theme)?.label ?? ''}${accent ? `・${accentLabel(accent)}` : ''}` },
                 { id: 'courses', label: '🏅 資格コース' },
                 { id: 'minors', label: '🌐 副専攻', detail: '24種' },
-                { id: 'friends', label: '👥 フレンド', detail: '空きコマ共有' }
+                { id: 'friends', label: '👥 フレンド', detail: '空きコマ共有' },
+                { id: 'attendance', label: '🕒 出欠', detail: '自動記録' }
               ].map((tab) => (
                 <button
                   key={tab.id}
@@ -3428,10 +3500,26 @@ export default function UnifiedAssistantPage() {
               {/* TAB 4: 基本情報・GPA目標 */}
               {profileTab === 'friends' && (
                 currentStudent ? (
-                  <FriendsPanel loginId={currentStudent.id} serverLinked={!!currentStudent.serverLinked} courses={userProfile.enrolledCourses} />
+                  <FriendsPanel loginId={currentStudent.id} serverLinked={!!currentStudent.serverLinked} courses={userProfile.enrolledCourses} location={locationProps} />
                 ) : (
                   <p className="text-xs text-slate-600">フレンド機能を使うには、ログインしてください。</p>
                 )
+              )}
+
+              {profileTab === 'attendance' && (
+                <div className="space-y-3" data-attendance-tab>
+                  <LocationCard {...locationProps} />
+                  <p className="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
+                    🕒 授業の開始30分前〜開始15分後に校内なら「出席」、開始30分後までなら「遅刻」、開始30分を過ぎても校外のままなら「欠席」として自動で記録します。
+                    ブラウザはEneKomaを開いている間しか位置情報を取れないため、授業の時間に一度も開かなかった回は「未確認」になります。記録はこの端末だけに保存され、大学の公式な出欠ではありません。違っていたら手で直してください。
+                  </p>
+                  <AttendancePanel
+                    accountId={currentStudent?.id || 'guest'}
+                    courses={userProfile.enrolledCourses}
+                    version={attendanceVersion}
+                    onChange={() => setAttendanceVersion((v) => v + 1)}
+                  />
+                </div>
               )}
 
               {profileTab === 'basic' && (

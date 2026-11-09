@@ -114,51 +114,45 @@ export interface FriendDaySummary {
 }
 
 /**
- * オンライン状態。アプリを開いている間は1分ごとに知らせ、3分以上知らせがなければオフライン。
- * 共有をOFFにしている人は null（見せない）
+ * 校内 / 校外。位置情報をオンにしている人の端末が判定した結果だけが届く（緯度・経度は届かない）。
+ * 30分以上新しい判定が届いていなければ「位置情報なし」。共有をOFFにしている人は null（見せない）
  */
-export interface FriendPresence {
-  online: boolean;
-  // 最後にアプリを開いていた時刻と、何分前か（サーバーの時刻で計算する）
-  lastSeenAt: string | null;
+export interface FriendCampus {
+  status: 'on_campus' | 'off_campus' | 'unknown';
+  // 最後に判定した時刻から何分たったか（サーバーの時刻で計算する）
   minutesAgo: number | null;
 }
 
-export const ONLINE_WINDOW_MS = 3 * 60 * 1000;
+export const CAMPUS_FRESH_MS = 30 * 60 * 1000;
 
-/** サーバーに保存した最後の知らせから、今のオンライン状態を決める */
-export function presenceAt(raw: { lastSeenAt: string; offline?: boolean } | null, now: Date): FriendPresence {
-  const seen = raw ? new Date(raw.lastSeenAt).getTime() : NaN;
-  if (!raw || Number.isNaN(seen)) return { online: false, lastSeenAt: null, minutesAgo: null };
-  const ago = Math.max(0, now.getTime() - seen);
-  return { online: !raw.offline && ago < ONLINE_WINDOW_MS, lastSeenAt: raw.lastSeenAt, minutesAgo: Math.floor(ago / 60000) };
+/** サーバーに保存した最後の判定から、今の校内 / 校外を決める */
+export function campusAt(raw: { onCampus: boolean; at: string } | null, now: Date): FriendCampus {
+  const at = raw ? new Date(raw.at).getTime() : NaN;
+  if (!raw || Number.isNaN(at)) return { status: 'unknown', minutesAgo: null };
+  const ago = Math.max(0, now.getTime() - at);
+  const minutesAgo = Math.floor(ago / 60000);
+  if (ago > CAMPUS_FRESH_MS) return { status: 'unknown', minutesAgo };
+  return { status: raw.onCampus ? 'on_campus' : 'off_campus', minutesAgo };
 }
 
-/** 「オンライン」「オフライン（5分前）」「オフライン」 */
-export function presenceLabel(p: FriendPresence | null | undefined): string {
-  if (!p) return '';
-  if (p.online) return 'オンライン';
-  if (p.minutesAgo === null) return 'オフライン';
-  const m = p.minutesAgo;
-  const ago = m < 1 ? 'たった今' : m < 60 ? `${m}分前` : m < 60 * 24 ? `${Math.floor(m / 60)}時間前` : `${Math.floor(m / 1440)}日前`;
-  return `オフライン（${ago}）`;
+/** 「🏫 校内（文理学部）」「🚗 校外」「📍 位置情報なし」 */
+export function campusLabel(c: FriendCampus | null | undefined): string {
+  if (!c) return '';
+  if (c.status === 'on_campus') return '🏫 校内（文理学部）';
+  if (c.status === 'off_campus') return '🚗 校外';
+  return '📍 位置情報なし';
 }
 
-/** 一覧の並び：オンラインの人 → 最近までいた人 → 一度も来ていない・非公開の人（同じなら名前順） */
-export function comparePresence(a: { name: string; presence?: FriendPresence | null }, b: { name: string; presence?: FriendPresence | null }): number {
-  const rank = (p?: FriendPresence | null) => (p?.online ? 0 : p?.minutesAgo != null ? 1 : 2);
-  const r = rank(a.presence) - rank(b.presence);
-  if (r) return r;
-  const am = a.presence?.minutesAgo ?? Infinity;
-  const bm = b.presence?.minutesAgo ?? Infinity;
-  if (am !== bm) return am - bm;
-  return a.name.localeCompare(b.name, 'ja');
+/** 一覧の並び：校内の人 → 校外の人 → 位置情報なし・非公開の人（同じなら名前順） */
+export function compareCampus(a: { name: string; campus?: FriendCampus | null }, b: { name: string; campus?: FriendCampus | null }): number {
+  const rank = (c?: FriendCampus | null) => (c?.status === 'on_campus' ? 0 : c?.status === 'off_campus' ? 1 : 2);
+  return rank(a.campus) - rank(b.campus) || a.name.localeCompare(b.name, 'ja');
 }
 
 export interface FriendCurrentStatus {
   name: string;
   friendCode: string;
-  presence: FriendPresence | null;
+  campus: FriendCampus | null;
   now: FriendSlotStatus;
   next: FriendSlotStatus | null;
   today: FriendDaySummary | null;
@@ -203,10 +197,10 @@ function findNextClass(courses: SharedCourse[], today: string, fromPeriod: numbe
 
 /** 1人分の今・次のコマ・今日の予定・次の授業。共有を止めている人は「非公開」、時間割を送っていない人は「時間割未登録」 */
 export function friendStatusAt(
-  friend: { name: string; friendCode: string; share: boolean; courses: SharedCourse[] | null; presence?: FriendPresence | null },
+  friend: { name: string; friendCode: string; share: boolean; courses: SharedCourse[] | null; campus?: FriendCampus | null },
   slot: CampusSlot
 ): FriendCurrentStatus {
-  const base = { name: friend.name, friendCode: friend.friendCode, presence: friend.share ? friend.presence ?? null : null, today: null, nextClass: null, nextFree: null };
+  const base = { name: friend.name, friendCode: friend.friendCode, campus: friend.share ? friend.campus ?? null : null, today: null, nextClass: null, nextFree: null };
   if (!friend.share) return { ...base, now: { kind: 'private', slot: slot.label }, next: null };
   if (!friend.courses || friend.courses.length === 0) return { ...base, now: { kind: 'unregistered', slot: slot.label }, next: null };
   const courses = friend.courses;
@@ -299,7 +293,7 @@ const FRIEND_WORDS = /(友達|友だち|ともだち|フレンド|友人)/;
 // 「誰」「だれ」は「誰が空きコマ」「誰がどこにいる」のときだけ（「この授業の先生は誰」は時間割の検索）
 const WHO_WORDS = /(誰|だれ)/;
 const WHO_STATUS_WORDS = /(空きコマ|あきコマ|空いて|あいて|いる|一緒|いっしょ|ヒマ|ひま|暇|終わ|おわ)/;
-const STATUS_WORDS = /(空き|あき|どこ|教室|いる|授業|一緒|いっしょ|何して|なにして|今|いま|予定|スケジュール|終わ|おわ|終了|次|いつ|何限|放課後|ヒマ|ひま|暇|帰|遊べ)/;
+const STATUS_WORDS = /(空き|あき|どこ|教室|いる|授業|一緒|いっしょ|何して|なにして|今|いま|予定|スケジュール|終わ|おわ|終了|次|いつ|何限|放課後|ヒマ|ひま|暇|帰|遊べ|校内|校外|学内|構内|キャンパス|学校|大学に|大学来|大学き)/;
 
 const compact = (s: string) => s.normalize('NFKC').replace(/\s+/g, '');
 // 「佐藤さんは？」「山田くんって？」のように、名前だけを聞く短い質問
@@ -337,7 +331,10 @@ export const mayBeFriendStatusQuery = (query: string) =>
  * now: 今どこ・空きコマ / next_slot: 次のコマで一緒に空きコマ / next_class: 次の授業はいつ /
  * today: 今日の予定 / finished: もう授業が終わったか / after_school: 放課後ヒマな友達
  */
-export type FriendQueryIntent = 'now' | 'next_slot' | 'next_class' | 'today' | 'finished' | 'after_school' | 'common_classes' | 'common_free_periods';
+export type FriendQueryIntent = 'now' | 'next_slot' | 'next_class' | 'today' | 'finished' | 'after_school' | 'common_classes' | 'common_free_periods' | 'on_campus';
+
+// 「〇〇さんは学校にいる？」「今校内にいる友達は？」
+const ON_CAMPUS_WORDS = /(校内|校外|学内|構内|キャンパス(に|内|にい)|学校(に|来|き|にい)|大学(に|来|き)|登校)/;
 
 const COMMON_CLASS_WORDS = /(同じ授業|共通の授業|共通授業|一緒の授業|いっしょの授業|同じ講義|共通の講義|一緒に受けて|一緒に受講|同じクラス|(かぶ|被)ってる授業|授業(が|は)?(かぶ|被|同じ|一緒|重な))/;
 const COMMON_FREE_WORDS =
@@ -345,6 +342,7 @@ const COMMON_FREE_WORDS =
 
 export function friendQueryIntent(query: string): FriendQueryIntent {
   const q = compact(query);
+  if (ON_CAMPUS_WORDS.test(q)) return 'on_campus';
   if (COMMON_CLASS_WORDS.test(q)) return 'common_classes';
   // 「次のコマで一緒に空きコマの友達はいる？」は次のコマの質問
   if (COMMON_FREE_WORDS.test(q) && !/次のコマ|次の時間/.test(q)) return 'common_free_periods';
@@ -573,6 +571,32 @@ function answerCommonQuery(
     .join('\n');
 }
 
+/** 「〇〇さんは学校にいる？」「今校内にいる友達は？」の答え（位置情報の判定と、時間割だけから） */
+function campusSentence(f: FriendCurrentStatus): string {
+  const c = f.campus;
+  if (!c || c.status === 'unknown') {
+    return `${f.name}さんの位置情報が届いていないため、校内にいるかは分かりません（位置情報をオンにしていないか、しばらくアプリを開いていません）。`;
+  }
+  if (c.status === 'off_campus') return `${f.name}さんは現在、校外にいます。`;
+  const lesson = f.now.kind === 'class' ? `時間割では、今は${f.now.room ? `${roomText(f.now.room)}で` : ''}『${f.now.course}』の授業です。` : '';
+  return `${f.name}さんは現在、校内（文理学部）にいます。${lesson}`;
+}
+
+function answerOnCampus(targets: FriendCurrentStatus[], named: boolean): string {
+  const visible = targets.filter((f) => f.campus);
+  const hidden = targets.filter((f) => !f.campus);
+  const hiddenNote = hidden.length ? `${joinNames(hidden)}は位置情報を共有していないため分かりません。` : '';
+  if (named) return [...visible.map(campusSentence), hiddenNote].filter(Boolean).join('\n');
+  const on = visible.filter((f) => f.campus?.status === 'on_campus');
+  const off = visible.filter((f) => f.campus?.status === 'off_campus');
+  const unknown = visible.filter((f) => f.campus?.status === 'unknown');
+  const parts = [on.length ? `今、校内（文理学部）にいるフレンドは、${joinNames(on)}です。` : '今、校内（文理学部）にいるフレンドはいません。'];
+  if (off.length) parts.push(`${joinNames(off)}は校外です。`);
+  if (unknown.length) parts.push(`${joinNames(unknown)}は位置情報が届いていません。`);
+  if (hiddenNote) parts.push(hiddenNote);
+  return parts.join('');
+}
+
 /**
  * get_friends_current_status の結果からチャットの答えを作る（AIに推測させない）。
  * myCourses は質問した本人の時間割（「次のコマで一緒に空きコマ」の判定に使う）
@@ -595,6 +619,7 @@ export function answerFriendStatusQuery(
   const offHours = slot.phase === 'after' || slot.phase === 'holiday';
   const lead = slot.phase === 'holiday' ? '本日は休日のため授業はありません。' : slot.phase === 'after' ? '現在、本日の授業はすべて終了しています。' : '';
 
+  if (intent === 'on_campus') return answerOnCampus(targets, named.length > 0);
   if (intent === 'common_classes' || intent === 'common_free_periods') return answerCommonQuery(query, intent, slot, targets, myCourses);
   if (named.length && visible.length === 0) return hidden.map(notSharedText).join('\n');
 

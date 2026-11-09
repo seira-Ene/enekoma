@@ -13,7 +13,7 @@ import {
   setRemove,
   sharesSchedule
 } from '../account/accountStore';
-import { campusSlotAt, comparePresence, friendStatusAt, FriendsStatusResult, presenceAt, SharedCourse } from '@/app/data/friendStatus';
+import { campusAt, campusSlotAt, compareCampus, friendStatusAt, FriendsStatusResult, SharedCourse } from '@/app/data/friendStatus';
 
 export type FriendshipStatus = 'pending' | 'accepted';
 
@@ -131,25 +131,20 @@ export async function deleteSharedSchedule(loginId: string) {
   await kvDel(scheduleKey(loginId));
 }
 
-// ---- オンライン状態（共有をONにしている人だけ保存する） ----
-const presenceKey = (loginId: string) => `presence:${id(loginId)}`;
-const PRESENCE_TTL_SECONDS = 30 * 24 * 60 * 60;
+// ---- 校内 / 校外（共有をONにしている人だけ。端末で判定した結果だけで、緯度・経度は受け取らない） ----
+const campusKey = (loginId: string) => `campus:${id(loginId)}`;
+const CAMPUS_TTL_SECONDS = 24 * 60 * 60;
 
-export async function touchPresence(loginId: string, now: Date = new Date()) {
-  await kvSet(presenceKey(loginId), JSON.stringify({ lastSeenAt: now.toISOString() }), { ttlSeconds: PRESENCE_TTL_SECONDS });
+export async function saveCampusStatus(loginId: string, onCampus: boolean, now: Date = new Date()) {
+  await kvSet(campusKey(loginId), JSON.stringify({ onCampus, at: now.toISOString() }), { ttlSeconds: CAMPUS_TTL_SECONDS });
 }
 
-/** アプリを閉じた・ログアウトした */
-export async function markOffline(loginId: string, now: Date = new Date()) {
-  await kvSet(presenceKey(loginId), JSON.stringify({ lastSeenAt: now.toISOString(), offline: true }), { ttlSeconds: PRESENCE_TTL_SECONDS });
+export async function deleteCampusStatus(loginId: string) {
+  await kvDel(campusKey(loginId));
 }
 
-export async function deletePresence(loginId: string) {
-  await kvDel(presenceKey(loginId));
-}
-
-async function getPresence(loginId: string): Promise<{ lastSeenAt: string; offline?: boolean } | null> {
-  const raw = await kvGet(presenceKey(loginId));
+async function getCampusStatus(loginId: string): Promise<{ onCampus: boolean; at: string } | null> {
+  const raw = await kvGet(campusKey(loginId));
   try {
     return raw ? JSON.parse(raw) : null;
   } catch {
@@ -171,11 +166,11 @@ export async function get_friends_current_status(meLoginId: string, now: Date = 
   const friends = await views(await setMembers(friendsKey(meLoginId)));
   const statuses = await Promise.all(
     friends.map(async (f) => {
-      const [courses, presence] = f.share ? await Promise.all([getSharedSchedule(f.loginId), getPresence(f.loginId)]) : [null, null];
-      const status = friendStatusAt({ name: f.name, friendCode: f.friendCode, share: f.share, courses, presence: f.share ? presenceAt(presence, now) : null }, slot);
+      const [courses, campus] = f.share ? await Promise.all([getSharedSchedule(f.loginId), getCampusStatus(f.loginId)]) : [null, null];
+      const status = friendStatusAt({ name: f.name, friendCode: f.friendCode, share: f.share, courses, campus: f.share ? campusAt(campus, now) : null }, slot);
       // 共通の授業・空きコマを調べるときだけ、共有された時間割（曜日・時限・科目名・教室）を付ける
       return options.withSchedule && f.share && courses ? { ...status, schedule: courses } : status;
     })
   );
-  return { slot, friends: statuses.sort(comparePresence) };
+  return { slot, friends: statuses.sort(compareCampus) };
 }

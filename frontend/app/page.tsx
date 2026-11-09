@@ -2961,15 +2961,15 @@ export default function UnifiedAssistantPage() {
               {/* TAB 1: 今期履修中（時間割） */}
               {profileTab === 'timetable' && (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between pb-1">
-                    <div>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-1">
+                    <div className="min-w-0">
                       <h4 className="font-bold text-slate-900 text-xs">今学期の履修中科目一覧</h4>
                       <p className="text-[11px] text-slate-500">
                         時間割画像を送ることで自動登録されるほか、手動での追加・削除も可能です。
                       </p>
                     </div>
-                    <div className="text-right">
-                      <span className="text-xs font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                    <div className="shrink-0">
+                      <span data-credit-badge className="inline-block whitespace-nowrap text-xs font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded border border-slate-200">
                         今期登録単位数: {userProfile.semesterCredits}単位
                       </span>
                     </div>
@@ -3102,16 +3102,20 @@ export default function UnifiedAssistantPage() {
               {/* TAB 2: 修得済み科目一覧 */}
               {profileTab === 'completed' && (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between pb-1">
-                    <div>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-1">
+                    <div className="min-w-0">
                       <h4 className="font-bold text-slate-900 text-xs">修得済み科目一覧（計 {userProfile.currentCredits}単位）</h4>
                       <p className="text-[11px] text-slate-500">
                         卒業要件（全学科共通124単位）までの進捗：あと {Math.max(0, 124 - userProfile.currentCredits)}単位
                       </p>
                     </div>
-                    <div className="text-right">
-                      <span className="text-xs font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded border border-slate-200">
+                    <div className="shrink-0 flex items-center gap-2 sm:block">
+                      <span data-progress-badge className="inline-block whitespace-nowrap text-xs font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded border border-slate-200">
                         達成率: {Math.min(100, Math.round((userProfile.currentCredits / 124) * 100))}%
+                      </span>
+                      {/* スマホでは横幅いっぱいの進み具合のバー */}
+                      <span className="flex-1 h-1.5 rounded-full bg-slate-200 overflow-hidden sm:hidden" aria-hidden="true">
+                        <span className="block h-full bg-emerald-500" style={{ width: `${Math.min(100, Math.round((userProfile.currentCredits / 124) * 100))}%` }} />
                       </span>
                     </div>
                   </div>
@@ -4475,9 +4479,11 @@ export default function UnifiedAssistantPage() {
             {/* モーダルヘッダー */}
             <div className="flex items-center justify-between p-4 border-b border-slate-200 bg-slate-50 rounded-t-xl">
               <div>
-                <h3 className="text-base font-bold text-slate-900 flex items-center space-x-2">
+                <h3 className="text-sm sm:text-base font-bold text-slate-900 flex items-start gap-2">
                   <span>🎓</span>
-                  <span>文理学部 学生ログイン / アカウント管理</span>
+                  <span>
+                    文理学部 学生ログイン / <span className="inline-block">アカウント管理</span>
+                  </span>
                 </h3>
                 <p className="text-xs text-slate-500">
                   学生ごとに時間割・修得単位・GPA・会話履歴を個別管理できます
@@ -4488,17 +4494,18 @@ export default function UnifiedAssistantPage() {
                   setShowAuthModal(false);
                   setAuthError(null);
                 }}
-                className="text-slate-400 hover:text-slate-700 text-lg px-2"
+                aria-label="閉じる"
+                className="shrink-0 min-w-11 min-h-11 sm:min-w-0 sm:min-h-0 flex items-center justify-center text-slate-400 hover:text-slate-700 text-lg px-2"
               >
                 ✕
               </button>
             </div>
 
             {/* ナビゲーションタブ */}
-            <div className="flex border-b border-slate-200 bg-white px-3 pt-2 space-x-1">
+            <div data-auth-tabs className={`grid ${currentStudent ? 'grid-cols-2' : 'grid-cols-3'} sm:flex gap-1 border-b border-slate-200 bg-white px-3 pt-2`}>
               <button
                 onClick={() => { setAuthTab('login'); setAuthError(null); }}
-                className={`px-3 py-1.5 text-xs font-semibold border-b-2 whitespace-nowrap transition ${
+                className={`min-w-0 min-h-11 sm:min-h-0 px-2 sm:px-3 py-1.5 text-xs font-semibold text-center leading-tight border-b-2 sm:whitespace-nowrap transition ${
                   authTab === 'login'
                     ? 'border-slate-800 text-slate-900 bg-slate-50 rounded-t'
                     : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -4508,7 +4515,7 @@ export default function UnifiedAssistantPage() {
               </button>
               <button
                 onClick={() => { setAuthTab('register'); setAuthError(null); }}
-                className={`px-3 py-1.5 text-xs font-semibold border-b-2 whitespace-nowrap transition ${
+                className={`min-w-0 min-h-11 sm:min-h-0 px-2 sm:px-3 py-1.5 text-xs font-semibold text-center leading-tight border-b-2 sm:whitespace-nowrap transition ${
                   authTab === 'register'
                     ? 'border-slate-800 text-slate-900 bg-slate-50 rounded-t'
                     : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -4519,7 +4526,7 @@ export default function UnifiedAssistantPage() {
               {currentStudent && (
                 <button
                   onClick={() => { setAuthTab('info'); setAuthError(null); }}
-                  className={`px-3 py-1.5 text-xs font-semibold border-b-2 whitespace-nowrap transition ${
+                  className={`min-w-0 min-h-11 sm:min-h-0 px-2 sm:px-3 py-1.5 text-xs font-semibold text-center leading-tight border-b-2 sm:whitespace-nowrap transition ${
                     authTab === 'info'
                       ? 'border-slate-800 text-slate-900 bg-slate-50 rounded-t'
                       : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -4530,7 +4537,7 @@ export default function UnifiedAssistantPage() {
               )}
               <button
                 onClick={() => { setAuthTab('switch'); setAuthError(null); }}
-                className={`px-3 py-1.5 text-xs font-semibold border-b-2 whitespace-nowrap transition ${
+                className={`min-w-0 min-h-11 sm:min-h-0 px-2 sm:px-3 py-1.5 text-xs font-semibold text-center leading-tight border-b-2 sm:whitespace-nowrap transition ${
                   authTab === 'switch'
                     ? 'border-slate-800 text-slate-900 bg-slate-50 rounded-t'
                     : 'border-transparent text-slate-500 hover:text-slate-800'

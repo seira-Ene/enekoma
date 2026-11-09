@@ -166,13 +166,15 @@ export async function getSharedSchedule(loginId: string): Promise<SharedCourse[]
  * AIチャットのツール get_friends_current_status。ログイン中の人の承認済みフレンドについて、
  * 閲覧時刻の曜日・時限で授業中（科目名・教室）か空きコマかを返す。共有を止めている人は「非公開」
  */
-export async function get_friends_current_status(meLoginId: string, now: Date = new Date()): Promise<FriendsStatusResult> {
+export async function get_friends_current_status(meLoginId: string, now: Date = new Date(), options: { withSchedule?: boolean } = {}): Promise<FriendsStatusResult> {
   const slot = campusSlotAt(now);
   const friends = await views(await setMembers(friendsKey(meLoginId)));
   const statuses = await Promise.all(
     friends.map(async (f) => {
       const [courses, presence] = f.share ? await Promise.all([getSharedSchedule(f.loginId), getPresence(f.loginId)]) : [null, null];
-      return friendStatusAt({ name: f.name, friendCode: f.friendCode, share: f.share, courses, presence: f.share ? presenceAt(presence, now) : null }, slot);
+      const status = friendStatusAt({ name: f.name, friendCode: f.friendCode, share: f.share, courses, presence: f.share ? presenceAt(presence, now) : null }, slot);
+      // 共通の授業・空きコマを調べるときだけ、共有された時間割（曜日・時限・科目名・教室）を付ける
+      return options.withSchedule && f.share && courses ? { ...status, schedule: courses } : status;
     })
   );
   return { slot, friends: statuses.sort(comparePresence) };

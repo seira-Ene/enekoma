@@ -2,7 +2,9 @@
 
 // フレンド機能（フレンドコード方式）。フレンドに見せるのは名前と、今の授業（科目名・教室）か空きコマかだけ
 import { useCallback, useEffect, useState } from 'react';
-import { cardBadges, comparePresence, presenceLabel, slotHeading, type FriendCurrentStatus, type FriendSlotStatus, type CampusSlot } from '@/app/data/friendStatus';
+import { campusLabel, cardBadges, compareCampus, slotHeading, type FriendCurrentStatus, type FriendSlotStatus, type CampusSlot } from '@/app/data/friendStatus';
+import type { LocationState } from '@/app/data/campusLocation';
+import LocationCard from '@/app/components/LocationCard';
 import { getSessionToken, saveSessionToken } from '@/app/data/studentAccounts';
 import { callAccountApi } from '@/app/data/accountClient';
 
@@ -13,6 +15,8 @@ interface Props {
   // 今期の時間割（共有をONにしたときに送る）
   // 曜日・時限が空の行はサーバーで除く
   courses: { day?: string; period?: number | string; name: string; room?: string }[];
+  // 位置情報（校内 / 校外）の設定
+  location?: { enabled: boolean; state: LocationState; onToggle: (enabled: boolean) => void };
 }
 
 interface FriendView {
@@ -46,20 +50,12 @@ async function callFriendsApi(token: string, action: string, payload: Record<str
   }
 }
 
-/** アプリを開いていることを知らせる（フレンドの一覧で「オンライン」と出る。共有OFFならサーバーは保存しない） */
-export function sendPresence(token: string) {
-  return callFriendsApi(token, 'heartbeat');
-}
-
-/** アプリを閉じる・ログアウトするときに「オフライン」にする（ページを閉じても届くように sendBeacon を使う） */
-export function sendOffline(token: string) {
-  const body = JSON.stringify({ action: 'offline', sessionToken: token });
-  try {
-    if (navigator.sendBeacon?.('/api/friends', new Blob([body], { type: 'application/json' }))) return;
-  } catch {
-    // 下の fetch で送る
-  }
-  void fetch('/api/friends', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+/**
+ * 校内か校外かを送る（端末で判定した結果だけ。緯度・経度は送らない）。
+ * null は位置情報をオフにした。共有OFFならサーバーは保存しない
+ */
+export function sendCampusStatus(token: string, onCampus: boolean | null) {
+  return callFriendsApi(token, 'campus', { onCampus });
 }
 
 /** 端末の時間割を、共有してよい項目（曜日・時限・科目名・教室）だけにする */
@@ -78,7 +74,7 @@ const BADGE_STYLES: Record<FriendSlotStatus['kind'], string> = {
   off_hours: 'bg-slate-100 text-slate-600 border-slate-200'
 };
 
-export default function FriendsPanel({ loginId, serverLinked, courses }: Props) {
+export default function FriendsPanel({ loginId, serverLinked, courses, location }: Props) {
   const [token, setToken] = useState<string | null>(() => getSessionToken(loginId));
   const [me, setMe] = useState<MeData | null>(null);
   const [statuses, setStatuses] = useState<FriendCurrentStatus[]>([]);
@@ -185,16 +181,16 @@ export default function FriendsPanel({ loginId, serverLinked, courses }: Props) 
   };
 
   const statusOf = (friendCode: string) => statuses.find((s) => s.friendCode === friendCode);
-  // オンラインの人を上に。オフラインの人も全員出す
+  // 校内の人を上に。校外・位置情報なしの人も全員出す
   const sortedFriends = [...(me?.friends ?? [])].sort((a, b) =>
-    comparePresence({ name: a.name, presence: statusOf(a.friendCode)?.presence }, { name: b.name, presence: statusOf(b.friendCode)?.presence })
+    compareCampus({ name: a.name, campus: statusOf(a.friendCode)?.campus }, { name: b.name, campus: statusOf(b.friendCode)?.campus })
   );
-  const onlineCount = statuses.filter((s) => s.presence?.online).length;
+  const onCampusCount = statuses.filter((s) => s.campus?.status === 'on_campus').length;
 
   return (
     <div className="space-y-3 text-xs" data-friends-panel>
       <p className="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
-        🔒 フレンドに見せるのは、名前と、今の曜限の授業（科目名・教室）か空きコマか、オンラインかどうかだけです。成績・GPA・ログインID・メールアドレスは見せません。
+        🔒 フレンドに見せるのは、名前と、今の曜限の授業（科目名・教室）か空きコマか、校内か校外かだけです。緯度・経度や詳しい場所、出欠の記録、成績・GPA・ログインID・メールアドレスは見せません。
       </p>
 
       {loadError && <p className="text-rose-700">{loadError}</p>}
@@ -230,7 +226,7 @@ export default function FriendsPanel({ loginId, serverLinked, courses }: Props) 
       <div className="p-3 rounded-lg border border-slate-200 bg-white flex items-center justify-between gap-3">
         <div>
           <div className="font-semibold text-slate-800">フレンドに今の状況を共有する</div>
-          <div className="text-[11px] text-slate-500">オフにすると、フレンドには「非公開」と表示され、時間割とオンライン状態はサーバーから消えます。</div>
+          <div className="text-[11px] text-slate-500">オフにすると、フレンドには「非公開」と表示され、時間割と校内 / 校外はサーバーから消えます。</div>
         </div>
         <button
           type="button"
@@ -247,6 +243,8 @@ export default function FriendsPanel({ loginId, serverLinked, courses }: Props) 
           <span className={`block w-5 h-5 rounded-full bg-white shadow transition ${me?.shareScheduleStatus ? 'translate-x-5' : ''}`} />
         </button>
       </div>
+
+      {location && <LocationCard enabled={location.enabled} state={location.state} onToggle={location.onToggle} />}
 
       {/* 追加 */}
       <form
@@ -322,34 +320,37 @@ export default function FriendsPanel({ loginId, serverLinked, courses }: Props) 
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="font-semibold text-slate-800">
-            フレンド（{me?.friends.length ?? 0}人{onlineCount > 0 ? `・オンライン${onlineCount}人` : ''}）
+            フレンド（{me?.friends.length ?? 0}人{onCampusCount > 0 ? `・校内${onCampusCount}人` : ''}）
           </span>
           <span className="text-[11px] text-slate-500">{slot ? slotHeading(slot) : ''}</span>
         </div>
         {me && me.friends.length === 0 && <p className="text-slate-500">まだフレンドがいません。友達のフレンドコードを入力して申請してください。</p>}
         {sortedFriends.map((f) => {
           const s = statusOf(f.friendCode);
-          const presence = s?.presence;
+          const campus = s?.campus;
           const badges = s && slot ? cardBadges(s, slot) : null;
           return (
             <div
               key={f.friendCode}
               data-friend-card={f.name}
-              data-online={presence ? String(presence.online) : undefined}
+              data-campus={campus ? campus.status : undefined}
               className="p-3 rounded-lg border border-slate-200 bg-white"
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="flex items-center gap-2 min-w-0">
-                  {presence && (
-                    <span
-                      aria-hidden="true"
-                      className={`shrink-0 w-2.5 h-2.5 rounded-full ${presence.online ? 'bg-emerald-500 ring-2 ring-emerald-200' : 'bg-slate-300'}`}
-                    />
-                  )}
                   <span className="font-bold text-slate-900 text-sm truncate">{f.name}</span>
-                  {presence && (
-                    <span data-presence className={`shrink-0 text-[11px] ${presence.online ? 'text-emerald-700 font-semibold' : 'text-slate-500'}`}>
-                      {presenceLabel(presence)}
+                  {campus && (
+                    <span
+                      data-campus-label
+                      className={`shrink-0 px-1.5 py-0.5 rounded-md border text-[11px] ${
+                        campus.status === 'on_campus'
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800 font-semibold'
+                          : campus.status === 'off_campus'
+                            ? 'border-slate-200 bg-slate-50 text-slate-700'
+                            : 'border-slate-200 text-slate-500'
+                      }`}
+                    >
+                      {campusLabel(campus)}
                     </span>
                   )}
                 </span>

@@ -1,6 +1,7 @@
 // フレンドの「今の授業・空きコマ」と「今日の予定・次の授業」の判定と、チャットの答えの文。
 // 共有するのは曜日・時限・科目名・教室だけ（成績・GPA・個人情報は使わない）
 import { getCampusClock, PERIOD_TIMES, resolvePeriodAt } from './courses';
+import { isSameCourseName } from './courseGrades';
 
 /** フレンドに共有する時間割の1コマ（成績・GPA・個人情報は含めない） */
 export interface SharedCourse {
@@ -164,6 +165,8 @@ export interface FriendCurrentStatus {
   nextClass: FriendNextClass | null;
   // 今日のこの先で最初の空きコマ（今日の授業が終わっていれば null）
   nextFree: FriendSlotStatus | null;
+  // 共通の授業・空きコマを調べるときだけ入れる（曜日・時限・科目名・教室だけ）
+  schedule?: SharedCourse[];
 }
 
 export function statusAtSlot(courses: SharedCourse[], day: string, period: number): FriendSlotStatus {
@@ -334,10 +337,17 @@ export const mayBeFriendStatusQuery = (query: string) =>
  * now: 今どこ・空きコマ / next_slot: 次のコマで一緒に空きコマ / next_class: 次の授業はいつ /
  * today: 今日の予定 / finished: もう授業が終わったか / after_school: 放課後ヒマな友達
  */
-export type FriendQueryIntent = 'now' | 'next_slot' | 'next_class' | 'today' | 'finished' | 'after_school';
+export type FriendQueryIntent = 'now' | 'next_slot' | 'next_class' | 'today' | 'finished' | 'after_school' | 'common_classes' | 'common_free_periods';
+
+const COMMON_CLASS_WORDS = /(同じ授業|共通の授業|共通授業|一緒の授業|いっしょの授業|同じ講義|共通の講義|一緒に受けて|一緒に受講|同じクラス|(かぶ|被)ってる授業|授業(が|は)?(かぶ|被|同じ|一緒|重な))/;
+const COMMON_FREE_WORDS =
+  /(共通の?空きコマ|一緒の空きコマ|いっしょの空きコマ|同じ空きコマ|(一緒|いっしょ|両方|二人とも|ふたりとも|共通|お互い)(に|で)?(空いて|あいて|空き|あき|ひま|暇)|空きコマ(が|は)?(かぶ|被|重な|同じ|一緒|合う|あう|そろう|揃う))/;
 
 export function friendQueryIntent(query: string): FriendQueryIntent {
   const q = compact(query);
+  if (COMMON_CLASS_WORDS.test(q)) return 'common_classes';
+  // 「次のコマで一緒に空きコマの友達はいる？」は次のコマの質問
+  if (COMMON_FREE_WORDS.test(q) && !/次のコマ|次の時間/.test(q)) return 'common_free_periods';
   if (/(放課後|ヒマ|ひま|暇|遊べ|帰り)/.test(q)) return 'after_school';
   if (/(予定|スケジュール|何限から|何限まで|今日の授業|今日は何)/.test(q)) return 'today';
   if (/(終わ|おわ|終了)/.test(q)) return 'finished';
@@ -418,6 +428,151 @@ function afterSchoolAnswer(visible: FriendCurrentStatus[], slot: CampusSlot): st
   return parts.join('');
 }
 
+// ---- 共通の授業・共通の空きコマ（自分とフレンドの時間割を曜限ごとに比べる） ----
+
+const WEEKDAYS = ['月', '火', '水', '木', '金'];
+const ALL_PERIODS = PERIOD_TIMES.map((p) => p.period);
+// 同じ曜限どうしで比べるので、カタカナの書き方の違い（ウエ／ウェ、ヴァ／バ）や中黒・長音の有無も同じとみなす
+const foldKana = (s: string) =>
+  s
+    .normalize('NFKC')
+    .replace(/ウエ/g, 'ウェ')
+    .replace(/ヴァ/g, 'バ')
+    .replace(/ヴィ/g, 'ビ')
+    .replace(/ヴ/g, 'ブ')
+    .replace(/[・･ー\-－‐]/g, '');
+
+/** 同じ曜限にある2つの授業が同じ授業か（表記ゆれ・ローマ数字・全角半角を無視。「情報理論」と「情報理論演習」は別） */
+export function isSameSharedCourse(a: string, b: string): boolean {
+  return isSameCourseName(a, b) || isSameCourseName(foldKana(a), foldKana(b));
+}
+
+export interface CommonClass {
+  day: string;
+  period: number;
+  slot: string;
+  name: string;
+  room: string;
+}
+
+export interface SameSlotDifferent {
+  slot: string;
+  mine: string;
+  theirs: string;
+}
+
+/** 同じ曜日・同じ時限に、同じ授業を登録しているコマ（days を省くと月〜土） */
+export function findCommonClasses(
+  mine: SharedCourse[],
+  theirs: SharedCourse[],
+  days: string[] = SHARE_DAYS
+): { common: CommonClass[]; sameSlotDifferent: SameSlotDifferent[] } {
+  const common: CommonClass[] = [];
+  const sameSlotDifferent: SameSlotDifferent[] = [];
+  for (const day of days) {
+    const periods = [...new Set([...mine, ...theirs].filter((c) => c.day === day).map((c) => c.period))].sort((a, b) => a - b);
+    for (const period of periods) {
+      const a = mine.filter((c) => c.day === day && c.period === period);
+      const b = theirs.filter((c) => c.day === day && c.period === period);
+      if (!a.length || !b.length) continue;
+      const match = a.flatMap((x) => b.filter((y) => isSameSharedCourse(x.name, y.name)).map((y) => ({ x, y })))[0];
+      if (match) common.push({ day, period, slot: slotLabel(day, period), name: match.x.name, room: match.x.room || match.y.room });
+      else sameSlotDifferent.push({ slot: slotLabel(day, period), mine: a[0].name, theirs: b[0].name });
+    }
+  }
+  return { common, sameSlotDifferent };
+}
+
+/** どちらも授業を登録していない曜限（1〜5限）。曜日ごと */
+export function findCommonFreePeriods(mine: SharedCourse[], theirs: SharedCourse[], days: string[]): { day: string; periods: number[] }[] {
+  const busy = (list: SharedCourse[], day: string, period: number) => list.some((c) => c.day === day && c.period === period);
+  return days.map((day) => ({ day, periods: ALL_PERIODS.filter((p) => !busy(mine, day, p) && !busy(theirs, day, p)) }));
+}
+
+/** 「1限と3限」「2〜5限」「1限、3限と4限」 */
+function periodsText(periods: number[]): string {
+  const groups: number[][] = [];
+  for (const p of periods) {
+    const last = groups[groups.length - 1];
+    if (last && p === last[last.length - 1] + 1) last.push(p);
+    else groups.push([p]);
+  }
+  const parts = groups.flatMap((g) => (g.length >= 3 ? [`${g[0]}〜${g[g.length - 1]}限`] : g.map((p) => `${p}限`)));
+  return parts.length <= 2 ? parts.join('と') : `${parts.slice(0, -1).join('、')}と${parts[parts.length - 1]}`;
+}
+
+export type DayRange = { kind: 'today' | 'tomorrow' | 'day' | 'week'; days: string[]; label: string };
+
+/** 質問の範囲：「今日」「明日」「水曜」、なければ今週（月〜金。土曜は聞かれたときだけ） */
+export function dayRangeOf(query: string, slot: CampusSlot): DayRange {
+  const q = compact(query);
+  const named = q.match(/([月火水木金土])曜/);
+  if (named) return { kind: 'day', days: [named[1]], label: `${named[1]}曜日` };
+  if (/(今日|きょう|本日)/.test(q)) return { kind: 'today', days: SHARE_DAYS.includes(slot.day) ? [slot.day] : [], label: `本日（${slot.day}曜日）` };
+  if (/(明日|あした|あす)/.test(q)) {
+    const day = WEEK[(WEEK.indexOf(slot.day) + 1) % 7];
+    return { kind: 'tomorrow', days: SHARE_DAYS.includes(day) ? [day] : [], label: `明日（${day}曜日）` };
+  }
+  return { kind: 'week', days: WEEKDAYS, label: '今週' };
+}
+
+/** 共通の授業の答え（range を指定したら、その日だけ） */
+function commonClassesSentence(f: FriendCurrentStatus, mine: SharedCourse[], range: DayRange | null): string {
+  const theirs = f.schedule || [];
+  const days = range ? range.days : SHARE_DAYS;
+  const where = range ? `${range.label}に` : '';
+  const { common, sameSlotDifferent } = findCommonClasses(mine, theirs, days);
+  if (common.length === 0) {
+    const note = sameSlotDifferent.length
+      ? `なお、${sameSlotDifferent.map((d) => `${d.slot}はどちらも授業がありますが、あなたは『${d.mine}』、${f.name}さんは『${d.theirs}』で別の授業です`).join('。')}。`
+      : '';
+    return `${f.name}さんと${where}同じ曜限に受講している共通の授業はありません。${note}`;
+  }
+  const list = common.map((c) => `${c.slot}の『${c.name}』${c.room ? `（${roomText(c.room)}）` : ''}`).join('と、');
+  return `${f.name}さんと${where}共通で受講している授業は、${list}です。`;
+}
+
+/** 共通の空きコマの答え */
+function commonFreeSentence(f: FriendCurrentStatus, mine: SharedCourse[], range: DayRange): string {
+  const theirs = f.schedule || [];
+  if (range.days.length === 0) return `${range.label}は休日のため授業はありません。`;
+  const result = findCommonFreePeriods(mine, theirs, range.days);
+  if (range.kind !== 'week') {
+    const periods = result[0].periods;
+    const lead = range.kind === 'day' ? range.label : range.label.replace(/（.*）$/, '');
+    if (periods.length === 0) return `${lead}、${f.name}さんと時間が被る共通の空きコマはありません。`;
+    const allDay = periods.length === ALL_PERIODS.length ? '（どちらも授業がない日です）' : '';
+    return `${range.label}の${f.name}さんとの共通空きコマは${periodsText(periods)}です${allDay}。学食やラウンジで合流できます！`;
+  }
+  const withFree = result.filter((r) => r.periods.length > 0);
+  const none = result.filter((r) => r.periods.length === 0);
+  if (withFree.length === 0) return `今週（月〜金）、${f.name}さんと時間が被る共通の空きコマはありません。`;
+  const list = withFree.map((r) => `${r.day}曜 ${r.periods.length === ALL_PERIODS.length ? '終日' : periodsText(r.periods)}`).join('、');
+  const noneText = none.length ? `${none.map((r) => `${r.day}曜`).join('と')}は共通の空きコマがありません。` : '';
+  return `今週の${f.name}さんとの共通空きコマは、${list}です。${noneText}`;
+}
+
+/** 共通の授業・空きコマの質問の答え（myCourses は質問した本人の今期の時間割） */
+function answerCommonQuery(
+  query: string,
+  intent: 'common_classes' | 'common_free_periods',
+  slot: CampusSlot,
+  targets: FriendCurrentStatus[],
+  myCourses: SharedCourse[]
+): string {
+  if (myCourses.length === 0) {
+    return 'あなたの今期の時間割が登録されていないため、比べられません。プロフィールの「今期履修中」に時間割を登録するか、時間割の画像を送ってください。';
+  }
+  const hasRange = /([月火水木金土])曜|今日|きょう|本日|明日|あした|あす/.test(compact(query));
+  const range = dayRangeOf(query, slot);
+  return targets
+    .map((f) => {
+      if (f.now.kind === 'private' || f.now.kind === 'unregistered' || !f.schedule) return notSharedText(f);
+      return intent === 'common_classes' ? commonClassesSentence(f, myCourses, hasRange ? range : null) : commonFreeSentence(f, myCourses, range);
+    })
+    .join('\n');
+}
+
 /**
  * get_friends_current_status の結果からチャットの答えを作る（AIに推測させない）。
  * myCourses は質問した本人の時間割（「次のコマで一緒に空きコマ」の判定に使う）
@@ -440,6 +595,7 @@ export function answerFriendStatusQuery(
   const offHours = slot.phase === 'after' || slot.phase === 'holiday';
   const lead = slot.phase === 'holiday' ? '本日は休日のため授業はありません。' : slot.phase === 'after' ? '現在、本日の授業はすべて終了しています。' : '';
 
+  if (intent === 'common_classes' || intent === 'common_free_periods') return answerCommonQuery(query, intent, slot, targets, myCourses);
   if (named.length && visible.length === 0) return hidden.map(notSharedText).join('\n');
 
   // 時間帯を問わない質問：今日の予定・もう終わった？・次の授業・放課後

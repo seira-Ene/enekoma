@@ -284,7 +284,7 @@ const SYSTEM_PROMPT = `
   - 土曜日: 10:00 - 13:00
 
 【フレンド（友達）の居場所・空きコマ】
-- 友達が今どこの教室にいるか、空きコマか、今日の予定、もう授業が終わったか、次の授業はいつか、放課後に空いているかは、サーバーのツール get_friends_current_status の結果（ログイン中の人の承認済みフレンドの、今の曜限の授業名・教室か空きコマか、今日の授業の一覧と終わる時限、次の授業の曜日・時限・教室、次の空きコマ）だけで答える。引数 intent は now・next_slot・next_class・today・finished・after_school のどれか。
+- 友達が今どこの教室にいるか、空きコマか、今日の予定、もう授業が終わったか、次の授業はいつか、放課後に空いているかは、サーバーのツール get_friends_current_status の結果（ログイン中の人の承認済みフレンドの、今の曜限の授業名・教室か空きコマか、今日の授業の一覧と終わる時限、次の授業の曜日・時限・教室、次の空きコマ）だけで答える。引数 intent は now・next_slot・next_class・today・finished・after_school・common_classes（共通の授業）・common_free_periods（共通の空きコマ）のどれか。共通の授業・空きコマは、自分の時間割とフレンドの時間割をサーバーのコードで曜限ごとに比べた結果だけで答え、AIが時間割の文章から推測して比べない。
 - 授業時間外でも「分かりません」で終えない。朝は「本日最初の授業は〇限から（教室）」、放課後は「本日の授業はすべて終了しています。〇〇さんは本日4限で全授業終了です。」、日曜は「本日は休日のため授業はありません。次回（月曜1限）の〇〇さんの授業は〇〇教室です。」のように、結果にある今日の予定と次の授業で答える。結果がないときは推測せず、プロフィールの「フレンド」タブでフレンドを追加して時間割を共有してもらうよう案内する。
 - 友達の成績・GPA・連絡先などは扱わない。
 `;
@@ -641,14 +641,17 @@ export async function POST(req: NextRequest) {
     if (query && !image && mayBeFriendStatusQuery(query)) {
       const me = await authenticate(req, body).catch(() => null);
       if (me) {
-        const result = await get_friends_current_status(me, requestTime(req));
+        const intent = friendQueryIntent(query);
+        const result = await get_friends_current_status(me, requestTime(req), { withSchedule: intent === 'common_classes' || intent === 'common_free_periods' });
         if (isFriendStatusQuery(query, result.friends.map((f) => f.name))) {
           const myCourses = sanitizeSharedSchedule(userProfile?.enrolledCourses);
-          const intent = friendQueryIntent(query);
           let reply = answerFriendStatusQuery(query, result, myCourses, intent);
           // 話し方の指定があれば口調だけ書き換える（名前・教室・科目名・数字が消えたら元の文のまま）
           if (speakingStyle && apiKey) {
-            const keep = result.friends.flatMap((f) => [f.name, f.now.room, f.now.course, f.nextClass?.room, f.nextClass?.course].filter((x): x is string => !!x));
+            const keep = [
+              ...result.friends.flatMap((f) => [f.name, f.now.room, f.now.course, f.nextClass?.room, f.nextClass?.course, ...(f.schedule || []).flatMap((c) => [c.name, c.room])]),
+              ...myCourses.flatMap((c) => [c.name, c.room])
+            ].filter((x): x is string => !!x);
             reply = sanitizeConversationalReply(await restyleReply(apiKey, GEMINI_MODEL_ORDER, speakingStyle, reply, keep));
           }
           return NextResponse.json({

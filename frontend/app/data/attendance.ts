@@ -113,6 +113,25 @@ export function attendanceCounts(records: AttendanceRecord[], course: string): R
 const recordsKey = (accountId: string) => `enekoma_attendance:${accountId}`;
 const OBSERVATION_KEY = 'enekoma_campus_log';
 const OBSERVATION_KEEP_MS = 36 * 60 * MIN;
+const OBSERVATION_MIN_GAP_MS = MIN;
+const OBSERVATION_MAX = 1000;
+
+/**
+ * 原因調査用のログ（[Attendance]）。開発中（next dev）と、
+ * 本番でも localStorage に enekoma_debug_attendance=1 を入れた端末だけ出す
+ */
+export function attendanceLog(message: string, detail?: unknown): void {
+  if (typeof window === 'undefined') return;
+  let enabled = process.env.NODE_ENV !== 'production';
+  try {
+    enabled = enabled || localStorage.getItem('enekoma_debug_attendance') === '1';
+  } catch {
+    // 読めなければ開発中だけ出す
+  }
+  if (!enabled) return;
+  if (detail === undefined) console.info(`[Attendance] ${message}`);
+  else console.info(`[Attendance] ${message}`, detail);
+}
 
 export function readAttendance(accountId: string): Record<string, AttendanceRecord> {
   if (typeof window === 'undefined') return {};
@@ -143,13 +162,16 @@ export function readObservations(now: number = Date.now()): CampusObservation[] 
   }
 }
 
-/** 校内か校外かの記録を足す（変わったときと、5分ごと。古いものは消す） */
+/**
+ * 校内か校外かの記録を足す（変わったときと、前の記録から1分以上たったとき。古いものは消す）。
+ * 以前は同じ判定を5分ごとにしか残さなかったため、授業の直前に開いた測位が落ち、授業中に一度開いても「未確認」になることがあった
+ */
 export function addObservation(on: boolean, now: number = Date.now()): CampusObservation[] {
   const list = readObservations(now);
   const last = list[list.length - 1];
-  if (!last || last.on !== on || now - last.t >= 5 * MIN) list.push({ t: now, on });
+  if (!last || last.on !== on || now - last.t >= OBSERVATION_MIN_GAP_MS) list.push({ t: now, on });
   try {
-    localStorage.setItem(OBSERVATION_KEY, JSON.stringify(list.slice(-400)));
+    localStorage.setItem(OBSERVATION_KEY, JSON.stringify(list.slice(-OBSERVATION_MAX)));
   } catch {
     // 保存できなくても判定は続ける
   }

@@ -52,8 +52,8 @@ import FeedbackModal from '@/app/components/FeedbackModal';
 import FriendsPanel, { sendCampusStatus, syncSharedSchedule } from '@/app/components/FriendsPanel';
 import AttendancePanel from '@/app/components/AttendancePanel';
 import LocationCard from '@/app/components/LocationCard';
-import { geoErrorReason, isOnCampus, readLocationEnabled, saveLocationEnabled, type LocationState } from '@/app/data/campusLocation';
-import { addObservation, autoAttendanceUpdates, readAttendance, readObservations, recordKey, saveAttendance } from '@/app/data/attendance';
+import { geoErrorReason, judgeCampus, readLocationEnabled, saveLocationEnabled, type LocationState } from '@/app/data/campusLocation';
+import { addObservation, attendanceLog, autoAttendanceUpdates, readAttendance, readObservations, recordKey, saveAttendance } from '@/app/data/attendance';
 import AdminFeedbackModal from '@/app/components/AdminFeedbackModal';
 import { UPLOAD_ACCEPT, describeAnalysisFailure, prepareFileForUpload } from '@/app/data/imageUpload';
 import {
@@ -2006,67 +2006,134 @@ export default function UnifiedAssistantPage() {
     locationRefs.current = { id: currentStudentId, linked: currentStudentLinked, courses: userProfile.enrolledCourses };
   });
   const lastCampusSent = useRef<{ on: boolean; at: number } | null>(null);
-  const runAttendance = useCallback(() => {
+  // 出欠・フレンドのタブを開いたときなどに、すぐ測り直すための入口（位置情報がオフなら何もしない）
+  const requestLocationCheck = useRef<(reason: string) => void>(() => {});
+  const runAttendance = useCallback((reason: string) => {
     const { id, courses } = locationRefs.current;
     const accountId = id || 'guest';
     const records = readAttendance(accountId);
-    const updates = autoAttendanceUpdates(courses, readObservations(), records);
+    const observations = readObservations();
+    const updates = autoAttendanceUpdates(courses, observations, records);
+    // 1分ごとの見直しは、記録が変わったときだけ出す
+    if (reason !== '1分ごと' || updates.length > 0) {
+      attendanceLog(`出欠を判定（${reason}）`, { accountId, courses: courses.length, observations: observations.length, updates: updates.length });
+    }
     if (updates.length === 0) return;
     for (const u of updates) records[recordKey(u)] = u;
     saveAttendance(accountId, records);
+    attendanceLog('出欠を保存', updates.map((u) => `${u.date} ${u.day}${u.period} ${u.course}: ${u.status}`));
     setAttendanceVersion((v) => v + 1);
   }, []);
   useEffect(() => {
-    if (!locationEnabled) return;
+    if (!locationEnabled) {
+      requestLocationCheck.current = () => {};
+      return;
+    }
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- 使えないことを画面に伝える
       setLocationState({ kind: 'error', reason: 'unsupported' });
       return;
     }
     let alive = true;
+    let inFlight = false;
+    let lastStart = 0;
     setLocationState((s) => (s.kind === 'off' ? { kind: 'checking' } : s));
-    const check = () => {
-      if (document.visibilityState !== 'visible') return;
+    const onPosition = (pos: GeolocationPosition, mode: string) => {
+      inFlight = false;
+      if (!alive) return;
+      const judged = judgeCampus({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy });
+      attendanceLog(`位置を取得（${mode}）`, {
+        lat: Number(pos.coords.latitude.toFixed(5)),
+        lng: Number(pos.coords.longitude.toFixed(5)),
+        accuracyM: Math.round(judged.accuracyM),
+        distanceM: Math.round(judged.distanceM),
+        limitM: Math.round(judged.limitM),
+        onCampus: judged.onCampus
+      });
+      const on = judged.onCampus;
+      if (on === null) {
+        setLocationState({ kind: 'error', reason: 'inaccurate' });
+        runAttendance('誤差が大きく判定できない');
+        return;
+      }
+      const now = Date.now();
+      setLocationState(on ? { kind: 'on_campus', at: now } : { kind: 'off_campus', at: now });
+      addObservation(on, now);
+      runAttendance(on ? '校内' : '校外');
+      // フレンドへ：変わったときと、5分ごと
+      const { id, linked } = locationRefs.current;
+      const token = id && linked ? getSessionToken(id) : null;
+      const last = lastCampusSent.current;
+      if (token && (!last || last.on !== on || now - last.at >= 5 * 60 * 1000)) {
+        lastCampusSent.current = { on, at: now };
+        void sendCampusStatus(token, on);
+      }
+    };
+    // まずGPS（高精度）で測り、屋内などで取れなければWi-Fi・基地局の位置（通常精度）で取り直す
+    const locate = (highAccuracy: boolean) => {
+      const mode = highAccuracy ? '高精度' : '通常精度';
       navigator.geolocation.getCurrentPosition(
-        (pos) => {
+        (pos) => onPosition(pos, mode),
+        (err) => {
           if (!alive) return;
-          const on = isOnCampus({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy });
-          if (on === null) {
-            setLocationState({ kind: 'error', reason: 'inaccurate' });
+          attendanceLog(`位置を取得できない（${mode}）`, { code: err.code, message: err.message });
+          if (highAccuracy && err.code !== 1) {
+            locate(false);
             return;
           }
-          const now = Date.now();
-          setLocationState(on ? { kind: 'on_campus', at: now } : { kind: 'off_campus', at: now });
-          addObservation(on, now);
-          runAttendance();
-          // フレンドへ：変わったときと、5分ごと
-          const { id, linked } = locationRefs.current;
-          const token = id && linked ? getSessionToken(id) : null;
-          const last = lastCampusSent.current;
-          if (token && (!last || last.on !== on || now - last.at >= 5 * 60 * 1000)) {
-            lastCampusSent.current = { on, at: now };
-            void sendCampusStatus(token, on);
-          }
+          inFlight = false;
+          setLocationState({ kind: 'error', reason: geoErrorReason(err.code) });
+          // 終わった授業の「欠席」「未確認」は、今の位置が取れなくても決められる
+          runAttendance('位置情報エラー');
         },
-        (err) => {
-          if (alive) setLocationState({ kind: 'error', reason: geoErrorReason(err.code) });
-        },
-        { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 }
+        highAccuracy ? { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 } : { enableHighAccuracy: false, timeout: 15000, maximumAge: 5 * 60 * 1000 }
       );
     };
-    check();
-    const timer = setInterval(check, 2 * 60 * 1000);
+    const check = (reason: string) => {
+      if (!alive) return;
+      if (document.visibilityState !== 'visible') {
+        attendanceLog(`測位しない（${reason}：画面が裏にある）`);
+        return;
+      }
+      const now = Date.now();
+      // 続けて呼ばれたら1回にまとめる（応答のない測位は45秒で見切る）
+      if (now - lastStart < 10 * 1000 || (inFlight && now - lastStart < 45 * 1000)) return;
+      inFlight = true;
+      lastStart = now;
+      attendanceLog(`測位を開始（${reason}）`);
+      locate(true);
+    };
+    requestLocationCheck.current = check;
+    runAttendance('起動');
+    check('起動');
+    const timer = setInterval(() => check('2分ごと'), 2 * 60 * 1000);
     // 授業が終わった回の「欠席」「未確認」を決めるため、位置が変わらなくても1分ごとに見直す
-    const attendanceTimer = setInterval(runAttendance, 60 * 1000);
-    const onVisible = () => (document.visibilityState === 'visible' ? check() : undefined);
-    document.addEventListener('visibilitychange', onVisible);
+    const attendanceTimer = setInterval(() => runAttendance('1分ごと'), 60 * 1000);
+    // バックグラウンドから戻ったとき（iOSのホーム画面アプリは pageshow・focus だけのことがある）
+    const onReturn = () => {
+      if (document.visibilityState !== 'visible') return;
+      runAttendance('画面に戻った');
+      check('画面に戻った');
+    };
+    document.addEventListener('visibilitychange', onReturn);
+    window.addEventListener('pageshow', onReturn);
+    window.addEventListener('focus', onReturn);
     return () => {
       alive = false;
+      requestLocationCheck.current = () => {};
       clearInterval(timer);
       clearInterval(attendanceTimer);
-      document.removeEventListener('visibilitychange', onVisible);
+      document.removeEventListener('visibilitychange', onReturn);
+      window.removeEventListener('pageshow', onReturn);
+      window.removeEventListener('focus', onReturn);
     };
   }, [locationEnabled, runAttendance]);
+  // 出欠・フレンドのタブを開いたら、最新の位置で判定し直す
+  useEffect(() => {
+    if (showProfileModal && (profileTab === 'attendance' || profileTab === 'friends')) {
+      requestLocationCheck.current(profileTab === 'attendance' ? '出欠タブを開いた' : 'フレンドタブを開いた');
+    }
+  }, [showProfileModal, profileTab]);
   const toggleLocation = (enabled: boolean) => {
     saveLocationEnabled(enabled);
     setLocationEnabled(enabled);

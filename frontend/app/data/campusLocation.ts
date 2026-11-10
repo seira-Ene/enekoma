@@ -3,12 +3,14 @@
 
 /**
  * 日本大学文理学部（〒156-8550 東京都世田谷区桜上水3-25-40）のジオフェンス。
- * 敷地は南北約550m・東西約300m（OpenStreetMap の敷地の範囲 35.6607〜35.6656, 139.6329〜139.6363）なので、
- * その中心から半径300mを校内とする。桜上水駅（約580m）・下高井戸駅（約720m）は校外になる
+ * 敷地は南北約550m・東西約300m（OpenStreetMap の敷地の範囲 35.6607〜35.6656, 139.6329〜139.6363）。
+ * その四隅は中心から308〜318mあるので、半径350mを校内とする（校舎の中でGPSが少しずれても校外にしない）。
+ * 誤差の見込み（最大75m）を足しても425mで、桜上水駅（約610m）・下高井戸駅（約720m）は校外になる
  */
-export const CAMPUS = { name: '文理学部', lat: 35.6632, lng: 139.6346, radiusM: 300 };
-// GPSの誤差はこの範囲まで校内側に見込む。これより誤差が大きい測位は判定に使わない
-const MAX_ACCURACY_ALLOWANCE_M = 50;
+export const CAMPUS = { name: '文理学部', lat: 35.6632, lng: 139.6346, radiusM: 350 };
+// GPSの誤差はこの範囲まで校内側に見込む
+const MAX_ACCURACY_ALLOWANCE_M = 75;
+// これより誤差が大きい測位は「校内」とは判定しない（誤差の円がまるごと校外にあるときだけ「校外」にする）
 export const MAX_USABLE_ACCURACY_M = 500;
 
 /** 2点間の距離（m、球面の近似） */
@@ -21,13 +23,33 @@ export function distanceMeters(a: { lat: number; lng: number }, b: { lat: number
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+export interface CampusJudgement {
+  onCampus: boolean | null;
+  distanceM: number;
+  accuracyM: number;
+  // 判定に使った境界（半径＋誤差の見込み）
+  limitM: number;
+}
+
 /**
- * 校内にいるか。誤差（accuracy, m）が大きすぎる測位は判定できないので null
+ * 校内にいるかを、キャンパスの中心からの距離と誤差で決める。
+ * - 距離 ≤ 半径＋誤差の見込み（最大75m）なら校内
+ * - 誤差が500mを超える測位は、誤差の円がまるごと校外にあるときだけ校外、それ以外は判定しない（null）
  */
+export function judgeCampus(pos: { lat: number; lng: number; accuracy?: number }): CampusJudgement {
+  const accuracyM = Number.isFinite(pos.accuracy) ? Math.max(0, pos.accuracy as number) : 0;
+  if (!Number.isFinite(pos.lat) || !Number.isFinite(pos.lng)) return { onCampus: null, distanceM: NaN, accuracyM, limitM: CAMPUS.radiusM };
+  const distanceM = distanceMeters(pos, CAMPUS);
+  const limitM = CAMPUS.radiusM + Math.min(accuracyM, MAX_ACCURACY_ALLOWANCE_M);
+  if (accuracyM > MAX_USABLE_ACCURACY_M) {
+    return { onCampus: distanceM - accuracyM > CAMPUS.radiusM ? false : null, distanceM, accuracyM, limitM };
+  }
+  return { onCampus: distanceM <= limitM, distanceM, accuracyM, limitM };
+}
+
+/** 校内にいるか。判定できない測位は null */
 export function isOnCampus(pos: { lat: number; lng: number; accuracy?: number }): boolean | null {
-  const accuracy = pos.accuracy ?? 0;
-  if (!Number.isFinite(pos.lat) || !Number.isFinite(pos.lng) || accuracy > MAX_USABLE_ACCURACY_M) return null;
-  return distanceMeters(pos, CAMPUS) <= CAMPUS.radiusM + Math.min(accuracy, MAX_ACCURACY_ALLOWANCE_M);
+  return judgeCampus(pos).onCampus;
 }
 
 export type LocationState =

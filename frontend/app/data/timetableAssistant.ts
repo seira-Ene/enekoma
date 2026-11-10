@@ -7,7 +7,9 @@ import {
   describeRoomSlot,
   findCourseRows,
   findFreeRooms,
+  findRoomUsage,
   getCampusClock,
+  getCompactRoomLabel,
   getLectureDatabase,
   getRoomDailySchedule,
   groupIntoSections,
@@ -96,11 +98,77 @@ function findTeachersInText(q: string, db: LectureCourse[]): string[] {
   const teachers = Array.from(new Set(db.flatMap((c) => (c.teacher || '').split(/\s*\/\s*/)))).filter(Boolean);
   const full = teachers.filter((t) => t.replace(/\s+/g, '').length >= 3 && compact.includes(t.replace(/\s+/g, '')));
   if (full.length > 0) return full;
-  // 名字だけのときは「先生」などが続く場合に限る
+  // 名字だけのときは「先生」などが続く場合に限る。「谷先生」のような1文字の名字は、直前に漢字がないときだけ（「大谷先生」と区別する）
   return teachers.filter((t) => {
     const surname = t.split(' ')[0];
-    return t.includes(' ') && surname.length >= 2 && new RegExp(`${surname}(先生|教授|准教授|講師|さん)`).test(compact);
+    if (!t.includes(' ') || !surname) return false;
+    const guard = surname.length === 1 ? '(?<![\\u4e00-\\u9fff々])' : '';
+    return new RegExp(`${guard}${surname}(先生|教授|准教授|講師|さん)`).test(compact);
   });
+}
+
+const CURRICULUM_LABEL: Record<string, string> = {
+  reiwa7_or_later: '令和7年度以降入学者向け',
+  reiwa6_or_earlier: '令和6年度以前入学者向け'
+};
+
+// 今のカリキュラムの時間割に見つからない科目・先生が、もう一方のカリキュラムにあれば知らせる（推測で答えないため）
+function answerFromOtherCurriculum(q: string, curriculum: string | undefined, explicitSemester: Semester | undefined, semester: Semester): string | null {
+  const mine = curriculum === 'reiwa6_or_earlier' ? 'reiwa6_or_earlier' : 'reiwa7_or_later';
+  const other = mine === 'reiwa7_or_later' ? 'reiwa6_or_earlier' : 'reiwa7_or_later';
+  const otherDb = getLectureDatabase(other);
+  const inTerm = (c: LectureCourse) => !explicitSemester || isInSemester(c, semester);
+  const teachers = findTeachersInText(q, otherDb);
+  let label = '';
+  let rows: LectureCourse[] = [];
+  if (teachers.length > 0) {
+    label = `${teachers.join('、')}先生の授業`;
+    rows = otherDb.filter((c) => teachers.some((t) => (c.teacher || '').split(/\s*\/\s*/).includes(t)) && inTerm(c));
+  } else {
+    const names = findCourseNamesInText(q, otherDb);
+    if (names.length === 0) return null;
+    label = `「${names[0]}」`;
+    rows = findCourseRows(otherDb, names[0]).filter(inTerm);
+  }
+  if (rows.length === 0) return null;
+  return [
+    `${label}は、${CURRICULUM_LABEL[mine]}の時間割にはありませんでした。`,
+    `${CURRICULUM_LABEL[other]}の時間割には次のように載っています。`,
+    '',
+    listRows(rows),
+    '',
+    'プロフィールの入学年度が違っていたら、基本設定の「入学年度」を変えてからもう一度聞いてくださいね。'
+  ].join('\n');
+}
+
+// 今期の時間割から今日の次の授業を探し、その教室に早めに入れるかを答える
+function answerEarlyEntry(profile: UserProfileData | null | undefined, now: Date, semester: Semester): string {
+  const clock = getCampusClock(now);
+  const enrolled = (profile?.enrolledCourses || []).filter((c) => c.day && c.period);
+  if (enrolled.length === 0) {
+    return '次の授業の教室を調べるには、今期の時間割をカルテに登録してくださいね。「1限は3505、2限は122」のように教室を2つ送ってもらえれば、移動と早めの入室も判定できますよ。';
+  }
+  const current = resolvePeriodAt(clock.minutes);
+  const from = current.period === null ? 6 : current.status === 'class' ? current.period + 1 : current.period;
+  const next = enrolled
+    .filter((c) => c.day === clock.day && (c.period as number) >= from)
+    .sort((a, b) => (a.period as number) - (b.period as number))[0];
+  if (!next) {
+    return `今日（${clock.day}曜日）は、この後に登録されている授業はありません。`;
+  }
+  const period = next.period as number;
+  const room = (String(next.room || '').normalize('NFKC').match(ROOM_PATTERN) || [])[0]?.toUpperCase();
+  const head = `次の授業は${period}限の${next.name}${room ? `（${getCompactRoomLabel(room)}）` : ''}ですね！`;
+  if (!room) return `${head}\n教室がカルテに登録されていないので、教室番号を教えてもらえれば空き状況をお調べします。`;
+  if (period === 1) return `${head}\n1限の前は授業がないので、早めに入って準備できますよ。`;
+  const usage = findRoomUsage(room, clock.day, period - 1, semester);
+  if (usage.length > 0) {
+    return `${head}\n${semester}の${clock.day}曜${period - 1}限は、その教室で${usage[0].name}（${usage[0].teacher}先生）が行われているので、終わるまでは入室できません。`;
+  }
+  if (period === 3) {
+    return `${head}\n2限はその教室に授業が入っていないので、お昼休みから入って昼食や自習に使えますよ。`;
+  }
+  return `${head}\n${semester}の${clock.day}曜${period - 1}限はその教室に授業が入っていないので、早めに入って自習もできそうですよ。`;
 }
 
 function listRows(rows: LectureCourse[], limit = 8): string {
@@ -199,6 +267,11 @@ export function answerTimetableQuery(query: string, profile?: UserProfileData | 
     return calculateTransitOptimization(rooms[0], rooms[1], { day: day || clock.day, period: toPeriod, semester });
   }
 
+  // 次の授業の教室に早めに入れるか
+  if (/早めに|早く|先に(行|入)|前もって/.test(q) && /次|授業/.test(q) && /教室|入室|入れ|自習/.test(q) && rooms.length === 0) {
+    return answerEarlyEntry(profile, now, semester);
+  }
+
   // 時間割の重複チェック
   if (/被っ|かぶっ|カブっ|重複|バッティング|重なっ|重なら|重なる/.test(q)) {
     const names = findCourseNamesInText(q, db);
@@ -211,7 +284,8 @@ export function answerTimetableQuery(query: string, profile?: UserProfileData | 
   }
 
   // 必修組み込み済みの自動スケジュール提案
-  if (/時間割(を)?(作|組|考|提案)|スケジュール(を)?作|おすすめの時間割|必修時間割|基本時間割|履修パターン|履修計画/.test(q)) {
+  if (/時間割(を)?(作|組|考|提案)|スケジュール(を)?作|おすすめの時間割|必修時間割|基本時間割|履修パターン|履修計画|時間割(の)?(案|パターン)/.test(q)
+    || (/必修/.test(q) && /時間割|スケジュール/.test(q) && /入れ|網羅|組み込|にして|まとめ/.test(q))) {
     const department = profile?.department;
     if (!department) {
       return '時間割を組むには所属学科と学年が必要です。カルテにプロフィールを登録するか、「情報科学科1年の時間割を作って」のように教えてくださいね。';
@@ -284,6 +358,8 @@ export function answerTimetableQuery(query: string, profile?: UserProfileData | 
     if (day && period && /授業|講義|開講/.test(q)) {
       return suggestCoursesForFreePeriod(day, period, undefined, curriculum, student);
     }
+    const other = answerFromOtherCurriculum(q, curriculum, explicitSemester, semester);
+    if (other) return other;
   }
 
   return null;

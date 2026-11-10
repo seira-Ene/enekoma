@@ -16,6 +16,7 @@ import {
   isInSemester,
   isRetakeClass,
   LectureCourse,
+  PERIOD_TIMES,
   proposeAutomaticSchedule,
   resolvePeriodAt,
   Semester,
@@ -169,6 +170,58 @@ function answerEarlyEntry(profile: UserProfileData | null | undefined, now: Date
     return `${head}\n2限はその教室に授業が入っていないので、お昼休みから入って昼食や自習に使えますよ。`;
   }
   return `${head}\n${semester}の${clock.day}曜${period - 1}限はその教室に授業が入っていないので、早めに入って自習もできそうですよ。`;
+}
+
+// 自分の予定（今日・明日・曜日ごと・次の授業・今期の時間割全体）を、カルテの今期の時間割から答える
+function answerMySchedule(q: string, profile: UserProfileData | null | undefined, now: Date, day: string | undefined): string {
+  const clock = getCampusClock(now);
+  const week = ['日', ...DAYS];
+  const enrolled = (profile?.enrolledCourses || [])
+    .map((c) => ({ name: c.name, room: c.room, day: String(c.day || '').replace(/曜.*$/, ''), period: Number(c.period) }))
+    .filter((c) => c.name && DAYS.includes(c.day) && Number.isInteger(c.period))
+    .sort((a, b) => DAYS.indexOf(a.day) - DAYS.indexOf(b.day) || a.period - b.period);
+  if (enrolled.length === 0) {
+    return '今期の時間割がカルテに登録されていないので、まだお答えできません。プロフィールの「今期履修中」で時間割の画像やPDFを読み込むと、今日の授業や次の授業をお答えできますよ。';
+  }
+  const time = (period: number) => PERIOD_TIMES.find((p) => p.period === period);
+  const line = (c: (typeof enrolled)[number]) => `${c.period}限（${time(c.period)?.label ?? ''}） ${c.name}${c.room ? `（${c.room}）` : ''}`;
+  const short = (c: (typeof enrolled)[number]) => `${c.day}曜${c.period}限の${c.name}${c.room ? `（${c.room}）` : ''}`;
+  // 今から後で最初の授業（今日の残り → 次の日以降、1週間先まで）
+  const nextClass = () => {
+    const today = week.indexOf(clock.day);
+    for (let i = 0; i < 7; i++) {
+      const d = week[(today + i) % 7];
+      const found = enrolled.find((c) => c.day === d && (i > 0 || (time(c.period)?.start ?? 0) > clock.minutes));
+      if (found) return { course: found, when: i === 0 ? '今日の' : i === 1 ? '明日の' : '' };
+    }
+    return null;
+  };
+
+  if (!day) {
+    if (/次/.test(q)) {
+      const next = nextClass();
+      return next ? `次の授業は、${next.when}${short(next.course)}です（${time(next.course.period)?.label}）。` : '今期の時間割に、この後の授業は登録されていません。';
+    }
+    const days = DAYS.filter((d) => enrolled.some((c) => c.day === d));
+    return [`今期の時間割は${enrolled.length}コマです。`, ...days.map((d) => `${d}曜: ${enrolled.filter((c) => c.day === d).map((c) => `${c.period}限 ${c.name}${c.room ? `（${c.room}）` : ''}`).join('、')}`)].join('\n');
+  }
+
+  const label = q.includes('明後日') ? `明後日（${day}曜日）` : q.includes('明日') ? `明日（${day}曜日）` : day === clock.day ? `今日（${day}曜日）` : `${day}曜日`;
+  const list = enrolled.filter((c) => c.day === day);
+  if (list.length === 0) {
+    const next = day === clock.day ? nextClass() : null;
+    return `${label}は、今期の時間割に登録されている授業はありません。${next ? `次の授業は${next.when}${short(next.course)}です。` : ''}`;
+  }
+  const lines = [`${label}の授業は${list.length}コマです。`, ...list.map(line)];
+  if (day === clock.day) {
+    const current = list.find((c) => (time(c.period)?.start ?? 0) <= clock.minutes && clock.minutes < (time(c.period)?.end ?? 0));
+    const rest = list.filter((c) => (time(c.period)?.start ?? 0) > clock.minutes);
+    const last = list[list.length - 1];
+    if (current) lines.push(`今は${current.period}限の${current.name}の時間です。${rest[0] ? `次は${rest[0].period}限の${rest[0].name}です。` : 'これが今日最後の授業です。'}`);
+    else if (rest[0]) lines.push(`この後は${rest[0].period}限の${rest[0].name}${rest[0].room ? `（${rest[0].room}）` : ''}からです。`);
+    else lines.push(`今日の授業はすべて終わりました（${last.period}限まで）。`);
+  }
+  return lines.join('\n');
 }
 
 function listRows(rows: LectureCourse[], limit = 8): string {
@@ -336,6 +389,15 @@ export function answerTimetableQuery(query: string, profile?: UserProfileData | 
     }
     if (targetDay === undefined && targetPeriod !== undefined) targetDay = clock.day;
     return findFreeRooms(targetDay, targetPeriod, buildingLabel, explicitSemester, now).formattedReport;
+  }
+
+  // 自分の予定（「今日の授業は？」「明日の時間割」「次の授業は？」「私の時間割」）。科目・先生・教室の名前があれば逆引きにする
+  const asksOwnSchedule =
+    /(自分|私|わたし|僕|ぼく|俺|うち)の(時間割|授業|予定)|今期の時間割|履修中の(授業|科目)/.test(q) ||
+    (/今日|本日|明日|明後日|[月火水木金土]曜/.test(q) && /授業|講義|時間割|予定|何限から|何限まで|終わる|コマ/.test(q) && period === undefined) ||
+    /^次の?(授業|講義)(は|って)?(何|なに|いつ|どこ|何時)?/.test(q);
+  if (asksOwnSchedule && rooms.length === 0 && findTeachersInText(q, db).length === 0 && findCourseNamesInText(q, db).length === 0) {
+    return answerMySchedule(q, profile, now, day);
   }
 
   // 科目・教員の逆引き

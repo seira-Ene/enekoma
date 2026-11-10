@@ -18,6 +18,7 @@ EneKoma(エネコマ)は、日本大学文理学部(CHS)の学生向けAIチャ�
 | フレンド | フレンドコードで申請・承認、フレンドの今の曜限の授業（科目名・教室）か空きコマか、校内 / 校外を表示（位置情報なしの人も一覧に出す）、共有のON/OFF、チャットで「今だれが空きコマ？」に回答 | `components/FriendsPanel.tsx`, `api/friends/`, `data/friendStatus.ts` |
 | 話し方の指定 | 「織田信長みたいに話して」「関西弁で話して」で口調を変え、「普通の話し方に戻して」かチップの✕まで続ける。事実は変えない | `data/speakingStyle.ts`, `api/chat/styleRewrite.ts` |
 | お問い合わせ・ユーザーの声 | レビュー・ご意見・質問・不具合報告の受付、管理者画面でのステータス管理と公開の切り替え、公開分を `/voices` に匿名で表示 | `components/FeedbackModal.tsx`, `components/AdminFeedbackModal.tsx`, `api/feedback/`, `api/admin/feedback/` |
+| いつもの質問 | 2回以上送った質問のうち、60日以内に使ったものを回数の多い順に4件、チャットの質問例の上にチップで出す。タップで送信、✕で履歴から削除。記録は端末内・アカウントごと（`enekoma_user_frequent_questions:<ログインID>`）で、サーバーには送らない。60文字超・メールアドレス・7桁以上の数字を含む文は記録しない | `data/frequentQuestions.ts`, `components/FrequentQuestions.tsx` |
 
 ## コマンド
 

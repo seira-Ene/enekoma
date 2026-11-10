@@ -51,6 +51,8 @@ import { checkEmailAddress, UNIVERSITY_EMAIL_DOMAIN } from '@/app/data/emailAddr
 import FeedbackModal from '@/app/components/FeedbackModal';
 import FriendsPanel, { sendCampusStatus, syncSharedSchedule } from '@/app/components/FriendsPanel';
 import AttendancePanel from '@/app/components/AttendancePanel';
+import FrequentQuestions from '@/app/components/FrequentQuestions';
+import { readFrequentQuestions, recordQuestion, removeQuestion, saveFrequentQuestions, topFrequentQuestions, type FrequentQuestionStore } from '@/app/data/frequentQuestions';
 import LocationCard from '@/app/components/LocationCard';
 import { geoErrorReason, judgeCampus, readLocationEnabled, saveLocationEnabled, type LocationState } from '@/app/data/campusLocation';
 import { addObservation, attendanceLog, autoAttendanceUpdates, readAttendance, readObservations, recordKey, saveAttendance } from '@/app/data/attendance';
@@ -309,6 +311,18 @@ export default function UnifiedAssistantPage() {
 
   // 学生アカウント管理ステート（個別アカウント対応）
   const [currentStudent, setCurrentStudent] = useState<StudentAccount | null>(null);
+  // 「💡 いつもの質問」：送った質問の回数（端末内・アカウントごと）
+  const frequentAccountId = currentStudent?.id || 'guest';
+  const [frequentStore, setFrequentStore] = useState<FrequentQuestionStore>({});
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 端末の記録は描画後にしか読めない
+    setFrequentStore(readFrequentQuestions(frequentAccountId));
+  }, [frequentAccountId]);
+  const updateFrequent = (change: (store: FrequentQuestionStore) => FrequentQuestionStore) => {
+    const next = change(readFrequentQuestions(frequentAccountId));
+    saveFrequentQuestions(frequentAccountId, next);
+    setFrequentStore(next);
+  };
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authTab, setAuthTab] = useState<'login' | 'register' | 'switch' | 'info' | 'forgot' | 'reset'>('login');
   const [authError, setAuthError] = useState<string | null>(null);
@@ -1505,6 +1519,7 @@ export default function UnifiedAssistantPage() {
     };
 
     setMessages((prev) => [...prev, userMessage]);
+    if (text) updateFrequent((store) => recordQuestion(store, text));
     if (!queryToSend) setInputText('');
     setAttachedFile(null);
     setIsLoading(true);
@@ -2777,6 +2792,14 @@ export default function UnifiedAssistantPage() {
           入力ツールバー ＆ クイックサジェスト
       ======================================================== */}
       <footer className="bg-white border-t border-slate-200 px-3 sm:px-6 pt-2 pb-[max(12px,env(safe-area-inset-bottom,16px))] max-w-4xl w-full mx-auto shrink-0 z-20">
+        {/* いつもの質問（2回以上送った質問の上位4件。なければ出さない） */}
+        <FrequentQuestions
+          items={topFrequentQuestions(frequentStore)}
+          disabled={isLoading}
+          onSelect={(text) => handleSend(text)}
+          onRemove={(text) => updateFrequent((store) => removeQuestion(store, text))}
+        />
+
         {/* カテゴリフィルターチップ */}
         <div className="flex items-center space-x-1.5 pb-1.5 overflow-x-auto no-scrollbar overscroll-x-contain">
           <span className="text-[11px] font-medium text-slate-400 mr-1 whitespace-nowrap shrink-0">質問例:</span>

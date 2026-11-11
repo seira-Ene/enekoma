@@ -24,6 +24,7 @@ import {
   StudentContext,
   suggestCoursesForFreePeriod
 } from './courses';
+import { VERIFIED_12_DEPARTMENTS_CURRICULUM } from './departmentCurriculum';
 import { GAKUBU_YORAN_DEPARTMENTS, UserProfileData } from './gakubuYoran';
 
 const DAYS = ['月', '火', '水', '木', '金', '土'];
@@ -529,10 +530,14 @@ export function answerTimetableQuery(query: string, profile?: UserProfileData | 
   // 科目・教員の逆引き。科目名があれば、問いかけの言葉がなくても（「〇〇は月曜4限？」）答える
   const lookup: LookupOptions = { day, period, explicitSemester, semester, department: profile?.department };
   const ownBest = rankCourseNames(q, db)[0];
-  const otherBest = rankCourseNames(q, getLectureDatabase(curriculum === 'reiwa6_or_earlier' ? 'reiwa7_or_later' : 'reiwa6_or_earlier'))[0];
+  const otherBest = rankCourseNames(q, getLectureDatabase(otherCurriculum(curriculum)))[0];
   const asksLookup =
     /先生|教授|講師|授業|講義|科目|いつ|何曜|何限|どの教室|どこで|教室は|開講|担当/.test(q) ||
-    (!!(ownBest || otherBest) && (day !== undefined || period !== undefined || /[?？]$|ある|やって|取れ|どこ|何時/.test(q)));
+    (!!(ownBest || otherBest) && (day !== undefined || period !== undefined || /[?？]$|ある|やって|取れ|どこ|何時/.test(q))) ||
+    // 問いかけの言葉がなくても、科目名がはっきり出ていれば答える（「〇〇について教えて」「〇〇を取りたい」、名前だけ）。
+    // 卒業要件・GPA・資格コースなどの話（「〇〇を落とした」）は、ローカル応答のほかの答えに任せる
+    (!OTHER_TOPIC.test(q) &&
+      (mentionedCourses(q, db).length > 0 || mentionedCourses(q, getLectureDatabase(otherCurriculum(curriculum))).length > 0));
   if (asksLookup) {
     const teachers = findTeachersInText(q, db);
     if (teachers.length > 0) {
@@ -569,14 +574,93 @@ export function answerTimetableQuery(query: string, profile?: UserProfileData | 
 }
 
 // Geminiに渡す参照データ。検索結果があれば事実はこの内容に限定させる
+const PROGRAM_WORDS = /副専攻|コース|学科|専攻|教職/;
+const OTHER_TOPIC = /副専攻|コース|学科|専攻|教職|要件|卒業|進級|GPA|単位|必修|違い|落と|再履修|成績|評価/i;
+
+const otherCurriculum = (curriculum?: string) => (curriculum === 'reiwa6_or_earlier' ? 'reiwa7_or_later' : 'reiwa6_or_earlier');
+
+/**
+ * 文章にはっきり出ている科目名（3つまで）。学科・コース・副専攻の名前の一部（「情報科学科」の「情報科学」）や、
+ * 3文字以下の短い名前（「英語」）は、問いかけの言葉がないときに拾いすぎるので数えない
+ */
+function mentionedCourses(q: string, db: LectureCourse[]): string[] {
+  const text = compactQuery(q);
+  const best = rankCourseNames(q, db)[0];
+  return findCourseNamesInText(q, db)
+    .filter((name) => {
+      // 少し違う書き方（2文字の組の75%以上が一致）。「データサイエンス副専攻」を「データサイエンス入門」と取り違えないよう、学科・コースの話では使わない
+      if (!text.includes(name)) return best?.name === name && !PROGRAM_WORDS.test(text);
+      if (name.length < 4) return false;
+      return text.split(name).slice(1).some((after) => !/^(学?科|専攻|コース|副専攻|分野|群|カテゴリ)/.test(after));
+    })
+    .slice(0, 3);
+}
+
+// 要覧（学科の必修・選択必修の表）での区分。プロフィールの学科を先に探す
+function describeCurriculumEntry(name: string, department?: string): string[] {
+  const departments = Object.values(VERIFIED_12_DEPARTMENTS_CURRICULUM).sort(
+    (a, b) => Number(b.department === department) - Number(a.department === department)
+  );
+  const lines: string[] = [];
+  departments.forEach((d) => {
+    [...d.requiredCourses, ...d.electiveRequiredCourses]
+      .filter((c) => baseCourseName(c.name) === name)
+      .forEach((c) => {
+        const parts = [`${d.department}の${c.category}`, c.group, c.year ? `${c.year}年次配当` : '', `${c.credits}単位`].filter(Boolean);
+        lines.push(`・要覧: ${parts.join('、')}${c.note ? `（${c.note}）` : ''}`);
+      });
+  });
+  return lines.slice(0, 3);
+}
+
+/**
+ * 質問に出てきた科目の「要覧での区分」と「令和8年度の開講コマ（学期・曜日・時限・教員・教室）」をセットにする。
+ * 区分だけを知って開講コマを推測しないように、Geminiへの参照データには必ずこれを付ける
+ */
+export function describeMentionedCourses(query: string, profile?: UserProfileData | null): string | null {
+  const q = query.normalize('NFKC').trim();
+  if (!q) return null;
+  const mine = profile?.admissionYear === 'reiwa6_or_earlier' ? 'reiwa6_or_earlier' : 'reiwa7_or_later';
+  const other = otherCurriculum(mine);
+  const ownDb = getLectureDatabase(mine);
+  const otherDb = getLectureDatabase(other);
+  const names = mentionedCourses(q, ownDb);
+  mentionedCourses(q, otherDb).forEach((n) => {
+    if (names.length < 3 && !names.some((m) => m.includes(n))) names.push(n);
+  });
+  if (names.length === 0) return null;
+  const blocks = names.map((name) => {
+    const lines = [`「${name}」`, ...describeCurriculumEntry(name, profile?.department)];
+    const ownRows = findCourseRows(ownDb, name);
+    if (ownRows.length > 0) {
+      lines.push(`・開講（${CURRICULUM_LABEL[mine]}の時間割）:`, listRows(ownRows, 12));
+    } else {
+      const otherRows = findCourseRows(otherDb, name);
+      lines.push(
+        otherRows.length > 0
+          ? `・${CURRICULUM_LABEL[mine]}の時間割にはありません。${CURRICULUM_LABEL[other]}の時間割での開講:\n${listRows(otherRows, 12)}`
+          : '・令和8年度の時間割に開講はありません。'
+      );
+    }
+    return lines.join('\n');
+  });
+  return blocks.join('\n\n');
+}
+
 export function buildTimetableContext(query: string, profile?: UserProfileData | null, now: Date = new Date()): string {
   const clock = getCampusClock(now);
   const answer = answerTimetableQuery(query, profile, now);
   const header = `【時間割の参照データ（システムが令和8年度の時間割から検索した結果）】\n現在日時: ${clock.label}（日本時間） / 現在の学期: ${clock.semester}\n`;
+  // 科目名が出てきたら、検索の結果に関係なく、要覧での区分と開講コマをセットで渡す
+  const courseFacts = describeMentionedCourses(query, profile);
+  const factsBlock = courseFacts
+    ? `質問に出てきた科目の基本情報（要覧での区分と、令和8年度の開講コマ）:\n${courseFacts}\n\n科目について答えるときは、区分と開講コマ（学期・曜日・時限・教員・教室）をセットで伝えてください。開講コマはこの情報以外を推測しないでください。\n`
+    : '';
   if (answer) {
     // 推測の対応科目が含まれるときだけ、断定しない言い方を指示する
     const toneRule = answer.includes(COUNTERPART_NOTE) ? `${COUNTERPART_TONE_RULE}\n` : '';
-    return `${header}検索結果:\n${answer}\n\n上の検索結果にある事実だけを使い、言葉遣いを整えて回答してください。\n${toneRule}\n`;
+    return `${header}検索結果:\n${answer}\n\n上の検索結果にある事実だけを使い、言葉遣いを整えて回答してください。\n${toneRule}${factsBlock ? `\n${factsBlock}` : ''}\n`;
   }
+  if (factsBlock) return `${header}${factsBlock}\n`;
   return `${header}この質問に対応する検索結果はありません。特定の授業、教員、教室、時限についての事実を聞かれた場合は推測せず、該当する曜日や時限、科目名を聞き返してください。\n\n`;
 }

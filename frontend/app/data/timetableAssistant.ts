@@ -168,6 +168,15 @@ const CURRICULUM_LABEL: Record<string, string> = {
   reiwa6_or_earlier: '令和6年度以前入学者向け'
 };
 
+// 対応科目の候補（同じ先生・同じ時間という一致からの推測）を示す文。Geminiに断定させない指示の目印にも使う
+export const COUNTERPART_NOTE = '同じ先生が同じ時間に次の科目を教えています（名前が変わった対応科目かもしれません）。';
+// 推測の対応科目を案内するときの言い方の指示（buildTimetableContext が検索結果に足す）
+export const COUNTERPART_TONE_RULE =
+  '検索結果の「同じ先生が同じ時間に次の科目を教えています」は、教員と開講時限が一致したことからの推測で、対応科目と確定した情報ではありません。' +
+  '「対応しています」「この名前で登録されているはずです」「〇〇が対応科目です」のように断定せず、' +
+  '「〇〇が対応科目の可能性があります」「〇〇が対応科目と考えられます」のように可能性を示す控えめな言い方で伝え、' +
+  '確かめたいときはシラバスか教務課で確認するよう添えてください。';
+
 const teacherList = (c: LectureCourse) => (c.teacher || '').split(/\s*\/\s*/).filter(Boolean);
 const slotLabel = (c: LectureCourse) => `${c.semester}の${c.day}曜${c.period}限`;
 
@@ -251,7 +260,7 @@ function answerFromOtherCurriculum(q: string, curriculum: string | undefined, o:
     '',
     body,
     ...(counterparts.length > 0
-      ? ['', `${CURRICULUM_LABEL[mine]}の時間割では、同じ先生が同じ時間に次の科目を教えています（名前が変わった対応科目かもしれません）。`, listRows(counterparts, 4)]
+      ? ['', `${CURRICULUM_LABEL[mine]}の時間割では、${COUNTERPART_NOTE}`, listRows(counterparts, 4)]
       : []),
     ...(ownNamed.length > 0 ? ['', `${CURRICULUM_LABEL[mine]}の時間割には、別の科目として次もあります。`, listRows(ownNamed, 4)] : []),
     '',
@@ -565,7 +574,9 @@ export function buildTimetableContext(query: string, profile?: UserProfileData |
   const answer = answerTimetableQuery(query, profile, now);
   const header = `【時間割の参照データ（システムが令和8年度の時間割から検索した結果）】\n現在日時: ${clock.label}（日本時間） / 現在の学期: ${clock.semester}\n`;
   if (answer) {
-    return `${header}検索結果:\n${answer}\n\n上の検索結果にある事実だけを使い、言葉遣いを整えて回答してください。\n\n`;
+    // 推測の対応科目が含まれるときだけ、断定しない言い方を指示する
+    const toneRule = answer.includes(COUNTERPART_NOTE) ? `${COUNTERPART_TONE_RULE}\n` : '';
+    return `${header}検索結果:\n${answer}\n\n上の検索結果にある事実だけを使い、言葉遣いを整えて回答してください。\n${toneRule}\n`;
   }
   return `${header}この質問に対応する検索結果はありません。特定の授業、教員、教室、時限についての事実を聞かれた場合は推測せず、該当する曜日や時限、科目名を聞き返してください。\n\n`;
 }

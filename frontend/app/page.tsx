@@ -48,6 +48,7 @@ import {
 } from '@/app/data/studentAccounts';
 import { callAccountApi, isServerUnavailable } from '@/app/data/accountClient';
 import { checkEmailAddress, UNIVERSITY_EMAIL_DOMAIN } from '@/app/data/emailAddress';
+import { changedAccountFields, DISPLAY_NAME_MAX, normalizeDisplayName } from '@/app/data/profileEdit';
 import FeedbackModal from '@/app/components/FeedbackModal';
 import FriendsPanel, { sendCampusStatus, syncSharedSchedule } from '@/app/components/FriendsPanel';
 import AttendancePanel from '@/app/components/AttendancePanel';
@@ -344,6 +345,15 @@ export default function UnifiedAssistantPage() {
   const [accountCurrentPassword, setAccountCurrentPassword] = useState('');
   const [accountNewPassword, setAccountNewPassword] = useState('');
   const [accountMessage, setAccountMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  // 基本設定のプロフィール（名前）の編集
+  // 入力中の名前と結果の表示は、アカウントごとに持つ（切り替えたら今のアカウントの名前に戻る）
+  const [nameEdit, setNameEdit] = useState<{ id: string; value: string } | null>(null);
+  const [nameResult, setNameResult] = useState<{ id: string; ok: boolean; text: string } | null>(null);
+  const nameDraft = currentStudent && nameEdit?.id === currentStudent.id ? nameEdit.value : (currentStudent?.name ?? '');
+  const nameMessage = currentStudent && nameResult?.id === currentStudent.id ? nameResult : null;
+  const setNameDraft = (value: string) => currentStudent && setNameEdit({ id: currentStudent.id, value });
+  const setNameMessage = (m: { ok: boolean; text: string } | null) => setNameResult(m && currentStudent ? { id: currentStudent.id, ...m } : null);
+  const [isSavingName, setIsSavingName] = useState(false);
 
   // ログインフォーム入力
   const [loginId, setLoginId] = useState('');
@@ -1028,6 +1038,67 @@ export default function UnifiedAssistantPage() {
       setIsAuthBusy(false);
     }
   };
+
+  // 基本設定：名前（氏名・ニックネーム）。端末のアカウントに保存し、サーバーに登録したアカウントならサーバーにも保存する
+  // （フレンドに見える名前・別の端末でログインしたときの名前）
+  const handleSaveName = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentStudent) return;
+    const checked = normalizeDisplayName(nameDraft);
+    if (!checked.ok) {
+      setNameMessage({ ok: false, text: checked.message });
+      return;
+    }
+    if (checked.name === currentStudent.name) {
+      setNameDraft(checked.name);
+      setNameMessage({ ok: true, text: '名前は変わっていません。' });
+      return;
+    }
+    const token = currentStudent.serverLinked ? getSessionToken(currentStudent.id) : null;
+    if (currentStudent.serverLinked && !token) {
+      setNameMessage({ ok: false, text: 'サーバーに保存するには、一度ログインし直してください。' });
+      return;
+    }
+    setIsSavingName(true);
+    try {
+      if (token) {
+        const res = await callAccountApi('update_profile', { sessionToken: token, name: checked.name });
+        if (!res.ok) {
+          setNameMessage({ ok: false, text: res.message || '保存できませんでした。もう一度お試しください。' });
+          return;
+        }
+      }
+      const updated: StudentAccount = { ...currentStudent, name: checked.name };
+      saveStudentAccount(updated);
+      setCurrentStudent(updated);
+      setNameEdit(null);
+      setNameMessage({ ok: true, text: '名前を変更しました。' });
+    } finally {
+      setIsSavingName(false);
+    }
+  };
+
+  // 学科・学年・入学年度を変えたら、アカウント（端末）とサーバーにも反映する（別の端末でログインしたときに元に戻らないように）
+  const { department: profileDepartment, grade: profileGrade, admissionYear: profileAdmissionYear } = userProfile;
+  useEffect(() => {
+    if (!currentStudent) return;
+    const changed = changedAccountFields(currentStudent, { department: profileDepartment, grade: profileGrade, admissionYear: profileAdmissionYear });
+    if (!changed) return;
+    const student = currentStudent;
+    const timer = setTimeout(async () => {
+      const token = student.serverLinked ? getSessionToken(student.id) : null;
+      if (student.serverLinked) {
+        // ログインし直す前の古い印のないログインでは、次に送れるときまで待つ
+        if (!token) return;
+        const res = await callAccountApi('update_profile', { sessionToken: token, ...changed });
+        if (!res.ok) return;
+      }
+      const updated: StudentAccount = { ...student, ...changed };
+      saveStudentAccount(updated);
+      setCurrentStudent((cur) => (cur?.id === updated.id ? { ...cur, ...changed } : cur));
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [currentStudent, profileDepartment, profileGrade, profileAdmissionYear]);
 
   // メールのリンク（パスワード再設定・メールアドレス確認）を開いたとき
   useEffect(() => {
@@ -3683,6 +3754,51 @@ export default function UnifiedAssistantPage() {
 
               {profileTab === 'basic' && (
                 <div className="space-y-4">
+                  {/* プロフィール（名前）。学科・学年・入学年度は下の欄で変えると、アカウントにも自動で保存する */}
+                  {currentStudent && (
+                    <form onSubmit={handleSaveName} className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2" data-profile-edit>
+                      <div className="font-semibold text-slate-800 text-xs flex items-center justify-between">
+                        <span>プロフィール</span>
+                        <span className="text-[10px] font-normal text-slate-500">ログインID：{currentStudent.id}</span>
+                      </div>
+                      <label htmlFor="profile-name-input" className="block text-[11px] font-semibold text-slate-700">
+                        氏名 / ニックネーム
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          id="profile-name-input"
+                          type="text"
+                          value={nameDraft}
+                          onChange={(e) => {
+                            setNameDraft(e.target.value);
+                            setNameMessage(null);
+                          }}
+                          maxLength={DISPLAY_NAME_MAX * 2}
+                          autoComplete="nickname"
+                          className="flex-1 min-w-0 px-3 py-2 border border-slate-300 rounded-md text-base sm:text-xs bg-white"
+                        />
+                        <button
+                          type="submit"
+                          disabled={isSavingName || !nameDraft.trim() || nameDraft.trim() === currentStudent.name}
+                          data-profile-name-save
+                          className="shrink-0 min-h-11 sm:min-h-0 px-3 py-2 bg-slate-900 text-white rounded-md text-xs font-medium disabled:opacity-50"
+                        >
+                          {isSavingName ? '保存中…' : '保存'}
+                        </button>
+                      </div>
+                      {nameMessage && (
+                        <p data-profile-name-message className={`text-[11px] ${nameMessage.ok ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {nameMessage.text}
+                        </p>
+                      )}
+                      <p className="text-[10px] text-slate-500 leading-snug">
+                        {currentStudent.serverLinked
+                          ? 'フレンドにはこの名前で表示されます。学科・学年・入学年度は下の欄で変えると、アカウントにも自動で保存されます。'
+                          : '学科・学年・入学年度は下の欄で変えられます。'}
+                      </p>
+                    </form>
+                  )}
+
                   {/* デザインテーマ */}
                   <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
                     <div className="font-semibold text-slate-800 text-xs mb-1.5 flex items-center justify-between">

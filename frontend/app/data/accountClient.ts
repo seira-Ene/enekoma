@@ -9,7 +9,8 @@ export type AccountAction =
   | 'reset_password'
   | 'verify_email'
   | 'set_email'
-  | 'change_password';
+  | 'change_password'
+  | 'update_profile';
 
 export interface AccountApiResult {
   ok: boolean;

@@ -22,6 +22,9 @@ import {
   updateProfile
 } from './accountStore';
 import { isMailConfigured, sendMail } from './mailer';
+import { authenticate } from '../friends/auth';
+import { GAKUBU_YORAN_DEPARTMENTS } from '@/app/data/gakubuYoran';
+import { isAdmissionYear, isValidGrade, normalizeDisplayName } from '@/app/data/profileEdit';
 import { maskEmail, maskIdentifier, recordMailLog } from './mailLog';
 
 const RESET_TTL_SECONDS = 30 * 60;
@@ -228,6 +231,36 @@ async function handle(request: NextRequest, body: Body) {
       const verificationSent = updated ? await sendVerification(request, updated, email) : false;
       if (!verificationSent) return fail(429, 'mail_failed', '確認メールを送れませんでした。しばらくしてからお試しください。');
       return NextResponse.json({ ok: true, account: publicAccount(updated!), verificationSent });
+    }
+
+    // プロフィール（名前・学科・学年・入学年度）の変更。ログイン中の印で本人を確かめる（パスワードは聞かない）
+    case 'update_profile': {
+      const me = await authenticate(request, body);
+      if (!me) return fail(401, 'unauthorized', 'サーバーへの保存には、もう一度ログインしてください。');
+      if (!(await allowAttempt(`profile:${me.toLowerCase()}`, 30, 3600))) return fail(429, 'rate_limited', '変更の回数が多すぎます。しばらくしてからお試しください。');
+      const fields: Partial<Pick<ServerAccount, 'name' | 'department' | 'grade' | 'admissionYear'>> = {};
+      if (body.name !== undefined) {
+        const checked = normalizeDisplayName(str(body.name, 400));
+        if (!checked.ok) return fail(400, 'invalid_name', checked.message);
+        fields.name = checked.name;
+      }
+      if (body.department !== undefined) {
+        const department = str(body.department, 40);
+        if (!(department in GAKUBU_YORAN_DEPARTMENTS)) return fail(400, 'invalid_department', '学科を選び直してください。');
+        fields.department = department;
+      }
+      if (body.grade !== undefined) {
+        if (!isValidGrade(body.grade)) return fail(400, 'invalid_grade', '学年を選び直してください。');
+        fields.grade = body.grade;
+      }
+      if (body.admissionYear !== undefined) {
+        if (!isAdmissionYear(body.admissionYear)) return fail(400, 'invalid_admission_year', '入学年度を選び直してください。');
+        fields.admissionYear = body.admissionYear;
+      }
+      if (Object.keys(fields).length === 0) return fail(400, 'missing', '変更する項目がありません。');
+      const updated = await updateProfile(me, fields);
+      if (!updated) return fail(401, 'unauthorized', 'アカウントが見つかりませんでした。もう一度ログインしてください。');
+      return NextResponse.json({ ok: true, account: publicAccount(updated) });
     }
 
     default:

@@ -357,9 +357,19 @@ export interface StudentContext {
   takenCourses?: string[];
 }
 
-export function baseCourseName(name: string): string {
-  return name
+/**
+ * 科目名の後ろのローマ数字（Ⅰ・Ⅱ・III など）を算用数字にする。時間割は「情報科学実習1」のように算用数字で書かれているため。
+ * NFKC で Ⅰ は I に、Ⅱ は II になる。「AI」「IT」のような英字の略語は変えない（直前が日本語の文字のときだけ）
+ */
+export function normalizeCourseNumerals(text: string): string {
+  const roman: Record<string, string> = { I: '1', II: '2', III: '3', IV: '4', V: '5', VI: '6', VII: '7', VIII: '8' };
+  return text
     .normalize('NFKC')
+    .replace(/(?<=[぀-ヿ一-鿿々ー])(VIII|VII|VI|IV|V|III|II|I)(?![A-Za-z])/g, (m) => roman[m] ?? m);
+}
+
+export function baseCourseName(name: string): string {
+  return normalizeCourseNumerals(name)
     .replace(/【[^】]*】/g, '')
     .replace(/\([^()]*\)/g, '')
     .replace(/\s+/g, '')
@@ -601,8 +611,10 @@ export function suggestCoursesForFreePeriod(
   if (matches.length > 0) {
     // 学科の科目、総合教育の順に並べる
     const sorted = [...matches].sort((a, b) => Number(isOwnDept(b)) - Number(isOwnDept(a)));
-    const listText = sorted.slice(0, 8).map((c) => `${c.name}（${c.teacher}先生 / ${getCompactRoomLabel(c.room)} / ${c.department}）`).join('、');
-    lines.push(`${listText} が開講されていますよ。${sorted.length > 8 ? `ほかにも${sorted.length - 8}科目あります。` : ''}`);
+    // 8件で切ると、聞きたい科目が「ほかにも〇科目」に隠れてしまうので12件まで出す
+    const LIMIT = 12;
+    const listText = sorted.slice(0, LIMIT).map((c) => `${c.name}（${c.teacher}先生 / ${getCompactRoomLabel(c.room)} / ${c.department}）`).join('、');
+    lines.push(`${listText} が開講されていますよ。${sorted.length > LIMIT ? `ほかにも${sorted.length - LIMIT}科目あります。科目名で聞いてもらえれば、そのコマにあるか確かめます。` : ''}`);
   } else {
     lines.push(categoryFilter
       ? `このコマに「${categoryFilter}」で履修できそうな科目は見つかりませんでした。`

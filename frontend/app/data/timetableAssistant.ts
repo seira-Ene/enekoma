@@ -16,6 +16,7 @@ import {
   isInSemester,
   isRetakeClass,
   LectureCourse,
+  normalizeCourseNumerals,
   PERIOD_TIMES,
   proposeAutomaticSchedule,
   resolvePeriodAt,
@@ -53,13 +54,18 @@ function parseDay(q: string, now: Date): string | undefined {
   if (/今日|本日/.test(q)) return clock.day;
   const named = q.match(/([月火水木金土])曜/);
   if (named) return named[1];
-  const shorthand = q.match(/([月火水木金土])\s*の?\s*[1-5]\s*(?:限|時限|コマ)/);
+  const shorthand = q.match(/([月火水木金土])\s*の?\s*[1-5]\s*(?:限|時限|コマ)/) || q.match(DAY_PERIOD_SHORTHAND);
   return shorthand ? shorthand[1] : undefined;
 }
 
+// 「月4」「火曜3」のような曜日と時限の略し方。「11月4日」「4月」「月4回」は時限にしない
+const DAY_PERIOD_SHORTHAND = /(?<![0-9])([月火水木金土])(?:曜日?)?\s*([1-5])(?![0-9]|\s*(?:日|月|年|号|時|分|単位|円|人|回|週|コマ目))/;
+
 function parsePeriod(q: string): number | undefined {
   const named = q.match(/([1-5])\s*(?:時限|限|コマ)/);
-  return named ? parseInt(named[1], 10) : undefined;
+  if (named) return parseInt(named[1], 10);
+  const shorthand = q.match(DAY_PERIOD_SHORTHAND);
+  return shorthand ? parseInt(shorthand[2], 10) : undefined;
 }
 
 // 「14時」「14:30」を時限に換算する
@@ -80,9 +86,50 @@ function toStudent(profile: UserProfileData | null | undefined, semester?: Semes
   return { department: profile?.department, grade: profile?.grade, semester, takenCourses: taken };
 }
 
-// 文章に含まれる科目名を長い名前から順に取り出す
+// 科目名を探すための形（全角・半角、空白、ローマ数字の違いをそろえる）
+const compactQuery = (q: string) => normalizeCourseNumerals(q).replace(/\s+/g, '');
+const bigrams = (s: string) => {
+  const set = new Set<string>();
+  for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));
+  return set;
+};
+
+export interface CourseNameMatch {
+  name: string;
+  exact: boolean; // 文章に科目名がそのまま含まれている
+  common: number; // 文章と共通する2文字の組の数（多いほど長く一致している）
+}
+
+/**
+ * 文章に含まれる科目名を探す。そのまま含まれる名前に加えて、少し違う書き方
+ * （「次世代コミュニティ情報科学1」→ 次世代社会コミュニティ情報科学1、「データ構造とアルゴリズム」→ アルゴリズムとデータ構造）も、
+ * 科目名の2文字の組の75%以上が文章にあれば候補にする。番号つきの科目（〇〇1）は、文章に数字があればその番号と合うものだけ
+ */
+export function rankCourseNames(q: string, db: LectureCourse[]): CourseNameMatch[] {
+  const text = compactQuery(q);
+  const textGrams = bigrams(text);
+  const numbers: string[] = text.match(/\d+/g) ?? [];
+  const names = Array.from(new Set(db.map((c) => baseCourseName(c.name)))).filter((n) => n.length >= 2);
+  const matches: CourseNameMatch[] = [];
+  for (const name of names) {
+    const exact = text.includes(name);
+    const grams = bigrams(name);
+    let common = 0;
+    grams.forEach((g) => textGrams.has(g) && common++);
+    if (!exact) {
+      if (name.length < 5 || grams.size === 0 || common / grams.size < 0.75) continue;
+      const trailing = name.match(/(\d+)$/)?.[1];
+      if (trailing && numbers.length > 0 && !numbers.includes(trailing)) continue;
+    }
+    matches.push({ name, exact, common: exact ? Math.max(common, grams.size) : common });
+  }
+  return matches.sort((a, b) => b.common - a.common || Number(b.exact) - Number(a.exact) || b.name.length - a.name.length);
+}
+
+// 文章に含まれる科目名を長い名前から順に取り出す。そのまま含まれる名前より長く一致する、少し違う書き方の名前があればそれを先にする
+// （「次世代コミュニティ情報科学1」で、途中の「情報科学」だけを拾わないため）
 function findCourseNamesInText(q: string, db: LectureCourse[]): string[] {
-  let rest = q.normalize('NFKC').replace(/\s+/g, '');
+  let rest = compactQuery(q);
   const names = Array.from(new Set(db.map((c) => baseCourseName(c.name)))).filter((n) => n.length >= 2).sort((a, b) => b.length - a.length);
   const found: string[] = [];
   names.forEach((name) => {
@@ -91,6 +138,14 @@ function findCourseNamesInText(q: string, db: LectureCourse[]): string[] {
       rest = rest.split(name).join(' ');
     }
   });
+  const best = rankCourseNames(q, db)[0];
+  if (best && !best.exact) {
+    const longestExact = Math.max(0, ...found.map((n) => bigrams(n).size));
+    if (best.common > longestExact) {
+      // 候補の名前の一部にすぎない名前（「情報科学」「アルゴリズム」）は外す
+      return [best.name, ...found.filter((n) => !best.name.includes(n))];
+    }
+  }
   return found;
 }
 
@@ -113,32 +168,94 @@ const CURRICULUM_LABEL: Record<string, string> = {
   reiwa6_or_earlier: '令和6年度以前入学者向け'
 };
 
-// 今のカリキュラムの時間割に見つからない科目・先生が、もう一方のカリキュラムにあれば知らせる（推測で答えないため）
-function answerFromOtherCurriculum(q: string, curriculum: string | undefined, explicitSemester: Semester | undefined, semester: Semester): string | null {
+const teacherList = (c: LectureCourse) => (c.teacher || '').split(/\s*\/\s*/).filter(Boolean);
+const slotLabel = (c: LectureCourse) => `${c.semester}の${c.day}曜${c.period}限`;
+
+interface LookupOptions {
+  day?: string;
+  period?: number;
+  explicitSemester?: Semester;
+  semester: Semester;
+  department?: string;
+}
+
+/**
+ * 科目名で時間割を引いた答え。曜日・時限まで聞かれたら（「〇〇は月曜4限？」「月4の〇〇」）、そのコマにあるかを先に答える。
+ * 少し違う書き方で見つけた科目は「〇〇のことですね」と正しい名前を添える
+ */
+function describeNamedCourse(name: string, db: LectureCourse[], exact: boolean, o: LookupOptions, bare = false): string | null {
+  const rows = findCourseRows(db, name).filter((c) => !o.explicitSemester || isInSemester(c, o.semester));
+  if (rows.length === 0) return null;
+  const own = o.department ? rows.filter((c) => !c.targets?.length || c.targets.includes(o.department as string)) : rows;
+  const shown = own.length > 0 ? own : rows;
+  // bare: もう一方のカリキュラムの案内の中で使うとき（見出しは呼び出し側が付ける）
+  const head = exact || bare ? '' : `「${name}」のことですね。`;
+  if (o.day) {
+    const atSlot = shown.filter((c) => c.day === o.day && (o.period === undefined || c.period === o.period));
+    const asked = `${o.day}曜${o.period ? `${o.period}限` : ''}`;
+    if (atSlot.length > 0) {
+      return `${head ? `${head}\n` : ''}はい、${name}は${Array.from(new Set(atSlot.map(slotLabel))).join('・')}に開講されています。\n\n${listRows(atSlot)}`;
+    }
+    return `${head ? `${head}\n` : ''}${name}は、${asked}には開講されていません。開講されているのは次のコマです。\n\n${listRows(shown)}`;
+  }
+  if (bare) return listRows(shown);
+  return `${head ? `${head}お調べしました！` : `${name}についてお調べしました！`}\n\n${listRows(shown)}`;
+}
+
+/**
+ * 今のカリキュラムの時間割にない科目・先生が、もう一方のカリキュラムにあれば知らせる（推測で答えないため）。
+ * 科目なら、同じ先生が同じ学期・曜日・時限に教えている今のカリキュラムの科目（名前が変わった対応科目の候補）も添える
+ */
+function answerFromOtherCurriculum(q: string, curriculum: string | undefined, o: LookupOptions, match?: CourseNameMatch): string | null {
   const mine = curriculum === 'reiwa6_or_earlier' ? 'reiwa6_or_earlier' : 'reiwa7_or_later';
   const other = mine === 'reiwa7_or_later' ? 'reiwa6_or_earlier' : 'reiwa7_or_later';
   const otherDb = getLectureDatabase(other);
-  const inTerm = (c: LectureCourse) => !explicitSemester || isInSemester(c, semester);
-  const teachers = findTeachersInText(q, otherDb);
-  let label = '';
-  let rows: LectureCourse[] = [];
+  const inTerm = (c: LectureCourse) => !o.explicitSemester || isInSemester(c, o.semester);
+  const footer = 'プロフィールの入学年度が違っていたら、基本設定の「入学年度」を変えてからもう一度聞いてくださいね。';
+  const teachers = match ? [] : findTeachersInText(q, otherDb);
   if (teachers.length > 0) {
-    label = `${teachers.join('、')}先生の授業`;
-    rows = otherDb.filter((c) => teachers.some((t) => (c.teacher || '').split(/\s*\/\s*/).includes(t)) && inTerm(c));
-  } else {
-    const names = findCourseNamesInText(q, otherDb);
-    if (names.length === 0) return null;
-    label = `「${names[0]}」`;
-    rows = findCourseRows(otherDb, names[0]).filter(inTerm);
+    const rows = otherDb.filter((c) => teachers.some((t) => teacherList(c).includes(t)) && inTerm(c));
+    if (rows.length === 0) return null;
+    return [
+      `${teachers.join('、')}先生の授業は、${CURRICULUM_LABEL[mine]}の時間割にはありませんでした。`,
+      `${CURRICULUM_LABEL[other]}の時間割には次のように載っています。`,
+      '',
+      listRows(rows),
+      '',
+      footer
+    ].join('\n');
   }
-  if (rows.length === 0) return null;
+  const found = match || rankCourseNames(q, otherDb)[0];
+  if (!found) return null;
+  const body = describeNamedCourse(found.name, otherDb, found.exact, o, true);
+  if (!body) return null;
+  const otherRows = findCourseRows(otherDb, found.name).filter(inTerm);
+  const myDb = getLectureDatabase(mine);
+  const counterparts = myDb.filter(
+    (c) =>
+      baseCourseName(c.name) !== found.name &&
+      otherRows.some((r) => r.semester === c.semester && r.day === c.day && r.period === c.period && teacherList(r).some((t) => teacherList(c).includes(t)))
+  );
+  // 文章にそのまま含まれる、今のカリキュラムの別の科目（「アルゴリズム」「データ構造」など）も知らせる
+  const counterpartNames = new Set(counterparts.map((c) => baseCourseName(c.name)));
+  const ownNamed = rankCourseNames(q, myDb)
+    // 名前のごく一部にすぎないもの（「次世代社会コミュニティ情報科学1」の中の「情報科学」）は出さない
+    .filter((m) => m.exact && !counterpartNames.has(m.name) && m.name.length >= found.name.length * 0.4)
+    .slice(0, 2)
+    .flatMap((m) => findCourseRows(myDb, m.name).filter(inTerm).slice(0, 2));
   return [
-    `${label}は、${CURRICULUM_LABEL[mine]}の時間割にはありませんでした。`,
+    found.exact
+      ? `「${found.name}」は、${CURRICULUM_LABEL[mine]}の時間割にはありませんでした。`
+      : `お聞きの科目は「${found.name}」だと思います。この科目は、${CURRICULUM_LABEL[mine]}の時間割にはありませんでした。`,
     `${CURRICULUM_LABEL[other]}の時間割には次のように載っています。`,
     '',
-    listRows(rows),
+    body,
+    ...(counterparts.length > 0
+      ? ['', `${CURRICULUM_LABEL[mine]}の時間割では、同じ先生が同じ時間に次の科目を教えています（名前が変わった対応科目かもしれません）。`, listRows(counterparts, 4)]
+      : []),
+    ...(ownNamed.length > 0 ? ['', `${CURRICULUM_LABEL[mine]}の時間割には、別の科目として次もあります。`, listRows(ownNamed, 4)] : []),
     '',
-    'プロフィールの入学年度が違っていたら、基本設定の「入学年度」を変えてからもう一度聞いてくださいね。'
+    footer
   ].join('\n');
 }
 
@@ -400,27 +517,42 @@ export function answerTimetableQuery(query: string, profile?: UserProfileData | 
     return answerMySchedule(q, profile, now, day);
   }
 
-  // 科目・教員の逆引き
-  if (/先生|教授|講師|授業|講義|いつ|何曜|何限|どの教室|どこで|教室は|開講|担当/.test(q)) {
+  // 科目・教員の逆引き。科目名があれば、問いかけの言葉がなくても（「〇〇は月曜4限？」）答える
+  const lookup: LookupOptions = { day, period, explicitSemester, semester, department: profile?.department };
+  const ownBest = rankCourseNames(q, db)[0];
+  const otherBest = rankCourseNames(q, getLectureDatabase(curriculum === 'reiwa6_or_earlier' ? 'reiwa7_or_later' : 'reiwa6_or_earlier'))[0];
+  const asksLookup =
+    /先生|教授|講師|授業|講義|科目|いつ|何曜|何限|どの教室|どこで|教室は|開講|担当/.test(q) ||
+    (!!(ownBest || otherBest) && (day !== undefined || period !== undefined || /[?？]$|ある|やって|取れ|どこ|何時/.test(q)));
+  if (asksLookup) {
     const teachers = findTeachersInText(q, db);
     if (teachers.length > 0) {
-      const rows = db.filter((c) => teachers.some((t) => (c.teacher || '').split(/\s*\/\s*/).includes(t)) && (!explicitSemester || isInSemester(c, semester)));
+      const rows = db.filter((c) => teachers.some((t) => teacherList(c).includes(t)) && (!explicitSemester || isInSemester(c, semester)));
       if (rows.length > 0) {
         return `${teachers.join('、')}先生の授業をお調べしました！\n\n${listRows(rows)}`;
       }
     }
+    // もう一方のカリキュラムのほうが長く一致する（その名前の科目はもう一方にしかない）ときは、そちらを案内する。
+    // 例：令和6年度以前の人の「アルゴリズムとデータ構造」は、自分の時間割の「アルゴリズム」ではなく令和7年度以降の科目
+    if (otherBest && (!ownBest || otherBest.common > ownBest.common)) {
+      const other = answerFromOtherCurriculum(q, curriculum, lookup, otherBest);
+      if (other) return other;
+    }
     const names = findCourseNamesInText(q, db);
     if (names.length > 0) {
-      const rows = findCourseRows(db, names[0]).filter((c) => (!explicitSemester || isInSemester(c, semester)));
-      const own = profile?.department ? rows.filter((c) => !c.targets?.length || c.targets.includes(profile.department)) : rows;
-      const shown = own.length > 0 ? own : rows;
-      return `${names[0]}についてお調べしました！\n\n${listRows(shown)}`;
+      const exactNames = new Set(rankCourseNames(q, db).filter((m) => m.exact).map((m) => m.name));
+      // 「データ構造とアルゴリズム」のように2つの科目の名前があれば、両方答える（3つまで）
+      const answers = names
+        .slice(0, 3)
+        .map((name) => describeNamedCourse(name, db, exactNames.has(name), lookup))
+        .filter((a): a is string => !!a);
+      if (answers.length > 0) return answers.join('\n\n');
     }
     // 曜日と時限だけを指定して開講科目を聞く質問
-    if (day && period && /授業|講義|開講/.test(q)) {
+    if (day && period && /授業|講義|開講|科目/.test(q)) {
       return suggestCoursesForFreePeriod(day, period, undefined, curriculum, student);
     }
-    const other = answerFromOtherCurriculum(q, curriculum, explicitSemester, semester);
+    const other = answerFromOtherCurriculum(q, curriculum, lookup);
     if (other) return other;
   }
 

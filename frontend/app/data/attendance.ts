@@ -22,10 +22,14 @@ export interface AttendanceRecord {
   updatedAt: number;
 }
 
-/** 位置情報で確かめた「校内にいたか」（緯度・経度は残さない） */
+/**
+ * 位置情報で確かめた「校内にいたか」（緯度・経度は残さない）。
+ * kind: 'transition' はスマホの自動化（到着・出発）から届いた記録で、次の記録まで同じ状態が続いたとみなす
+ */
 export interface CampusObservation {
   t: number;
   on: boolean;
+  kind?: 'transition';
 }
 
 const MIN = 60 * 1000;
@@ -42,6 +46,7 @@ export const ATTENDANCE_RULES = { earlyWindowMin: 30, presentUntilMin: 15, lateU
 export function evaluateClass(startMs: number, endMs: number, observations: CampusObservation[], nowMs: number): AttendanceStatus | null {
   const { earlyWindowMin, presentUntilMin, lateUntilMin } = ATTENDANCE_RULES;
   const windowStart = startMs - earlyWindowMin * MIN;
+  observations = withTransitionStates(observations, [windowStart, startMs + presentUntilMin * MIN, startMs + lateUntilMin * MIN, endMs], nowMs);
   const inWindow = observations.filter((o) => o.t >= windowStart && o.t <= Math.min(endMs, nowMs));
   const firstOn = inWindow.filter((o) => o.on).reduce<number | null>((min, o) => (min === null || o.t < min ? o.t : min), null);
   if (firstOn !== null) {
@@ -53,6 +58,25 @@ export function evaluateClass(startMs: number, endMs: number, observations: Camp
   if (inWindow.some((o) => !o.on && o.t >= startMs)) return 'absent';
   if (nowMs < endMs) return null;
   return inWindow.length > 0 ? 'absent' : 'unconfirmed';
+}
+
+/**
+ * 到着・出発の記録（transition）は、次の記録まで状態が続く。判定の区切りの時刻ごとに、
+ * その時点でいちばん新しい記録が到着・出発なら、その状態の測位があったものとして足す。
+ * 前の日の記録は使わない（前の晩の「出発」で翌日を欠席にしないため。その日に到着が届かなければ今までどおり未確認）
+ */
+export function withTransitionStates(observations: CampusObservation[], times: number[], nowMs: number): CampusObservation[] {
+  if (!observations.some((o) => o.kind === 'transition')) return observations;
+  const sorted = [...observations].sort((a, b) => a.t - b.t);
+  const added: CampusObservation[] = [];
+  for (const time of times) {
+    if (time > nowMs) continue;
+    const latest = sorted.filter((o) => o.t <= time).pop();
+    if (latest?.kind === 'transition' && campusDate(new Date(latest.t)) === campusDate(new Date(time))) {
+      added.push({ t: time, on: latest.on });
+    }
+  }
+  return added.length ? [...observations, ...added] : observations;
 }
 
 /** 日本時間の日付（YYYY-MM-DD） */

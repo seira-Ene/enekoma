@@ -365,6 +365,8 @@ export function normalizeCourseNumerals(text: string): string {
   const roman: Record<string, string> = { I: '1', II: '2', III: '3', IV: '4', V: '5', VI: '6', VII: '7', VIII: '8' };
   return text
     .normalize('NFKC')
+    // 波線（〜・～・~）は1つにそろえる（NFKCでは ～ だけが ~ になり、〜 はそのまま残るため）
+    .replace(/[~～〜]/g, '〜')
     .replace(/(?<=[぀-ヿ一-鿿々ー])(VIII|VII|VI|IV|V|III|II|I)(?![A-Za-z])/g, (m) => roman[m] ?? m);
 }
 

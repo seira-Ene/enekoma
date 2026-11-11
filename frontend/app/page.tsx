@@ -52,6 +52,8 @@ import FeedbackModal from '@/app/components/FeedbackModal';
 import FriendsPanel, { sendCampusStatus, syncSharedSchedule } from '@/app/components/FriendsPanel';
 import AttendancePanel from '@/app/components/AttendancePanel';
 import FrequentQuestions from '@/app/components/FrequentQuestions';
+import CampusAutomationCard from '@/app/components/CampusAutomationCard';
+import { fetchHookEvents, readHookToken, saveHookToken, toObservations, type CampusHookEvent } from '@/app/data/campusHook';
 import { readFrequentQuestions, recordQuestion, removeQuestion, saveFrequentQuestions, topFrequentQuestions, type FrequentQuestionStore } from '@/app/data/frequentQuestions';
 import LocationCard from '@/app/components/LocationCard';
 import { geoErrorReason, judgeCampus, readLocationEnabled, saveLocationEnabled, type LocationState } from '@/app/data/campusLocation';
@@ -2023,11 +2025,14 @@ export default function UnifiedAssistantPage() {
   const lastCampusSent = useRef<{ on: boolean; at: number } | null>(null);
   // 出欠・フレンドのタブを開いたときなどに、すぐ測り直すための入口（位置情報がオフなら何もしない）
   const requestLocationCheck = useRef<(reason: string) => void>(() => {});
+  // スマホの自動化から届いた到着・出発（ログイン中のアカウントの分だけ。端末の位置の記録とは別に持つ）
+  const hookEventsRef = useRef<{ id: string; events: CampusHookEvent[] }>({ id: '', events: [] });
   const runAttendance = useCallback((reason: string) => {
     const { id, courses } = locationRefs.current;
     const accountId = id || 'guest';
     const records = readAttendance(accountId);
-    const observations = readObservations();
+    const hook = hookEventsRef.current;
+    const observations = [...readObservations(), ...(id && hook.id === id ? toObservations(hook.events) : [])];
     const updates = autoAttendanceUpdates(courses, observations, records);
     // 1分ごとの見直しは、記録が変わったときだけ出す
     if (reason !== '1分ごと' || updates.length > 0) {
@@ -2143,6 +2148,59 @@ export default function UnifiedAssistantPage() {
       window.removeEventListener('focus', onReturn);
     };
   }, [locationEnabled, runAttendance]);
+  // EneKomaを開いていない間の到着・出発（スマホの自動化）を、開いたとき・画面に戻ったときに取りに行き、出欠を決め直す
+  const [hookToken, setHookToken] = useState<string | null>(null);
+  const [lastHookEvent, setLastHookEvent] = useState<CampusHookEvent | null>(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 端末に保存した鍵は描画後にしか読めない
+    setHookToken(currentStudentId && currentStudentLinked ? readHookToken(currentStudentId) : null);
+    setLastHookEvent(null);
+  }, [currentStudentId, currentStudentLinked]);
+  useEffect(() => {
+    if (!currentStudentId || !currentStudentLinked || !hookToken) {
+      hookEventsRef.current = { id: '', events: [] };
+      return;
+    }
+    const id = currentStudentId;
+    let alive = true;
+    let lastPull = 0;
+    const pull = async (reason: string) => {
+      const session = getSessionToken(id);
+      if (!session || Date.now() - lastPull < 30 * 1000) return;
+      lastPull = Date.now();
+      try {
+        const { active, events } = await fetchHookEvents(session);
+        if (!alive) return;
+        if (!active) {
+          // 別の端末で無効にした・作り直した
+          saveHookToken(id, null);
+          setHookToken(null);
+          return;
+        }
+        hookEventsRef.current = { id, events };
+        setLastHookEvent(events[events.length - 1] || null);
+        attendanceLog(`自動化の記録を取得（${reason}）`, events.map((e) => `${new Date(e.t).toISOString()} ${e.on ? '到着' : '出発'}`));
+        runAttendance('自動化の記録');
+      } catch (error) {
+        attendanceLog('自動化の記録を取得できない', error instanceof Error ? error.message : error);
+      }
+    };
+    void pull('起動');
+    const onReturn = () => (document.visibilityState === 'visible' ? void pull('画面に戻った') : undefined);
+    document.addEventListener('visibilitychange', onReturn);
+    window.addEventListener('pageshow', onReturn);
+    window.addEventListener('focus', onReturn);
+    // 開いたまま授業が終わった回も決められるように
+    const timer = setInterval(() => runAttendance('1分ごと'), 60 * 1000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onReturn);
+      window.removeEventListener('pageshow', onReturn);
+      window.removeEventListener('focus', onReturn);
+    };
+  }, [currentStudentId, currentStudentLinked, hookToken, runAttendance]);
+
   // 出欠・フレンドのタブを開いたら、最新の位置で判定し直す
   useEffect(() => {
     if (showProfileModal && (profileTab === 'attendance' || profileTab === 'friends')) {
@@ -3603,9 +3661,16 @@ export default function UnifiedAssistantPage() {
               {profileTab === 'attendance' && (
                 <div className="space-y-3" data-attendance-tab>
                   <LocationCard {...locationProps} />
+                  <CampusAutomationCard
+                    accountId={currentStudent?.serverLinked ? currentStudent.id : null}
+                    sessionToken={currentStudent?.serverLinked ? getSessionToken(currentStudent.id) : null}
+                    token={hookToken}
+                    lastEvent={lastHookEvent}
+                    onChange={setHookToken}
+                  />
                   <p className="p-2.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
                     🕒 授業の開始30分前〜開始15分後に校内なら「出席」、開始30分後までなら「遅刻」、開始30分を過ぎても校外のままなら「欠席」として自動で記録します。
-                    ブラウザはEneKomaを開いている間しか位置情報を取れないため、授業の時間に一度も開かなかった回は「未確認」になります。記録はこの端末だけに保存され、大学の公式な出欠ではありません。違っていたら手で直してください。
+                    ブラウザはEneKomaを開いている間しか位置情報を取れません。上の「開いていないときも記録する」を設定すると、スマホの自動化から届いた到着・出発で、閉じていた間の授業も記録します。どちらもないときに授業の時間に一度も開かなかった回は「未確認」になります。記録はこの端末だけに保存され、大学の公式な出欠ではありません。違っていたら手で直してください。
                   </p>
                   <AttendancePanel
                     accountId={currentStudent?.id || 'guest'}

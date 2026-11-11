@@ -1,7 +1,8 @@
 'use client';
 
 // フレンド機能（フレンドコード方式）。フレンドに見せるのは名前と、今の授業（科目名・教室）か空きコマかだけ
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { displayedShare, readCachedShare, resolveServerShare, writeCachedShare, type ShareWrite } from '@/app/data/shareSetting';
 import { campusLabel, cardBadges, compareCampus, slotHeading, type FriendCurrentStatus, type FriendSlotStatus, type CampusSlot } from '@/app/data/friendStatus';
 import type { LocationState } from '@/app/data/campusLocation';
 import LocationCard from '@/app/components/LocationCard';
@@ -85,6 +86,18 @@ export default function FriendsPanel({ loginId, serverLinked, courses, location 
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // 共有設定の、最後に確かめた値（端末に保存）。読み込み中・失敗したときにOFFと表示しないため
+  const [cachedShare, setCachedShare] = useState<boolean | null>(() => readCachedShare(loginId));
+  // 最後に切り替えた結果。それより前に送った読み込みの古い値で、表示を戻さないため
+  const lastShareWrite = useRef<ShareWrite | null>(null);
+
+  const rememberShare = useCallback(
+    (share: boolean) => {
+      writeCachedShare(loginId, share);
+      setCachedShare(share);
+    },
+    [loginId]
+  );
 
   const handleResult = useCallback((r: ApiResult) => {
     // 印が期限切れ・無効なら、パスワードを聞き直す
@@ -94,10 +107,14 @@ export default function FriendsPanel({ loginId, serverLinked, courses, location 
 
   const refresh = useCallback(async () => {
     if (!token) return;
+    const requestedAt = Date.now();
     const [meRes, statusRes] = await Promise.all([callFriendsApi(token, 'me'), callFriendsApi(token, 'status')]);
     handleResult(meRes);
     if (meRes.ok) {
-      setMe(meRes as unknown as MeData);
+      const data = meRes as unknown as MeData;
+      const share = resolveServerShare(data.shareScheduleStatus !== false, requestedAt, lastShareWrite.current, Date.now());
+      setMe({ ...data, shareScheduleStatus: share });
+      rememberShare(share);
       setLoadError(null);
     } else if (meRes.http !== 401) {
       setLoadError(meRes.message || '読み込めませんでした。');
@@ -106,7 +123,7 @@ export default function FriendsPanel({ loginId, serverLinked, courses, location 
       setStatuses(statusRes.friends as FriendCurrentStatus[]);
       setSlot(statusRes.slot as CampusSlot);
     }
-  }, [token, handleResult]);
+  }, [token, handleResult, rememberShare]);
 
   // 開いている間は1分ごとに今のコマを更新する
   useEffect(() => {
@@ -174,10 +191,31 @@ export default function FriendsPanel({ loginId, serverLinked, courses, location 
     setBusy(true);
     setMessage(null);
     const res = handleResult(await callFriendsApi(token, action, payload));
-    setBusy(false);
     if (res.ok || res.message) setMessage({ text: (res.message as string) || success || '更新しました。', error: !res.ok });
     await refresh();
+    // 読み込み直すまで押せないようにする（古い表示のまま押すと、意図と逆に切り替わるため）
+    setBusy(false);
     return res;
+  };
+
+  const shownShare = displayedShare(me?.shareScheduleStatus, cachedShare);
+  const toggleShare = async () => {
+    if (!me) return;
+    const next = !me.shareScheduleStatus;
+    setBusy(true);
+    setMessage(null);
+    const res = handleResult(await callFriendsApi(token, 'set_sharing', { share: next, courses: toSharedCourses(courses) }));
+    if (res.ok) {
+      const value = typeof res.shareScheduleStatus === 'boolean' ? res.shareScheduleStatus : next;
+      lastShareWrite.current = { value, at: Date.now() };
+      setMe((prev) => (prev ? { ...prev, shareScheduleStatus: value } : prev));
+      rememberShare(value);
+      setMessage({ text: value ? '共有をオンにしました。' : '共有をオフにしました。' });
+    } else {
+      setMessage({ text: res.message || '切り替えられませんでした。もう一度お試しください。', error: true });
+    }
+    await refresh();
+    setBusy(false);
   };
 
   const statusOf = (friendCode: string) => statuses.find((s) => s.friendCode === friendCode);
@@ -227,20 +265,23 @@ export default function FriendsPanel({ loginId, serverLinked, courses, location 
         <div>
           <div className="font-semibold text-slate-800">フレンドに今の状況を共有する</div>
           <div className="text-[11px] text-slate-500">オフにすると、フレンドには「非公開」と表示され、時間割と校内 / 校外はサーバーから消えます。</div>
+          {!me && <div className="text-[11px] text-slate-500" data-share-checking>設定を確認中…</div>}
         </div>
+        {/* サーバーの値を読み込むまでは、前回確かめた値を出す（不明なら中間の表示）。OFFとは表示しない */}
         <button
           type="button"
           role="switch"
-          aria-checked={!!me?.shareScheduleStatus}
+          aria-checked={shownShare === true}
+          aria-busy={!me}
           aria-label="フレンドに今の状況を共有する"
           disabled={busy || !me}
           data-share-toggle
-          onClick={() =>
-            void act('set_sharing', { share: !me?.shareScheduleStatus, courses: toSharedCourses(courses) }, me?.shareScheduleStatus ? '共有をオフにしました。' : '共有をオンにしました。')
-          }
-          className={`shrink-0 w-12 h-7 rounded-full p-1 transition ${me?.shareScheduleStatus ? 'bg-emerald-600' : 'bg-slate-300'}`}
+          onClick={() => void toggleShare()}
+          className={`shrink-0 w-12 h-7 rounded-full p-1 transition disabled:opacity-70 ${
+            shownShare === true ? 'bg-emerald-600' : shownShare === false ? 'bg-slate-300' : 'bg-slate-200'
+          }`}
         >
-          <span className={`block w-5 h-5 rounded-full bg-white shadow transition ${me?.shareScheduleStatus ? 'translate-x-5' : ''}`} />
+          <span className={`block w-5 h-5 rounded-full bg-white shadow transition ${shownShare === true ? 'translate-x-5' : shownShare === null ? 'translate-x-2.5' : ''}`} />
         </button>
       </div>
 

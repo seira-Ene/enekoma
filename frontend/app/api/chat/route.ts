@@ -14,6 +14,7 @@ import {
 } from '@/app/data/gakubuYoran';
 import { answerTimetableQuery, buildTimetableContext } from '@/app/data/timetableAssistant';
 import { answerCurriculumLocally, buildCurriculumContext } from '@/app/data/curriculumContext';
+import { answerFacilityLocally, buildFacilityContext } from '@/app/data/campusFacilities';
 import { parseProfileUpdateFromText } from '@/app/data/studentAccounts';
 import { ExtractionError, ExtractionKind, extractDocument, MediaPart } from './extraction';
 import { answerFriendStatusQuery, friendQueryIntent, isFriendStatusQuery, mayBeFriendStatusQuery, sanitizeSharedSchedule } from '@/app/data/friendStatus';
@@ -61,6 +62,7 @@ const SYSTEM_PROMPT = `
 ## 【動作ルール】
 0. 時間割データの厳守：授業、教員、教室、時限、空き教室についての事実は、質問と一緒に渡される「時間割の参照データ」だけを根拠にしてください。参照データにない授業名、教員名、教室番号、時限を作らないでください。データがないときは推測せず、「時間割データでは確認できませんでした」と伝えるか、曜日や時限、科目名を聞き返してください。参照データで「かもしれません」「候補」「推測」とされている内容（教員と時限の一致から挙げた対応科目など）は確定情報ではないので、断定せず「〜の可能性があります」「〜と考えられます」のように伝えてください。
 1. 要覧準拠の回答義務：履修・単位・卒業要件に関する相談は、文理学部要覧の基準に基づいて回答してください。資格コース・教職・副専攻・資格について質問と一緒に「学部要覧の参照データ」が渡されたときは、科目名・単位数・条件をその内容だけから答え、参照データにない科目を作らないでください。
+0-2. 施設の場所の厳守：計算機室・PCを使える場所などの施設は、このプロンプトのナレッジと、質問と一緒に渡される「キャンパス施設の参照データ」だけを根拠にしてください。登録されていない教室番号・施設・階を推測で補ったり作ったりしないでください（例：3号館に計算機室が並んでいるという情報はありません）。分からないときは、そのまま「登録されている情報では確認できませんでした」と伝えてください。
 2. 4桁教室番号の正確な保持：「3306」「3505」等の教室番号は省略せず「3号館3306教室」のように自然に案内してください。
 3. 画像や時間割表の読み込み時：
    学生への返信本文は上記の通り人間らしいチャット言葉で書き、システム連携用JSONブロック \`\`\`profile_update ... \`\`\` のみ回答の末尾にそのまま出力してください（画面側で自動的に抽出され、ユーザーには本文のみが表示されます）。
@@ -264,6 +266,10 @@ const SYSTEM_PROMPT = `
   - 土曜日: 09:00 - 19:00
   - 日曜・祝日: 休館（授業実施日を除く）
   - ※地下書庫への入庫および図書貸出手続きは閉館30分前まで。
+- **情報科学科 学科計算機室（8号館2階：8B203・8B210）**:
+  - 情報科学科の実習・実験・演習で使う計算機室。
+  - ※計算機室として案内するのはこの2室だけ。ほかの号館・教室番号（3号館の3204・3305など）を計算機室として挙げないこと。聞かれていない号館に「〇号館にはない」と触れる必要もない。
+- **PCを使える場所（全学部の学生向け）**: 図書館（PCコーナー・ラーニング・コモンズなど）
 - **コンピュータセンター受付（3号館）**:
   - 月〜金（平日）: 09:00 - 18:00
   - 土曜日: 09:00 - 13:00
@@ -396,6 +402,10 @@ function answerLocally(query: string, userProfile?: UserProfileData, now: Date =
   const q = query.trim();
   const qLower = q.toLowerCase();
 
+  // 計算機室・PCを使える場所（「8B203」を203教室と読まないよう、教室番号の判定より先に）
+  const facilityAnswer = answerFacilityLocally(q);
+  if (facilityAnswer) return facilityAnswer;
+
   // 時間割に関する質問は実データから回答する
   const timetableAnswer = answerTimetableQuery(q, userProfile, now);
   if (timetableAnswer) return timetableAnswer;
@@ -523,7 +533,7 @@ function answerLocally(query: string, userProfile?: UserProfileData, now: Date =
     return '図書館は平日9:00〜20:00、土曜9:00〜19:00です（日曜・祝日は休館）。地下書庫と貸出は閉館30分前までです。';
   }
 
-  if (['コンピュータセンター', 'コンセ', 'cc', 'wifi', 'wi-fi', '学内pc', 'パソコン室'].some((k) => qLower.includes(k))) {
+  if (['コンピュータセンター', 'コンセ', 'cc', 'wifi', 'wi-fi'].some((k) => qLower.includes(k))) {
     return 'コンピュータセンター（3号館）の窓口は平日9:00〜18:00、土曜9:00〜13:00です。Wi-Fiやアカウントの相談はここで受け付けています。';
   }
 
@@ -784,8 +794,10 @@ export async function POST(req: NextRequest) {
       const timetableContext = image ? '' : buildTimetableContext(query, userProfile, requestTime(req));
       // 資格コース・教職・副専攻の質問には、要覧の表から該当部分を渡す
       const curriculumContext = image ? '' : buildCurriculumContext(query, userProfile);
+      // 計算機室・PCを使える場所などの施設は、登録済みのデータを渡す（推測で教室を作らせない）
+      const facilityContext = image ? '' : buildFacilityContext(query);
       const currentTurnParts: any[] = [
-        { text: `${profileContext}${timetableContext}${curriculumContext}${userPromptText}` }
+        { text: `${profileContext}${timetableContext}${curriculumContext}${facilityContext}${userPromptText}` }
       ];
 
       if (image && image.data) {

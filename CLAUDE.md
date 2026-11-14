@@ -190,4 +190,5 @@ Tailwind v4 のユーティリティは `--color-slate-900` などの変数を�
 - AIの回答は、LINEのような自然な会話文にする方針。`SYSTEM_PROMPT` で記号・太字・見出し・システムタグを禁止し、`sanitizeConversationalReply` で後処理している。`answerLocally` の文言も同じ文体に揃える。
 - 校舎・自販機・施設の案内は `SYSTEM_PROMPT` と `answerLocally` の両方に書かれている。情報を更新するときは両方を直す。
 - 計算機室・PCを使える場所は `data/campusFacilities.ts`（`CAMPUS_FACILITIES`）にまとめてある。情報科学科の学科計算機室は8号館2階（8B203・8B210）、全学部向けは図書館（PCコーナー・ラーニング・コモンズなど）。質問に「計算機室」「PC室」「パソコン」「PC」「8B203」などがあれば、`buildFacilityContext` がこのデータと注意書き（`FACILITY_GUARD_NOTE`：ほかの号館・教室番号を計算機室として挙げない）をGeminiへの参照データに足す。APIキーがないときは `answerFacilityLocally` が、時間割の検索と教室番号の判定より先に答える（「8B203」を203教室と読まないため）。Wi-Fi・アカウント・空き教室・授業の話には割り込まない。以前、AIが「3号館に計算機室（3204・3305など）が並んでいる」と創作したので、`SYSTEM_PROMPT` にも登録のない施設・教室を推測で作らない規則（0-2）がある。施設を足すときは `CAMPUS_FACILITIES` と `SYSTEM_PROMPT` のナレッジの両方を直す。
+- 画面上部のメニュー（取得済み単位数・学生履修プロフィール・『学部要覧』早見表・よくある質問・声・お問い合わせ・システムメンテナンス管理設定）は、`data/quickMenu.ts` の `quickMenuItems` でアイコンと項目名をセットにし、`page.tsx` のヘッダー下のバー（`data-quick-menu-bar`）でスマホ・PCとも同じものを出す。スマホは横スクロール（高さ44px）、PCは折り返して全部見せる。アイコンだけのボタンにしない。卒業必要単位は学科の要覧の値（`graduationCreditsFor`）。
 - 要覧の規則を扱うときは、必修と選択必修を区別し、令和7年度以降と令和6年度以前のカリキュラムも区別する。

@@ -17,6 +17,8 @@ import { answerCurriculumLocally, buildCurriculumContext } from '@/app/data/curr
 import { answerFacilityLocally, buildFacilityContext } from '@/app/data/campusFacilities';
 import { parseProfileUpdateFromText } from '@/app/data/studentAccounts';
 import { ExtractionError, ExtractionKind, extractDocument, MediaPart } from './extraction';
+import { callModelsInOrder, ModelCallError, ModelFailureKind, parseRetryDelaySec, summarizeFailure } from './modelPicker';
+import { apiKeyScope, loadSharedCooldowns } from './cooldownStore';
 import { answerFriendStatusQuery, friendQueryIntent, isFriendStatusQuery, mayBeFriendStatusQuery, sanitizeSharedSchedule } from '@/app/data/friendStatus';
 import { get_friends_current_status } from '../friends/friendStore';
 import { authenticate } from '../friends/auth';
@@ -304,8 +306,10 @@ const CHAT_THINKING_CONFIG = { thinkingConfig: { thinkingLevel: 'minimal' } };
 // 時間割: minimal は画質が悪いと科目名を読み違えたので、精度の落ちなかった low にする
 const TRANSCRIPT_THINKING_CONFIG = { thinkingConfig: { thinkingLevel: 'minimal' } };
 const TIMETABLE_THINKING_CONFIG = { thinkingConfig: { thinkingLevel: 'low' } };
-const CHAT_REQUEST_TIMEOUT_MS = 10000;
-const CHAT_TOTAL_TIMEOUT_MS = 25000;
+// チャットはふだん1〜2秒で返る（2026-11-14 実測：思考minimal・参照データ込みで1.2〜1.9秒）。
+// 返らないときは長く待たず、学内データの答えに切り替える（以前は1回10秒・全体25秒待っていた）
+const CHAT_REQUEST_TIMEOUT_MS = 7000;
+const CHAT_TOTAL_TIMEOUT_MS = 12000;
 // 科目の多い画像は出力が長いので、途中で打ち切ってやり直さないよう長めに待つ
 const IMAGE_REQUEST_TIMEOUT_MS = 30000;
 const IMAGE_TOTAL_TIMEOUT_MS = 50000;
@@ -609,10 +613,18 @@ function friendlyGeminiError(status: number | null, message: string | null): str
   if (lower.includes('api_key') || lower.includes('api key')) {
     return 'APIキーが無効であるか、形式が正しくありません。Google AI Studio（aistudio.google.com）で取得した有効なキー（AIzaSy...）をご確認ください。';
   }
-  if (status === 429) return 'Gemini APIの無料枠利用上限（レートリミット）に達しました。1〜2分お待ちいただくか、別のキーをお試しください。';
+  if (status === 429 || lower.includes('quota')) return 'Gemini APIの無料枠の利用上限に達しました。時間をおくか、別のキーをお試しください。';
   if (status === 403) return 'APIアクセス権限がありません。Gemini APIが有効化されているGoogleアカウントのキーかご確認ください。';
   if (lower.includes('timeout') || lower.includes('aborted')) return '読み取りに時間がかかりすぎました。ページを分けるか、画像を小さくしてお試しください。';
   return message || '接続エラー';
+}
+
+/** チャットでAIが答えられなかったときに、学内データの答えの前に添える一言 */
+function chatFallbackNote(kind: ModelFailureKind): string {
+  if (kind === 'auth') return 'AIに接続できなかったので（APIキーの設定を確認してください）、学内データからお答えしますね。';
+  if (kind === 'quota') return 'AIの利用が混み合っているので、学内データからお答えしますね。';
+  if (kind === 'timeout') return 'AIの応答が遅れているので、学内データからお答えしますね。';
+  return 'AIに接続できなかったので、学内データからお答えしますね。';
 }
 
 export async function POST(req: NextRequest) {
@@ -895,13 +907,13 @@ export async function POST(req: NextRequest) {
         });
         if (!res.ok) {
           let errText = `HTTP ${res.status}`;
+          let retryDelaySec: number | null = null;
           try {
             const errJson = await res.json();
             errText = errJson?.error?.message || errText;
+            retryDelaySec = parseRetryDelaySec(errJson);
           } catch {}
-          const error: any = new Error(errText);
-          error.status = res.status;
-          throw error;
+          throw new ModelCallError(errText, res.status, retryDelaySec);
         }
         const data = await res.json();
         const parts = data?.candidates?.[0]?.content?.parts || [];
@@ -912,26 +924,18 @@ export async function POST(req: NextRequest) {
         return { model, text: candidateText };
       };
 
-      let successfulResponse: { model: string; text: string } | null = null;
-      let lastErrorStatus: number | null = null;
-      let lastErrorMessage: string | null = null;
-
-      // 速いモデルから順に試す。同時に呼ぶと無料枠を2倍使うので1つずつ呼ぶ（APIキー不正・権限エラー時は打ち切る）
-      const requestTimeout = isImageRequest ? IMAGE_REQUEST_TIMEOUT_MS : CHAT_REQUEST_TIMEOUT_MS;
-      const deadline = Date.now() + (isImageRequest ? IMAGE_TOTAL_TIMEOUT_MS : CHAT_TOTAL_TIMEOUT_MS);
-      for (const model of GEMINI_MODEL_ORDER) {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) break;
-        try {
-          successfulResponse = await fetchSingleModel(model, Math.min(requestTimeout, remaining));
-          break;
-        } catch (err: any) {
-          lastErrorStatus = err?.status || lastErrorStatus;
-          lastErrorMessage = err?.message || String(err);
-          if (err?.status === 400 && lastErrorMessage?.toLowerCase().includes('api_key')) break;
-          if (err?.status === 403) break;
-        }
-      }
+      // 速いモデルから順に1つずつ試す（同時に呼ぶと無料枠を2倍使うため）。上限に達したモデルは待ち時間まで飛ばす
+      const keyScope = apiKeyScope(apiKey);
+      await loadSharedCooldowns(keyScope, GEMINI_MODEL_ORDER);
+      const picked = await callModelsInOrder(GEMINI_MODEL_ORDER, fetchSingleModel, {
+        scope: keyScope,
+        perRequestMs: isImageRequest ? IMAGE_REQUEST_TIMEOUT_MS : CHAT_REQUEST_TIMEOUT_MS,
+        budgetMs: isImageRequest ? IMAGE_TOTAL_TIMEOUT_MS : CHAT_TOTAL_TIMEOUT_MS
+      });
+      const successfulResponse = picked.value;
+      const lastFailure = picked.failures[picked.failures.length - 1];
+      const lastErrorStatus: number | null = lastFailure?.status ?? (picked.skipped.length > 0 ? 429 : null);
+      const lastErrorMessage: string | null = lastFailure?.message ?? (picked.skipped.length > 0 ? 'quota' : null);
 
       if (successfulResponse && successfulResponse.text) {
         const candidateText = successfulResponse.text;
@@ -959,8 +963,13 @@ export async function POST(req: NextRequest) {
           } catch (e) {}
         }
       }
+      // チャットは理由を短く添えて、学内データの答えをすぐ返す（画像の読み取り向けの文言を出さない）
+      const chatNote = isImageRequest ? null : chatFallbackNote(summarizeFailure(picked));
+      const fallbackReply = chatNote
+        ? `${chatNote}\n\n${localReply}`
+        : `APIの接続状況を確認しました（${friendlyError}）。学内データをもとにお答えしますね！\n\n${localReply}`;
       return NextResponse.json({
-        reply: sanitizeConversationalReply(`APIの接続状況を確認しました（${friendlyError}）。学内データをもとにお答えしますね！\n\n${localReply}`),
+        reply: sanitizeConversationalReply(fallbackReply),
         source: 'local',
         error: friendlyError,
         errorStatus: lastErrorStatus,

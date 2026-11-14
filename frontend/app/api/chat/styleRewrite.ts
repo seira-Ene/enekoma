@@ -1,38 +1,41 @@
 // 話し方の指定（「織田信長みたいに話して」）に合わせた短い文の生成と、決まった答えの口調の書き換え
 import { keepsFacts, styleInstruction } from '@/app/data/speakingStyle';
+import { callModelsInOrder, ModelCallError, parseRetryDelaySec } from './modelPicker';
+import { apiKeyScope, loadSharedCooldowns } from './cooldownStore';
 
-const STYLE_TIMEOUT_MS = 8000;
+// 口調の書き換えは元の答えがあるので、返らなければ元の文で答える（長く待たせない）
+const STYLE_TIMEOUT_MS = 6000;
+const STYLE_TOTAL_TIMEOUT_MS = 9000;
 
-/** 短い文を1つ作る（速いモデルから順に試し、すべて失敗したら null） */
+/** 短い文を1つ作る（速いモデルから順に試し、すべて失敗したら null）。上限に達したモデルはチャットと同じく飛ばす */
 async function callGeminiText(apiKey: string, models: readonly string[], system: string, text: string): Promise<{ text: string; model: string } | null> {
-  const deadline = Date.now() + STYLE_TIMEOUT_MS * 2;
-  for (const model of models) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
-    try {
+  const scope = apiKeyScope(apiKey);
+  await loadSharedCooldowns(scope, [...models]);
+  const picked = await callModelsInOrder(
+    [...models],
+    async (model, timeoutMs) => {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(Math.min(STYLE_TIMEOUT_MS, remaining)),
+        signal: AbortSignal.timeout(timeoutMs),
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system }] },
           contents: [{ role: 'user', parts: [{ text }] }],
           generationConfig: { temperature: 0.7, maxOutputTokens: 1024, thinkingConfig: { thinkingLevel: 'minimal' } }
         })
       });
-      if (res.status === 400 || res.status === 403) return null;
-      if (!res.ok) continue;
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new ModelCallError(data?.error?.message || `HTTP ${res.status}`, res.status, parseRetryDelaySec(data));
       const out = (data?.candidates?.[0]?.content?.parts || [])
         .map((p: { text?: string }) => p.text || '')
         .join('')
         .trim();
-      if (out) return { text: out, model };
-    } catch {
-      // 次のモデルを試す
-    }
-  }
-  return null;
+      if (!out) throw new ModelCallError('Empty response from model', null);
+      return out;
+    },
+    { perRequestMs: STYLE_TIMEOUT_MS, budgetMs: STYLE_TOTAL_TIMEOUT_MS, scope }
+  );
+  return picked.value && picked.model ? { text: picked.value, model: picked.model } : null;
 }
 
 const BASE = 'あなたは日本大学文理学部の履修アシスタント「エネコマ」です。LINEのような自然な会話文で、記号・太字・見出しは使いません。';

@@ -55,6 +55,7 @@ export function buildFacilityContext(query: string): string {
     '【キャンパス施設の参照データ（登録済みの正確な情報）】',
     ...hits.map(describe),
     FACILITY_GUARD_NOTE,
+    hits.length > 1 ? 'PC・計算機室の場所を聞かれたら、上のどちらも（情報科学科の計算機室の号館・階・教室番号と、全学部向けの図書館）を伝えてください。' : '',
     '施設の場所はこの参照データだけを使って答え、ここにない教室番号や施設を推測で補ったり作ったりしないでください。',
     '',
     ''

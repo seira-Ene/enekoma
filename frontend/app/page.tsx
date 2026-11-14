@@ -21,6 +21,7 @@ import {
   EnrolledCourseItem,
   UserProfileData
 } from '@/app/data/gakubuYoran';
+import { quickMenuItems } from '@/app/data/quickMenu';
 import {
   findFreeRooms,
   getCompactRoomLabel
@@ -2446,7 +2447,7 @@ export default function UnifiedAssistantPage() {
           </div>
         </div>
 
-        {/* ヘッダー右側：PC版ナビゲーション（スマホ版は下部の専用クイックメニューに完全統合） */}
+        {/* ヘッダー右側：PC版のログイン・Gemini連携（各機能はヘッダー下の、アイコンと項目名のメニュー） */}
         <div className="hidden sm:flex items-center space-x-1.5 sm:space-x-2 shrink-0">
           {/* 学生個別アカウント切替・ログインボタン */}
           {currentStudent ? (
@@ -2493,92 +2494,18 @@ export default function UnifiedAssistantPage() {
             <span className="whitespace-nowrap">Gemini連携</span>
           </button>
 
-          {/* 今期履修中単位バッジ (デスクトップのみ) */}
+          {/* 今期履修中単位バッジ (幅1024px以上。それより狭いとヘッダーからはみ出す) */}
           <button
             onClick={() => {
               setProfileTab('timetable');
               setShowProfileModal(true);
             }}
-            className="hidden md:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 transition whitespace-nowrap shrink-0"
+            className="hidden lg:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 transition whitespace-nowrap shrink-0"
             title="今期の履修中科目を確認・編集"
           >
             <span className="text-slate-400">📅</span>
             <span>今期: <strong>{userProfile.semesterCredits}単位</strong></span>
             <span className="text-[11px] text-slate-400">({userProfile.enrolledCourses.length}科目)</span>
-          </button>
-
-          {/* 総単位進捗バッジ */}
-          <button
-            onClick={() => {
-              setProfileTab('completed');
-              setShowProfileModal(true);
-            }}
-            className="flex items-center space-x-1 px-1.5 py-1.5 sm:px-2.5 sm:py-1.5 rounded-md text-xs font-medium bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 transition whitespace-nowrap shrink-0"
-            title="修得済み単位と卒業要件を確認"
-          >
-            <span className="text-slate-400">🎓</span>
-            <span className="hidden sm:inline">修得: <strong>{userProfile.currentCredits}</strong> / 124単位</span>
-            <span className="sm:hidden text-[11px] font-semibold text-slate-800">
-              {userProfile.currentCredits}<span className="text-slate-400 font-normal">/124</span>
-            </span>
-          </button>
-
-          {/* プロフィール設定ボタン */}
-          <button
-            onClick={() => setShowProfileModal(true)}
-            className="w-8 h-8 flex items-center justify-center text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-100 border border-slate-200 sm:border-transparent transition shrink-0 text-sm"
-            title="学生履修プロフィールの編集"
-          >
-            👤
-          </button>
-
-          {/* ユーザーの声・レビュー */}
-          <a
-            href="/voices"
-            className="w-8 h-8 flex items-center justify-center text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-100 border border-slate-200 sm:border-transparent transition shrink-0 text-sm"
-            title="よくある質問・ユーザーの声"
-            aria-label="よくある質問・ユーザーの声"
-          >
-            ❓
-          </a>
-
-          {/* お問い合わせ・フィードバック */}
-          <button
-            onClick={() => setShowFeedbackModal(true)}
-            className="w-8 h-8 flex items-center justify-center text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-100 border border-slate-200 sm:border-transparent transition shrink-0 text-sm"
-            title="お問い合わせ・フィードバック"
-            aria-label="お問い合わせ・フィードバック"
-          >
-            💬
-          </button>
-
-          {/* 要覧早見表 */}
-          <button
-            onClick={() => setShowDrawer(true)}
-            className="w-8 h-8 flex items-center justify-center text-slate-600 hover:text-slate-900 rounded-md hover:bg-slate-100 border border-slate-200 sm:border-transparent transition shrink-0 text-sm"
-            title="学部要覧の早見表を開く"
-          >
-            📋
-          </button>
-
-          {/* 管理者ボタン */}
-          <button
-            onClick={() => {
-              if (isAdmin) {
-                setShowAdminControlModal(true);
-              } else {
-                setShowAdminLoginModal(true);
-              }
-            }}
-            className={`flex items-center space-x-1 w-8 h-8 sm:w-auto sm:px-2 sm:py-1.5 justify-center rounded-md text-xs font-semibold border transition cursor-pointer shrink-0 ${
-              isAdmin
-                ? 'bg-amber-400 text-slate-900 border-amber-500 shadow-xs'
-                : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
-            }`}
-            title="管理者コントロールパネル"
-          >
-            <span>⚙️</span>
-            <span className="hidden sm:inline whitespace-nowrap">管理設定</span>
           </button>
 
           {/* 会話履歴クリア (デスクトップ) */}
@@ -2619,12 +2546,12 @@ export default function UnifiedAssistantPage() {
       )}
 
       {/* ========================================================
-          スマホ専用クイック操作メニューバー（「CHS EneKoma」と「空き教室検索」の間）
-          ログイン、Gemini連携、取得済み単位数、学生履修プロフィール、要覧早見表、メンテナンス設定
+          メニューバー（「CHS EneKoma」と「空き教室検索」の間）。アイコンと項目名をセットで出す
+          スマホ：ログイン・Gemini連携と6項目を横スクロール。PC：6項目を折り返して全部見せる（ログイン・Gemini連携はヘッダー）
       ======================================================== */}
-      <div className="sm:hidden bg-slate-100/95 border-b border-slate-200 shrink-0 shadow-2xs">
-        {/* スクロール案内表示 */}
-        <div className="flex items-center justify-between px-2.5 pt-1.5 pb-0.5 text-[10px] text-slate-500 font-medium">
+      <div className="bg-slate-100/95 border-b border-slate-200 shrink-0 shadow-2xs">
+        {/* スクロール案内表示（スマホだけ） */}
+        <div className="sm:hidden flex items-center justify-between px-2.5 pt-1.5 pb-0.5 text-[10px] text-slate-500 font-medium">
           <span className="text-slate-700 font-bold flex items-center space-x-1">
             <span>⚡</span>
             <span>クイックメニュー</span>
@@ -2634,7 +2561,7 @@ export default function UnifiedAssistantPage() {
             <span className="animate-pulse">👉</span>
           </span>
         </div>
-        <nav aria-label="モバイルクイックメニュー" className="px-2.5 py-1.5 overflow-x-auto no-scrollbar flex items-center space-x-1.5 overscroll-x-contain">
+        <nav aria-label="メニュー" data-quick-menu-bar className="px-2.5 py-1.5 sm:px-4 sm:py-2 overflow-x-auto sm:overflow-visible no-scrollbar flex items-center gap-1.5 sm:flex-wrap sm:justify-center overscroll-x-contain">
         {/* 1. ログイン */}
         {currentStudent ? (
           <button
@@ -2642,7 +2569,7 @@ export default function UnifiedAssistantPage() {
               setAuthTab('info');
               setShowAuthModal(true);
             }}
-            className="flex items-center space-x-1 px-2.5 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 shadow-2xs active:scale-95 transition"
+            className="sm:hidden flex items-center space-x-1 min-h-11 px-3 bg-slate-900 text-white rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 shadow-2xs active:scale-95 transition"
           >
             <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
             <span className="max-w-[80px] truncate">{currentStudent.name}</span>
@@ -2653,7 +2580,7 @@ export default function UnifiedAssistantPage() {
               setAuthTab('login');
               setShowAuthModal(true);
             }}
-            className="flex items-center space-x-1 px-2.5 py-1.5 bg-white text-slate-800 border border-slate-300 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 shadow-2xs active:scale-95 transition hover:bg-slate-50"
+            className="sm:hidden flex items-center space-x-1 min-h-11 px-3 bg-white text-slate-800 border border-slate-300 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 shadow-2xs active:scale-95 transition hover:bg-slate-50"
           >
             <span>🔑</span>
             <span>ログイン</span>
@@ -2663,7 +2590,7 @@ export default function UnifiedAssistantPage() {
         {/* 2. Gemini連携 */}
         <button
           onClick={() => setShowApiModal(true)}
-          className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 border transition shadow-2xs active:scale-95 ${
+          className={`sm:hidden flex items-center space-x-1 min-h-11 px-3 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 border transition shadow-2xs active:scale-95 ${
             apiKey.trim() || hasServerKey
               ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
               : 'bg-amber-100 text-amber-900 border-amber-300'
@@ -2673,72 +2600,47 @@ export default function UnifiedAssistantPage() {
           <span>Gemini連携</span>
         </button>
 
-        {/* 3. 取得済み単位数（〇/124） */}
-        <button
-          onClick={() => {
-            setProfileTab('completed');
-            setShowProfileModal(true);
-          }}
-          className="flex items-center space-x-1 px-2.5 py-1.5 bg-white text-slate-800 border border-slate-200 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 shadow-2xs active:scale-95 transition hover:bg-slate-50"
-        >
-          <span>🎓</span>
-          <span>取得済み単位数（<strong>{userProfile.currentCredits}</strong>/124）</span>
-        </button>
-
-        {/* 4. 学生履修プロフィール */}
-        <button
-          onClick={() => setShowProfileModal(true)}
-          className="flex items-center space-x-1 px-2.5 py-1.5 bg-white text-slate-800 border border-slate-200 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 shadow-2xs active:scale-95 transition hover:bg-slate-50"
-        >
-          <span>👤</span>
-          <span>学生履修プロフィール</span>
-        </button>
-
-        {/* 5. 日本大学文理学部『学部要覧』早見表 */}
-        <button
-          onClick={() => setShowDrawer(true)}
-          className="flex items-center space-x-1 px-2.5 py-1.5 bg-white text-slate-800 border border-slate-200 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 shadow-2xs active:scale-95 transition hover:bg-slate-50"
-        >
-          <span>📋</span>
-          <span>『学部要覧』早見表</span>
-        </button>
-
-        {/* ユーザーの声・レビュー */}
-        <a
-          href="/voices"
-          className="flex items-center space-x-1 px-2.5 py-1.5 bg-white text-slate-800 border border-slate-200 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 shadow-2xs active:scale-95 transition hover:bg-slate-50"
-        >
-          <span>❓</span>
-          <span>よくある質問・声</span>
-        </a>
-
-        {/* お問い合わせ・フィードバック（スマホではヘッダーのボタンが隠れるので、ここにも置く） */}
-        <button
-          onClick={() => setShowFeedbackModal(true)}
-          className="flex items-center space-x-1 px-2.5 py-1.5 bg-white text-slate-800 border border-slate-200 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 shadow-2xs active:scale-95 transition hover:bg-slate-50"
-        >
-          <span>💬</span>
-          <span>お問い合わせ・フィードバック</span>
-        </button>
-
-        {/* 6. システムメンテナンス管理設定 */}
-        <button
-          onClick={() => {
-            if (isAdmin) {
+        {/* 取得済み単位数・学生履修プロフィール・『学部要覧』早見表・よくある質問・お問い合わせ・システムメンテナンス管理設定 */}
+        {quickMenuItems(userProfile.currentCredits, userProfile.department).map((item) => {
+          const adminActive = item.id === 'admin' && isAdmin;
+          const className = `flex items-center gap-1.5 min-h-11 sm:min-h-9 px-3 rounded-lg text-xs whitespace-nowrap shrink-0 border shadow-2xs transition active:scale-95 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 ${
+            adminActive ? 'bg-amber-400 text-slate-900 border-amber-500 font-bold' : 'bg-white text-slate-800 border-slate-200 font-medium hover:bg-slate-50 hover:border-slate-300'
+          }`;
+          const content = (
+            <>
+              <span aria-hidden="true" className="text-sm leading-none">{item.icon}</span>
+              <span data-quick-menu-label>{item.label}</span>
+            </>
+          );
+          if (item.id === 'voices') {
+            return (
+              <a key={item.id} href="/voices" data-quick-menu={item.id} title={item.description} className={className}>
+                {content}
+              </a>
+            );
+          }
+          const onClick = () => {
+            if (item.id === 'credits') {
+              setProfileTab('completed');
+              setShowProfileModal(true);
+            } else if (item.id === 'profile') {
+              setShowProfileModal(true);
+            } else if (item.id === 'yoran') {
+              setShowDrawer(true);
+            } else if (item.id === 'feedback') {
+              setShowFeedbackModal(true);
+            } else if (isAdmin) {
               setShowAdminControlModal(true);
             } else {
               setShowAdminLoginModal(true);
             }
-          }}
-          className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap shrink-0 border transition shadow-2xs active:scale-95 ${
-            isAdmin
-              ? 'bg-amber-400 text-slate-900 border-amber-500 font-bold'
-              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-          }`}
-        >
-          <span>⚙️</span>
-          <span>システムメンテナンス管理設定</span>
-        </button>
+          };
+          return (
+            <button key={item.id} type="button" onClick={onClick} data-quick-menu={item.id} title={item.description} className={className}>
+              {content}
+            </button>
+          );
+        })}
         </nav>
       </div>
 

@@ -22,6 +22,7 @@ import {
   UserProfileData
 } from '@/app/data/gakubuYoran';
 import { quickMenuItems } from '@/app/data/quickMenu';
+import { clearGuestChat, loadGuestChat, removeLegacySharedChat, saveGuestChat } from '@/app/data/chatHistoryStore';
 import {
   findFreeRooms,
   getCompactRoomLabel
@@ -118,14 +119,25 @@ function withoutImagePreviews<T>(messages: T[]): T[] {
   return messages.map((message) => ({ ...message, imagePreview: undefined }));
 }
 
-// 保存に失敗しても画面を落とさない（履歴が残らないだけで利用は続けられる）
-function saveChatHistory(messages: unknown[]): void {
-  try {
-    localStorage.setItem('enekoma_chat_history', JSON.stringify(messages));
-  } catch (error) {
-    console.warn('Failed to save chat history:', error);
-  }
-}
+// 未ログインで開いたときの最初のあいさつ（個人の情報を含めない）
+const guestWelcomeMessage = (): ChatMessage => ({
+  id: 'welcome',
+  sender: 'assistant',
+  text: `文理学部の学生ポータル「EneKoma（エネコマ）」へようこそ！\n\n大学生活や履修登録をサポートする学生アシスタントです。空き教室の検索や時間割の相談、あと何単位で卒業できるかのチェック、目標GPAのシミュレーション、学内の自販機や教室の場所案内など、気になることがあれば何でも気軽に聞いてくださいね。\n\n時間割や成績表の写真・ファイルもそのまま送っていただければ読み取れますよ！画面上部の検索バーや下のボタンから、お気軽に話しかけてみてくださいね。`,
+  shortLabel: '準備完了',
+  source: 'local',
+  timestamp: new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+});
+
+// ログアウトしたとき・ログインし直すときのあいさつ
+const loggedOutMessage = (): ChatMessage => ({
+  id: 'welcome_guest',
+  sender: 'assistant',
+  text: `ログアウトしました（ゲストモード）。\n\n再度ログインするには画面右上の「🔑 ログイン / 学生登録」を押してください。`,
+  shortLabel: 'ゲストモード',
+  source: 'local',
+  timestamp: new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+});
 
 // メンテナンス設定の保存先に問題があるときに管理者へ伝える文言
 function describeMaintenanceStorage(data: { persistent?: boolean; storageError?: boolean }): string | null {
@@ -146,6 +158,8 @@ interface MaintenanceConfig {
 }
 
 const CHS_DEPARTMENTS = Object.keys(GAKUBU_YORAN_DEPARTMENTS);
+// 未ログインの会話の持ち主を表す値（ログインIDとは重ならない）
+const GUEST_OWNER = '__guest__';
 
 // 管理者画面に出すメール送信の記録（app/api/account/mailLog.ts の MailLogEntry と同じ形）
 interface MailLogView {
@@ -435,6 +449,8 @@ export default function UnifiedAssistantPage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // 表示中の会話の持ち主（ログインID か GUEST_OWNER）。違う人の会話を保存しないために使う
+  const chatOwnerRef = useRef<string>(GUEST_OWNER);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 初期化：localStorageと環境キー・学生アカウントの取得
@@ -489,40 +505,19 @@ export default function UnifiedAssistantPage() {
           enrolledCourses: loggedStudent.profile.enrolledCourses || [],
           completedCourses: loggedStudent.profile.completedCourses || []
         });
-        if (loggedStudent.chatHistory && loggedStudent.chatHistory.length > 0) {
-          setMessages(loggedStudent.chatHistory);
-          return;
-        }
-      } else {
-        // 2. ゲストモード：初期状態はすべて0（他人の成績や時間割の自動ログイン混入を防止）
-        setUserProfile(DEFAULT_PROFILE);
-        localStorage.removeItem('enekoma_user_profile');
+        chatOwnerRef.current = loggedStudent.id;
+        removeLegacySharedChat();
+        setMessages(loggedStudent.chatHistory && loggedStudent.chatHistory.length > 0 ? loggedStudent.chatHistory : [guestWelcomeMessage()]);
+        return;
       }
 
-      const savedChat = localStorage.getItem('enekoma_chat_history');
-      if (savedChat) {
-        try {
-          const parsed = JSON.parse(savedChat);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setMessages(parsed);
-            return;
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      // デフォルトウェルカムメッセージ
-      setMessages([
-        {
-          id: 'welcome',
-          sender: 'assistant',
-          text: `文理学部の学生ポータル「EneKoma（エネコマ）」へようこそ！\n\n大学生活や履修登録をサポートする学生アシスタントです。空き教室の検索や時間割の相談、あと何単位で卒業できるかのチェック、目標GPAのシミュレーション、学内の自販機や教室の場所案内など、気になることがあれば何でも気軽に聞いてくださいね。\n\n時間割や成績表の写真・ファイルもそのまま送っていただければ読み取れますよ！画面上部の検索バーや下のボタンから、お気軽に話しかけてみてくださいね。`,
-          shortLabel: '準備完了',
-          source: 'local',
-          timestamp: new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
-        }
-      ]);
+      // 2. ゲストモード：初期状態はすべて0（他人の成績や時間割の自動ログイン混入を防止）
+      // 会話もゲストの履歴だけを出す（前にログインしていた人の「登録完了」などのカルテを出さない）
+      setUserProfile(DEFAULT_PROFILE);
+      localStorage.removeItem('enekoma_user_profile');
+      chatOwnerRef.current = GUEST_OWNER;
+      const guestChat = loadGuestChat<ChatMessage>();
+      setMessages(guestChat.length > 0 ? guestChat : [guestWelcomeMessage()]);
     }
   }, []);
 
@@ -530,13 +525,17 @@ export default function UnifiedAssistantPage() {
   useEffect(() => {
     if (typeof window !== 'undefined' && messages.length > 0) {
       const storableMessages = withoutImagePreviews(messages);
-      saveChatHistory(storableMessages);
+      const owner = currentStudent ? currentStudent.id : GUEST_OWNER;
+      // 表示中の会話の持ち主と、いまログインしている人が違えば保存しない（ほかの人の会話を混ぜない）
+      if (chatOwnerRef.current !== owner) return;
       if (currentStudent) {
         const updatedStudent: StudentAccount = {
           ...currentStudent,
           chatHistory: storableMessages
         };
         saveStudentAccount(updatedStudent);
+      } else {
+        saveGuestChat(storableMessages);
       }
     }
   }, [messages, currentStudent]);
@@ -767,11 +766,9 @@ export default function UnifiedAssistantPage() {
       localStorage.setItem('enekoma_user_profile', JSON.stringify(prof));
     }
 
+    chatOwnerRef.current = account.id;
     if (account.chatHistory && account.chatHistory.length > 0) {
       setMessages(account.chatHistory);
-      if (typeof window !== 'undefined') {
-        saveChatHistory(withoutImagePreviews(account.chatHistory));
-      }
     } else {
       setMessages([
         {
@@ -1451,16 +1448,8 @@ export default function UnifiedAssistantPage() {
       if (typeof window !== 'undefined') {
         localStorage.setItem('enekoma_user_profile', JSON.stringify(DEFAULT_PROFILE));
       }
-      setMessages([
-        {
-          id: 'welcome_guest',
-          sender: 'assistant',
-          text: `ログアウトしました（ゲストモード）。\n\n再度ログインするには画面右上の「🔑 ログイン / 学生登録」を押してください。`,
-          shortLabel: 'ゲストモード',
-          source: 'local',
-          timestamp: new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
-        }
-      ]);
+      chatOwnerRef.current = GUEST_OWNER;
+      setMessages([loggedOutMessage()]);
       setShowAuthModal(false);
       setProfileNotification('ログアウトしました（ゲストモード）');
     }
@@ -1790,7 +1779,7 @@ export default function UnifiedAssistantPage() {
 
   const handleClearHistory = () => {
     if (confirm('チャットの会話履歴をクリアしますか？')) {
-      localStorage.removeItem('enekoma_chat_history');
+      if (!currentStudent) clearGuestChat();
       setMessages([
         {
           id: 'welcome_cleared',
@@ -3817,6 +3806,8 @@ export default function UnifiedAssistantPage() {
                               setCurrentStudentId(null);
                               setCurrentStudent(null);
                               setUserProfile(DEFAULT_PROFILE);
+                              chatOwnerRef.current = GUEST_OWNER;
+                              setMessages([loggedOutMessage()]);
                               setLoginId(id);
                               setLoginPassword('');
                               setAuthTab('login');

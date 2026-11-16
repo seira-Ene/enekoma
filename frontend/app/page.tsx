@@ -146,6 +146,8 @@ interface MaintenanceConfig {
 }
 
 const CHS_DEPARTMENTS = Object.keys(GAKUBU_YORAN_DEPARTMENTS);
+// これより間が空いたら、入力を始めたときにチャットのサーバーを起こし直す（Vercelは数分使われないと止まる）
+const CHAT_WARM_INTERVAL_MS = 3 * 60 * 1000;
 
 // 管理者画面に出すメール送信の記録（app/api/account/mailLog.ts の MailLogEntry と同じ形）
 interface MailLogView {
@@ -435,6 +437,8 @@ export default function UnifiedAssistantPage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // 最後にチャットのサーバーを起こした時刻（warmChatServer）
+  const lastChatWarmAtRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 初期化：localStorageと環境キー・学生アカウントの取得
@@ -446,6 +450,7 @@ export default function UnifiedAssistantPage() {
         setRegApiKey(savedKey);
       }
 
+      lastChatWarmAtRef.current = Date.now();
       fetch('/api/chat')
         .then((res) => res.json())
         .then((data) => {
@@ -1769,7 +1774,17 @@ export default function UnifiedAssistantPage() {
   };
 
   // テキストエリア自動調整
+  // 入力を始めたら、チャットのサーバーを起こしておく（Geminiは呼ばない）。
+  // しばらく使われていないと、最初の質問でサーバーの起動を待つことになり、数秒遅れるため
+  const warmChatServer = () => {
+    const now = Date.now();
+    if (now - lastChatWarmAtRef.current < CHAT_WARM_INTERVAL_MS) return;
+    lastChatWarmAtRef.current = now;
+    fetch('/api/chat', { cache: 'no-store' }).catch(() => {});
+  };
+
   const handleInputTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    warmChatServer();
     setInputText(e.target.value);
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
@@ -3007,6 +3022,7 @@ export default function UnifiedAssistantPage() {
               rows={1}
               value={inputText}
               onChange={handleInputTextChange}
+              onFocus={warmChatServer}
               onKeyDown={handleKeyDown}
               placeholder="質問を入力（例: 月曜2限の空き教室 / 単位足りてる？ / 目標GPA3.0）"
               className="w-full resize-none px-3.5 py-2 text-base sm:text-sm border border-slate-300 rounded-xl focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-500 bg-white leading-normal shadow-2xs"

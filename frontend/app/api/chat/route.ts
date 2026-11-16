@@ -19,6 +19,7 @@ import { parseProfileUpdateFromText } from '@/app/data/studentAccounts';
 import { ExtractionError, ExtractionKind, extractDocument, MediaPart } from './extraction';
 import { callModelsInOrder, ModelCallError, ModelFailureKind, parseRetryDelaySec, summarizeFailure } from './modelPicker';
 import { apiKeyScope, loadSharedCooldowns } from './cooldownStore';
+import { chatOutputLimit, needsProfileUpdateRules } from './chatBudget';
 import { answerFriendStatusQuery, friendQueryIntent, isFriendStatusQuery, mayBeFriendStatusQuery, sanitizeSharedSchedule } from '@/app/data/friendStatus';
 import { get_friends_current_status } from '../friends/friendStore';
 import { authenticate } from '../friends/auth';
@@ -51,7 +52,7 @@ const SYSTEM_PROMPT = `
    ・文末が途切れたり省略されたりする回答は厳禁です。必ず文末（「〜ですよ」「〜してくださいね」など）まで完結させてください。
    ・質問に対して必要な情報（教室名、時限、科目名、単位数など）は省略しないでください。
 3. **要点を絞って簡潔に**：
-   ・回答は要点だけを2〜4文程度で短く伝えてください。前置き、長い解説、同じ内容の繰り返し、聞かれていない補足は書かないでください。
+   ・最初の1文で結論（場所・時限・単位数など聞かれた答え）を言い、回答は要点だけを2〜4文程度で短く伝えてください。前置き、長い解説、同じ内容の繰り返し、聞かれていない補足は書かないでください。
 4. **必修と選択必修の明確な区別**：
    ・「必修科目」：卒業要件として必ず単位を取らなければならない科目（自主創造の基礎、各学科の指定専門必修など）。
    ・「選択必修科目」：指定されたグループの中から、決められた単位数以上を選んで必ず修得する科目（総合教育科目、外国語科目など）。
@@ -68,55 +69,6 @@ const SYSTEM_PROMPT = `
 2. 4桁教室番号の正確な保持：「3306」「3505」等の教室番号は省略せず「3号館3306教室」のように自然に案内してください。
 3. 画像や時間割表の読み込み時：
    学生への返信本文は上記の通り人間らしいチャット言葉で書き、システム連携用JSONブロック \`\`\`profile_update ... \`\`\` のみ回答の末尾にそのまま出力してください（画面側で自動的に抽出され、ユーザーには本文のみが表示されます）。
-5. **画像（時間割表・成績通知書）のマルチモーダルOCR解析と自動プロフィール反映**
-   ユーザーが時間割表や成績表の画像をアップロードした場合、画像の種別（今期の時間割表・過去の時間割表・成績通知書）を自動判別し（またはユーザーからの指示に従い）、以下を実行してください：
-   * **【種別A：今期の時間割表】（受講中の時間割を登録する場合）**：
-     - 画像から曜日・時限・科目名・教室・担当教員・単位数をOCR読み取り。
-     - 「今期履修中」として登録し、今期履修単位数合計（各科目原則2単位、実習・演習1単位等）を算出。
-     - 出力末尾に以下の更新JSONを埋め込んでください：
-     \`\`\`profile_update
-     {
-       "action": "enroll_current_timetable",
-       "semesterCredits": 16,
-       "enrolledCourses": [
-         { "name": "科目名A", "day": "月", "period": 2, "room": "3306", "credits": 2 },
-         { "name": "科目名B", "day": "火", "period": 3, "room": "421", "credits": 2 }
-       ]
-     }
-     \`\`\`
-   * **【種別B：過去の時間割表】（前学期・過年度の履修済み科目を追加する場合）**：
-     - 過去の時間割画像またはファイル（PDF/CSV/文書等）から科目名・単位数を読み取り。
-     - ※時間割表には成績評価（S/A/B/C等）は記載されていないため、勝手に成績を推測・捏造せず、評価は「修得」または「-」として「修得済み科目」に登録してください（GPAを不当に歪めないため）。
-     - 出力末尾に以下の更新JSONを埋め込んでください：
-     \`\`\`profile_update
-     {
-       "action": "add_completed_timetable",
-       "totalEarnedCredits": 56,
-       "addCompletedCourses": [
-         { "name": "自主創造の基礎", "credits": 2, "grade": "修得" },
-         { "name": "情報リテラシー", "credits": 2, "grade": "修得" }
-       ]
-     }
-     \`\`\`
-   * **【種別C：成績通知書・成績表】（成績やGPAを反映する場合）**：
-     - 履修済み科目名、修得単位数、各科目の評価（S〜F）、現在GPA、総修得単位数を読み取り要約を出力。
-     - completedCourses の各科目には name（科目名）、credits（単位数）、grade（評価）の3つを必ずセットで入れる。評価は S/A/B/C/D/E/F（秀→S、優→A、良→B、可→C、不可→D）、履修中止は P、認定は N にそろえる。
-     - D/E/F は不合格（単位未修得）なので、不合格の科目も省かずに評価どおり出力する。同じ科目が再履修で複数回載っていれば、すべての行をそのまま出力する（どれを残すかはアプリが判定する）。
-     - 年度・学期が書かれていれば takenYear（西暦の数値）と term（前期/後期/通年/集中）も入れる。書かれていなければ省略する。
-     - totalEarnedCredits は成績表に書かれた修得単位数をそのまま入れる。書かれていなければ省略する（不合格の単位は修得単位に含めない）。
-     - 出力末尾に以下の更新JSONを埋め込んでください：
-     \`\`\`profile_update
-     {
-       "action": "transcript",
-       "totalEarnedCredits": 42,
-       "currentGpa": 2.85,
-       "completedCourses": [
-         { "name": "基礎プログラミング", "credits": 2, "grade": "S", "takenYear": 2025, "term": "前期" },
-         { "name": "線形代数1", "credits": 2, "grade": "D", "takenYear": 2025, "term": "前期" },
-         { "name": "線形代数1", "credits": 2, "grade": "A", "takenYear": 2026, "term": "前期" }
-       ]
-     }
-     \`\`\`
 4. 単位・講義不足判定の優先順位と伝え方：
    不足講義や必要単位数の相談では、所属学科の「必修科目」を最優先で確認し、次に選択コースや副専攻、最後に卒業要件（124単位基準）の残り状況を親身に教えてあげてください。
    記号や箇条書きは使わず、「必修科目では自主創造の基礎がまだ未修得になっています。卒業に必要な科目なので次の学期で優先して取っておくと安心ですよ。卒業までの単位はあと〇単位です。」のように自然なチャット文章で伝えてください。
@@ -295,6 +247,60 @@ const SYSTEM_PROMPT = `
 - 友達が今どこの教室にいるか、空きコマか、今日の予定、もう授業が終わったか、次の授業はいつか、放課後に空いているかは、サーバーのツール get_friends_current_status の結果（ログイン中の人の承認済みフレンドの、今の曜限の授業名・教室か空きコマか、今日の授業の一覧と終わる時限、次の授業の曜日・時限・教室、次の空きコマ）だけで答える。引数 intent は now・next_slot・next_class・today・finished・after_school・common_classes（共通の授業）・common_free_periods（共通の空きコマ）・on_campus（校内にいるか）のどれか。校内にいるかは、フレンドの端末が位置情報で判定した「校内／校外」だけで答え、緯度・経度や詳しい場所は扱わない。共通の授業・空きコマは、自分の時間割とフレンドの時間割をサーバーのコードで曜限ごとに比べた結果だけで答え、AIが時間割の文章から推測して比べない。
 - 授業時間外でも「分かりません」で終えない。朝は「本日最初の授業は〇限から（教室）」、放課後は「本日の授業はすべて終了しています。〇〇さんは本日4限で全授業終了です。」、日曜は「本日は休日のため授業はありません。次回（月曜1限）の〇〇さんの授業は〇〇教室です。」のように、結果にある今日の予定と次の授業で答える。結果がないときは推測せず、プロフィールの「フレンド」タブでフレンドを追加して時間割を共有してもらうよう案内する。
 - 友達の成績・GPA・連絡先・出欠の記録などは扱わない。
+`;
+
+// 画像・成績表・時間割の登録規則（profile_update の見本つき）。ふだんの質問には渡さず、
+// 画像や、成績・時間割を文章で貼り付けたときだけ足す（needsProfileUpdateRules）。渡すプロンプトが約2割短くなる
+const PROFILE_UPDATE_RULES = `
+## 【画像（時間割表・成績通知書）のマルチモーダルOCR解析と自動プロフィール反映】
+   ユーザーが時間割表や成績表の画像をアップロードした場合、画像の種別（今期の時間割表・過去の時間割表・成績通知書）を自動判別し（またはユーザーからの指示に従い）、以下を実行してください：
+   * **【種別A：今期の時間割表】（受講中の時間割を登録する場合）**：
+     - 画像から曜日・時限・科目名・教室・担当教員・単位数をOCR読み取り。
+     - 「今期履修中」として登録し、今期履修単位数合計（各科目原則2単位、実習・演習1単位等）を算出。
+     - 出力末尾に以下の更新JSONを埋め込んでください：
+     \`\`\`profile_update
+     {
+       "action": "enroll_current_timetable",
+       "semesterCredits": 16,
+       "enrolledCourses": [
+         { "name": "科目名A", "day": "月", "period": 2, "room": "3306", "credits": 2 },
+         { "name": "科目名B", "day": "火", "period": 3, "room": "421", "credits": 2 }
+       ]
+     }
+     \`\`\`
+   * **【種別B：過去の時間割表】（前学期・過年度の履修済み科目を追加する場合）**：
+     - 過去の時間割画像またはファイル（PDF/CSV/文書等）から科目名・単位数を読み取り。
+     - ※時間割表には成績評価（S/A/B/C等）は記載されていないため、勝手に成績を推測・捏造せず、評価は「修得」または「-」として「修得済み科目」に登録してください（GPAを不当に歪めないため）。
+     - 出力末尾に以下の更新JSONを埋め込んでください：
+     \`\`\`profile_update
+     {
+       "action": "add_completed_timetable",
+       "totalEarnedCredits": 56,
+       "addCompletedCourses": [
+         { "name": "自主創造の基礎", "credits": 2, "grade": "修得" },
+         { "name": "情報リテラシー", "credits": 2, "grade": "修得" }
+       ]
+     }
+     \`\`\`
+   * **【種別C：成績通知書・成績表】（成績やGPAを反映する場合）**：
+     - 履修済み科目名、修得単位数、各科目の評価（S〜F）、現在GPA、総修得単位数を読み取り要約を出力。
+     - completedCourses の各科目には name（科目名）、credits（単位数）、grade（評価）の3つを必ずセットで入れる。評価は S/A/B/C/D/E/F（秀→S、優→A、良→B、可→C、不可→D）、履修中止は P、認定は N にそろえる。
+     - D/E/F は不合格（単位未修得）なので、不合格の科目も省かずに評価どおり出力する。同じ科目が再履修で複数回載っていれば、すべての行をそのまま出力する（どれを残すかはアプリが判定する）。
+     - 年度・学期が書かれていれば takenYear（西暦の数値）と term（前期/後期/通年/集中）も入れる。書かれていなければ省略する。
+     - totalEarnedCredits は成績表に書かれた修得単位数をそのまま入れる。書かれていなければ省略する（不合格の単位は修得単位に含めない）。
+     - 出力末尾に以下の更新JSONを埋め込んでください：
+     \`\`\`profile_update
+     {
+       "action": "transcript",
+       "totalEarnedCredits": 42,
+       "currentGpa": 2.85,
+       "completedCourses": [
+         { "name": "基礎プログラミング", "credits": 2, "grade": "S", "takenYear": 2025, "term": "前期" },
+         { "name": "線形代数1", "credits": 2, "grade": "D", "takenYear": 2025, "term": "前期" },
+         { "name": "線形代数1", "credits": 2, "grade": "A", "takenYear": 2026, "term": "前期" }
+       ]
+     }
+     \`\`\`
 `;
 
 // 速いモデルから順に試す
@@ -803,6 +809,10 @@ export async function POST(req: NextRequest) {
         : '';
 
       // 時間割の事実はAIに推測させず、検索した実データを渡す（画像解析では不要）
+      // 上限に達したモデルの記録（Redis）を、参照データを作っている間に読み込んでおく
+      const keyScope = apiKeyScope(apiKey);
+      const cooldownsLoaded = loadSharedCooldowns(keyScope, GEMINI_MODEL_ORDER);
+      const prepStartedAt = Date.now();
       const timetableContext = image ? '' : buildTimetableContext(query, userProfile, requestTime(req));
       // 資格コース・教職・副専攻の質問には、要覧の表から該当部分を渡す
       const curriculumContext = image ? '' : buildCurriculumContext(query, userProfile);
@@ -883,11 +893,12 @@ export async function POST(req: NextRequest) {
       }
 
       const isImageRequest = !!(image && image.data);
-      // 思考も出力上限に含まれる。科目の多い画像で回答が途中で切れないよう余裕を持たせる
-      const outputLimit = isImageRequest ? 8192 : 4096;
+      // 思考も出力上限に含まれる。ふだんの答えは短いので1024、科目の一覧（JSON）を出しうるときと画像は広くとる
+      const profileRules = needsProfileUpdateRules(query, isImageRequest);
+      const outputLimit = chatOutputLimit(isImageRequest, profileRules);
       const geminiPayload = {
         systemInstruction: {
-          parts: [{ text: SYSTEM_PROMPT.trim() + (speakingStyle && !isImageRequest ? styleInstruction(speakingStyle) : '') }]
+          parts: [{ text: SYSTEM_PROMPT.trim() + (profileRules ? `\n${PROFILE_UPDATE_RULES}` : '') + (speakingStyle && !isImageRequest ? styleInstruction(speakingStyle) : '') }]
         },
         contents,
         generationConfig: {
@@ -925,8 +936,8 @@ export async function POST(req: NextRequest) {
       };
 
       // 速いモデルから順に1つずつ試す（同時に呼ぶと無料枠を2倍使うため）。上限に達したモデルは待ち時間まで飛ばす
-      const keyScope = apiKeyScope(apiKey);
-      await loadSharedCooldowns(keyScope, GEMINI_MODEL_ORDER);
+      await cooldownsLoaded;
+      const geminiStartedAt = Date.now();
       const picked = await callModelsInOrder(GEMINI_MODEL_ORDER, fetchSingleModel, {
         scope: keyScope,
         perRequestMs: isImageRequest ? IMAGE_REQUEST_TIMEOUT_MS : CHAT_REQUEST_TIMEOUT_MS,
@@ -940,12 +951,15 @@ export async function POST(req: NextRequest) {
       if (successfulResponse && successfulResponse.text) {
         const candidateText = successfulResponse.text;
         const profileUpdate = parseProfileUpdateFromText(candidateText, !!image);
-        return NextResponse.json({
-          reply: sanitizeConversationalReply(candidateText),
-          source: 'gemini',
-          model: successfulResponse.model,
-          profileUpdate
-        });
+        return NextResponse.json(
+          {
+            reply: sanitizeConversationalReply(candidateText),
+            source: 'gemini',
+            model: successfulResponse.model,
+            profileUpdate
+          },
+          { headers: { 'Server-Timing': `prep;dur=${geminiStartedAt - prepStartedAt}, gemini;dur=${Date.now() - geminiStartedAt}` } }
+        );
       }
 
       // APIキーが設定されたがGeminiがエラーになった場合のエラーメッセージ整形

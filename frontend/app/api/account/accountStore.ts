@@ -19,6 +19,9 @@ export interface ServerAccount {
   passwordHash: string;
   createdAt: string;
   updatedAt: string;
+  // 利用規約に同意した日時と版（新規学生登録で同意したとき。以前のアカウントや端末内からの移行にはない）
+  termsAcceptedAt?: string;
+  termsVersion?: string;
   // フレンドに渡すコード（英大文字と数字8桁）。最初にフレンド画面を開いたときに作る
   friendCode?: string;
   // フレンドに「今の授業・空きコマ」を見せるか。未設定は見せる（true）

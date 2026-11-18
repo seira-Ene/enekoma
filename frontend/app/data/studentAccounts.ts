@@ -29,6 +29,9 @@ export interface StudentAccount {
   chatHistory: ChatMessageItem[];
   createdAt: string;
   lastLoginAt: string;
+  // 利用規約に同意した日時と版（新規学生登録で同意したとき）
+  termsAcceptedAt?: string;
+  termsVersion?: string;
 }
 
 // 初期シードデモアカウント（即座に複数学生の切り替え体験が可能）
@@ -305,6 +308,8 @@ export interface ServerAccountView {
   admissionYear: 'reiwa7_or_later' | 'reiwa6_or_earlier';
   email: string | null;
   pendingEmail: string | null;
+  termsAcceptedAt?: string | null;
+  termsVersion?: string | null;
 }
 
 /**
@@ -320,7 +325,15 @@ export function linkServerAccount(server: ServerAccountView): StudentAccount {
     grade: server.grade,
     admissionYear: server.admissionYear
   });
-  const linked: StudentAccount = { ...base, password: '', serverLinked: true, email: server.email, pendingEmail: server.pendingEmail };
+  const linked: StudentAccount = {
+    ...base,
+    password: '',
+    serverLinked: true,
+    email: server.email,
+    pendingEmail: server.pendingEmail,
+    // 利用規約に同意した記録（サーバーにあればそれを使う）
+    ...(server.termsAcceptedAt ? { termsAcceptedAt: server.termsAcceptedAt, termsVersion: server.termsVersion || undefined } : {})
+  };
   saveStudentAccount(linked);
   return linked;
 }
@@ -336,6 +349,8 @@ export function registerNewStudent(data: {
   selectedCourses?: string[];
   selectedMinors?: string[];
   initialProfile?: Partial<UserProfileData>;
+  termsAcceptedAt?: string;
+  termsVersion?: string;
 }): StudentAccount {
   const accounts = loadAllAccounts();
   const studentId = data.id.trim();
@@ -378,6 +393,7 @@ export function registerNewStudent(data: {
     admissionYear,
     createdAt: new Date().toISOString(),
     lastLoginAt: new Date().toISOString(),
+    ...(data.termsAcceptedAt ? { termsAcceptedAt: data.termsAcceptedAt, termsVersion: data.termsVersion } : {}),
     profile: {
       department,
       grade,

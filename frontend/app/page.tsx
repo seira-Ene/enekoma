@@ -2594,7 +2594,7 @@ export default function UnifiedAssistantPage() {
 
       {/* ========================================================
           メニューバー（「CHS EneKoma」と「空き教室検索」の間）。アイコンと項目名をセットで出す
-          スマホ：ログイン・Gemini連携と6項目を横スクロール。PC：6項目を折り返して全部見せる（ログイン・Gemini連携はヘッダー）
+          スマホ：ログイン・Gemini連携と6項目を横スクロール。PC：6項目を同じ幅のグリッドで並べる（〜1023px は2列×3行、〜1279px は3列×2行、1280px〜 は1行に6個。1つだけ下の行に落ちないように）。ログイン・Gemini連携はヘッダー
       ======================================================== */}
       <div className="bg-slate-100/95 border-b border-slate-200 shrink-0 shadow-2xs">
         {/* スクロール案内表示（スマホで開いているときだけ） */}
@@ -2612,7 +2612,7 @@ export default function UnifiedAssistantPage() {
           <span aria-hidden="true">⚡</span>
           <span>メニュー{menuOpen ? '' : '（6）'}</span>
         </SectionToggle>
-        <nav id="quick-menu-items" aria-label="メニュー" data-quick-menu-bar className={`flex-1 min-w-0 pl-1.5 pr-2.5 py-1 sm:pr-4 sm:py-1.5 overflow-x-auto sm:overflow-visible no-scrollbar flex items-center gap-1.5 sm:flex-wrap overscroll-x-contain ${menuOpen ? 'sm:justify-center' : ''}`}>
+        <nav id="quick-menu-items" aria-label="メニュー" data-quick-menu-bar className="flex-1 min-w-0 pl-1.5 pr-2.5 py-1 sm:pr-4 sm:py-1.5 overflow-x-auto sm:overflow-visible no-scrollbar flex items-center gap-1.5 overscroll-x-contain sm:grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[repeat(6,max-content)] xl:justify-center">
         {/* 1. ログイン */}
         {currentStudent ? (
           <button
@@ -2654,7 +2654,7 @@ export default function UnifiedAssistantPage() {
         {/* 取得済み単位数・学生履修プロフィール・『学部要覧』早見表・よくある質問・お問い合わせ・システムメンテナンス管理設定 */}
         {menuOpen && quickMenuItems(userProfile.currentCredits, userProfile.department).map((item) => {
           const adminActive = item.id === 'admin' && isAdmin;
-          const className = `flex items-center gap-1.5 min-h-11 sm:min-h-9 px-3 rounded-lg text-xs whitespace-nowrap shrink-0 border shadow-2xs transition active:scale-95 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 ${
+          const className = `flex items-center sm:justify-center sm:w-full gap-1.5 min-h-11 sm:min-h-9 px-3 rounded-lg text-xs whitespace-nowrap shrink-0 border shadow-2xs transition active:scale-95 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 ${
             adminActive ? 'bg-amber-400 text-slate-900 border-amber-500 font-bold' : 'bg-white text-slate-800 border-slate-200 font-medium hover:bg-slate-50 hover:border-slate-300'
           }`;
           const content = (

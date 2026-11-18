@@ -12,6 +12,11 @@ export const isDisplayMode = (value: unknown): value is DisplayMode => value ===
 // 常に見せる箇条書きの数。これを超えた分は補足として折りたたむ
 export const MAIN_ITEM_LIMIT: Record<DisplayMode, number> = { simple: 3, detailed: 6 };
 
+// 画面上部のブロック（メニュー・空き教室検索・いつもの質問）と質問例を、初めに開いておくか
+export const sectionOpenByDefault = (mode: DisplayMode): boolean => mode === 'detailed';
+// 質問例のチップ（とカテゴリの絞り込み）を出すか。すっきりでは出さない
+export const showsExampleChips = (mode: DisplayMode): boolean => mode === 'detailed';
+
 // 補足の始まりを示す行
 export const DETAILS_HEADING = '補足：';
 

@@ -1,8 +1,11 @@
 // チャット1回ごとに、Geminiへ渡すプロンプトの量と出力の上限を決める（応答を速くするため）。
 // ふだんの質問（「計算機室はどこ？」など）には、画像・成績表の読み取り用の規則（JSONの見本つきで長い）を渡さない。
 
-// 出力の上限（思考の分も含む）。ふだんの答えは2〜4文で数百トークンなので1024で足りる。
+// 出力の上限（思考の分も含む）。表示モードで変える。
+// すっきり：結論1文＋箇条書き3つ（150字程度・約100〜200トークン）なので512。
+// すべて：箇条書き5つ＋補足3つ（400字程度・約300トークン）なので1024。上限で切れたときは最後の完全な行までにする（route.ts）。
 // プロフィール更新のJSON（科目の一覧）を出しうるときは、途中で切れないよう広くとる
+export const SIMPLE_OUTPUT_LIMIT = 512;
 export const CHAT_OUTPUT_LIMIT = 1024;
 export const PROFILE_UPDATE_OUTPUT_LIMIT = 4096;
 export const IMAGE_OUTPUT_LIMIT = 8192;
@@ -23,7 +26,8 @@ export function needsProfileUpdateRules(query: string, hasImage: boolean): boole
 }
 
 /** 出力の上限トークン数 */
-export function chatOutputLimit(hasImage: boolean, profileRules: boolean): number {
+export function chatOutputLimit(hasImage: boolean, profileRules: boolean, mode: 'simple' | 'detailed' = 'detailed'): number {
   if (hasImage) return IMAGE_OUTPUT_LIMIT;
-  return profileRules ? PROFILE_UPDATE_OUTPUT_LIMIT : CHAT_OUTPUT_LIMIT;
+  if (profileRules) return PROFILE_UPDATE_OUTPUT_LIMIT;
+  return mode === 'simple' ? SIMPLE_OUTPUT_LIMIT : CHAT_OUTPUT_LIMIT;
 }

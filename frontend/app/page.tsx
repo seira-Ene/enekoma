@@ -22,6 +22,9 @@ import {
   UserProfileData
 } from '@/app/data/gakubuYoran';
 import { quickMenuItems } from '@/app/data/quickMenu';
+import { DEFAULT_DISPLAY_MODE, plainReplyText, readDisplayMode, writeDisplayMode, type DisplayMode } from '@/app/data/replyFormat';
+import ChatReply from '@/app/components/ChatReply';
+import DisplayModeToggle from '@/app/components/DisplayModeToggle';
 import { clearGuestChat, loadGuestChat, removeLegacySharedChat, saveGuestChat } from '@/app/data/chatHistoryStore';
 import {
   findFreeRooms,
@@ -160,6 +163,8 @@ interface MaintenanceConfig {
 const CHS_DEPARTMENTS = Object.keys(GAKUBU_YORAN_DEPARTMENTS);
 // 未ログインの会話の持ち主を表す値（ログインIDとは重ならない）
 const GUEST_OWNER = '__guest__';
+// これより間が空いたら、入力を始めたときにチャットのサーバーを起こし直す（Vercelは数分使われないと止まる）
+const CHAT_WARM_INTERVAL_MS = 3 * 60 * 1000;
 
 // 管理者画面に出すメール送信の記録（app/api/account/mailLog.ts の MailLogEntry と同じ形）
 interface MailLogView {
@@ -292,6 +297,16 @@ export default function UnifiedAssistantPage() {
 
   // ユーザープロフィール
   const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_PROFILE);
+  // 表示する情報量（すっきり / すべて）。端末ごとに保存し、チャットの回答の長さと補足の開閉に使う
+  const [displayMode, setDisplayMode] = useState<DisplayMode>(DEFAULT_DISPLAY_MODE);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 保存した値は描画後にしか読めない
+    setDisplayMode(readDisplayMode());
+  }, []);
+  const changeDisplayMode = (mode: DisplayMode) => {
+    setDisplayMode(mode);
+    writeDisplayMode(mode);
+  };
   // デザインテーマ（端末ごとに localStorage に保存。初回の描画前に layout.tsx のスクリプトが適用済み）
   const [theme, setTheme] = useState<ThemeId>(() => readStoredTheme());
   // メインの色（null ならテーマの色のまま）
@@ -451,6 +466,8 @@ export default function UnifiedAssistantPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // 表示中の会話の持ち主（ログインID か GUEST_OWNER）。違う人の会話を保存しないために使う
   const chatOwnerRef = useRef<string>(GUEST_OWNER);
+  // 最後にチャットのサーバーを起こした時刻（warmChatServer）
+  const lastChatWarmAtRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 初期化：localStorageと環境キー・学生アカウントの取得
@@ -462,6 +479,7 @@ export default function UnifiedAssistantPage() {
         setRegApiKey(savedKey);
       }
 
+      lastChatWarmAtRef.current = Date.now();
       fetch('/api/chat')
         .then((res) => res.json())
         .then((data) => {
@@ -599,20 +617,21 @@ export default function UnifiedAssistantPage() {
       mainText = mainText.replace(/表示用[：:]\s*[^\n\r]+(\r?\n)?/, '').replace(/詳細案内[：:]\s*/, '').trim();
     }
 
-    // チャット表示向けに記号や太字装飾をクリーンアップ
+    // チャット表示向けに整える：「・」の箇条書きと **ラベル** は残し（ChatReply が表示する）、見出し・飾りの記号を除く
     mainText = mainText
       .replace(/^#{1,6}\s+/gm, '')
-      .replace(/\*\*([^*]+)\*\*/g, '$1')
-      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/^[ \t]*(?:[-*•]|\d+[.)])[ \t]+/gm, '・')
+      .replace(/^[ \t]+・/gm, '・')
+      .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1$2')
       .replace(/__([^_]+)__/g, '$1')
       .replace(/【([^】]+)】/g, '$1')
       .replace(/［([^］]+)］/g, '$1')
       .replace(/《([^》]+)》/g, '$1')
       .replace(/〔([^〕]+)〕/g, '$1')
       .replace(/➔|->|→/g, 'から')
-      .replace(/^[\s\t]*[■◆▲▼🔹★※・•*✓✕❌⭕🟢🔴📍🕒🎓🏫🍱💡⏱️🗺️📌⚠️]+\s*/gm, '')
-      .replace(/^[\s\t]*-\s+/gm, '')
-      .replace(/[■◆▲▼🔹★※•]/g, '')
+      .replace(/^[ \t]*[■◆▲▼🔹★※✓✕❌⭕🟢🔴📍🕒🎓🏫🍱💡⏱️🗺️📌⚠️]+[ \t]*/gm, '・')
+      .replace(/^・{2,}/gm, '・')
+      .replace(/[■◆▲▼🔹★※]/g, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
@@ -1607,6 +1626,7 @@ export default function UnifiedAssistantPage() {
             : {}),
           sessionToken: currentStudent ? getSessionToken(currentStudent.id) : null,
           speakingStyle,
+          displayMode,
           userProfile
         })
       });
@@ -1669,7 +1689,7 @@ export default function UnifiedAssistantPage() {
               signal: AbortSignal.timeout(10000),
               body: JSON.stringify({
                 systemInstruction: {
-                  parts: [{ text: 'あなたは日本大学文理学部（CHS）公式アシスタント「EneKoma」です。時間割表やファイルを受け取った場合は科目を読み取り、必ず末尾に ```profile_update JSONコードブロックを出力してください。' }]
+                  parts: [{ text: `あなたは日本大学文理学部（CHS）公式アシスタント「EneKoma」です。1行目に結論を1文、続けて「・**ラベル**：内容」の短い箇条書き（${displayMode === 'simple' ? '3つまで' : '5つまで'}）で答えてください。時間割表やファイルを受け取った場合は科目を読み取り、必ず末尾に \`\`\`profile_update JSONコードブロックを出力してください。` }]
                 },
                 contents: [{
                   role: 'user',
@@ -1683,7 +1703,8 @@ export default function UnifiedAssistantPage() {
                     }] : [])
                   ]
                 }],
-                generationConfig: { temperature: 0.2, maxOutputTokens: 8192 }
+                // ファイルがあれば科目の一覧を出すので広く、文だけなら表示モードの上限（サーバーと同じ）
+                generationConfig: { temperature: 0.2, maxOutputTokens: currentFile?.data ? 8192 : displayMode === 'simple' ? 512 : 1024 }
               })
             }
           );
@@ -1696,10 +1717,10 @@ export default function UnifiedAssistantPage() {
                 signal: AbortSignal.timeout(10000),
                 body: JSON.stringify({
                   systemInstruction: {
-                    parts: [{ text: 'あなたは日本大学文理学部（CHS）公式アシスタント「EneKoma」です。' }]
+                    parts: [{ text: 'あなたは日本大学文理学部（CHS）公式アシスタント「EneKoma」です。1行目に結論を1文、続けて「・**ラベル**：内容」の短い箇条書きで答えてください。' }]
                   },
                   contents: [{ role: 'user', parts: [{ text }] }],
-                  generationConfig: { temperature: 0.2, maxOutputTokens: 8192 }
+                  generationConfig: { temperature: 0.2, maxOutputTokens: displayMode === 'simple' ? 512 : 1024 }
                 })
               }
             );
@@ -1758,7 +1779,17 @@ export default function UnifiedAssistantPage() {
   };
 
   // テキストエリア自動調整
+  // 入力を始めたら、チャットのサーバーを起こしておく（Geminiは呼ばない）。
+  // しばらく使われていないと、最初の質問でサーバーの起動を待つことになり、数秒遅れるため
+  const warmChatServer = () => {
+    const now = Date.now();
+    if (now - lastChatWarmAtRef.current < CHAT_WARM_INTERVAL_MS) return;
+    lastChatWarmAtRef.current = now;
+    fetch('/api/chat', { cache: 'no-store' }).catch(() => {});
+  };
+
   const handleInputTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    warmChatServer();
     setInputText(e.target.value);
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
@@ -2290,9 +2321,10 @@ export default function UnifiedAssistantPage() {
     userProfile.semesterCredits
   );
 
+  // すっきり表示では質問例を4つだけにする（カテゴリの絞り込みも隠す）
   const filteredChips = QUICK_CHIPS.filter(
-    (chip) => activeChipCategory === 'all' || chip.category === activeChipCategory
-  );
+    (chip) => displayMode === 'simple' || activeChipCategory === 'all' || chip.category === activeChipCategory
+  ).slice(0, displayMode === 'simple' ? 4 : undefined);
 
   return (
     <div className="flex flex-col h-[100dvh] min-h-[100dvh] bg-slate-50 text-slate-800 font-sans antialiased overflow-hidden">
@@ -2769,9 +2801,11 @@ export default function UnifiedAssistantPage() {
               )}
 
               {/* メッセージ本文 */}
-              <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                {msg.text}
-              </div>
+              {msg.sender === 'assistant' ? (
+                <ChatReply key={`${msg.id}-${displayMode}`} id={msg.id} text={msg.text} mode={displayMode} />
+              ) : (
+                <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">{msg.text}</div>
+              )}
 
               {/* フッター */}
               <div
@@ -2782,7 +2816,7 @@ export default function UnifiedAssistantPage() {
                 <span>{msg.timestamp}</span>
                 {msg.sender === 'assistant' && (
                   <button
-                    onClick={() => handleCopy(msg.id, msg.text)}
+                    onClick={() => handleCopy(msg.id, plainReplyText(msg.text))}
                     className="hover:text-slate-800 flex items-center space-x-1 px-1.5 py-0.5 rounded hover:bg-slate-100 transition"
                   >
                     <span>{copiedId === msg.id ? '✓ コピー済み' : 'コピー'}</span>
@@ -2820,9 +2854,13 @@ export default function UnifiedAssistantPage() {
           onRemove={(text) => updateFrequent((store) => removeQuestion(store, text))}
         />
 
-        {/* カテゴリフィルターチップ */}
+        {/* 表示する情報量の切り替えと、カテゴリフィルターチップ（すっきりでは隠す） */}
         <div className="flex items-center space-x-1.5 pb-1.5 overflow-x-auto no-scrollbar overscroll-x-contain">
-          <span className="text-[11px] font-medium text-slate-400 mr-1 whitespace-nowrap shrink-0">質問例:</span>
+          <span className="text-[11px] font-medium text-slate-400 whitespace-nowrap shrink-0">表示:</span>
+          <DisplayModeToggle mode={displayMode} onChange={changeDisplayMode} id="footer" />
+          {displayMode === 'detailed' && (
+          <>
+          <span className="text-[11px] font-medium text-slate-400 mr-1 pl-1 whitespace-nowrap shrink-0">質問例:</span>
           <button
             onClick={() => setActiveChipCategory('all')}
             className={`text-xs px-2.5 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0 transition ${
@@ -2863,6 +2901,8 @@ export default function UnifiedAssistantPage() {
           >
             🏢 施設・自販機
           </button>
+          </>
+          )}
         </div>
 
         {/* チップボタン一覧 */}
@@ -2996,6 +3036,7 @@ export default function UnifiedAssistantPage() {
               rows={1}
               value={inputText}
               onChange={handleInputTextChange}
+              onFocus={warmChatServer}
               onKeyDown={handleKeyDown}
               placeholder="質問を入力（例: 月曜2限の空き教室 / 単位足りてる？ / 目標GPA3.0）"
               className="w-full resize-none px-3.5 py-2 text-base sm:text-sm border border-slate-300 rounded-xl focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-500 bg-white leading-normal shadow-2xs"
@@ -3689,6 +3730,16 @@ export default function UnifiedAssistantPage() {
                       </p>
                     </form>
                   )}
+
+                  {/* 表示する情報量 */}
+                  <div className="p-3 bg-slate-50 rounded-lg border border-slate-200" data-display-mode-settings>
+                    <div className="font-semibold text-slate-800 text-xs mb-1.5 flex items-center justify-between">
+                      <span>表示する情報量:</span>
+                      <span className="text-[10px] text-slate-500">この端末に保存されます</span>
+                    </div>
+                    <DisplayModeToggle mode={displayMode} onChange={changeDisplayMode} showDescription id="settings" />
+                    <p className="mt-1.5 text-[10px] text-slate-500 leading-snug">すっきりでは、AIの回答も要点だけの短い形になります（使うトークンも少なくなります）。</p>
+                  </div>
 
                   {/* デザインテーマ */}
                   <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
@@ -4551,8 +4602,13 @@ export default function UnifiedAssistantPage() {
 
             <div className="p-4 overflow-y-auto text-xs sm:text-sm text-slate-700 space-y-3">
               {drawerTab === 'credits' && (
-                <div className="space-y-2">
-                  <h4 className="font-bold text-slate-900">卒業に必要な124単位の区分内訳（要覧 p.31）</h4>
+                <div className="space-y-2" key={displayMode}>
+                  {/* 区分内訳は常に開き、CAP制は「すべて」表示のときだけ開いておく */}
+                  <details open className="group" data-yoran-section="credits">
+                  <summary className="cursor-pointer list-none flex items-center gap-1 font-bold text-slate-900 min-h-8">
+                    <span aria-hidden="true" className="text-slate-400 group-open:rotate-90 transition-transform">▶</span>
+                    卒業に必要な124単位の区分内訳（要覧 p.31）
+                  </summary>
                   <ul className="list-disc list-inside space-y-1 text-slate-600">
                     <li>全学共通教育科目：自主創造の基礎（2単位必修・1年次）</li>
                     <li>総合教育科目：12単位必修（人文2, 社会2, 理学2を含む）。40単位まで自由選択算入可。</li>
@@ -4561,10 +4617,16 @@ export default function UnifiedAssistantPage() {
                     <li>学科専門科目：各学科指定（60〜78単位）</li>
                     <li>自由選択区分：各区分超過単位、他学科科目、コース科目</li>
                   </ul>
-                  <h4 className="font-bold text-slate-900 pt-2">CAP制（年間40単位上限・要覧 p.35-36）</h4>
+                  </details>
+                  <details open={displayMode === 'detailed'} className="group pt-1" data-yoran-section="cap">
+                  <summary className="cursor-pointer list-none flex items-center gap-1 font-bold text-slate-900 min-h-8">
+                    <span aria-hidden="true" className="text-slate-400 group-open:rotate-90 transition-transform">▶</span>
+                    CAP制（年間40単位上限・要覧 p.35-36）
+                  </summary>
                   <p className="text-slate-600 text-xs">
                     前年度GPA3.0以上で年間+8単位（48単位）、GPA2.5以上で+6単位（46単位）、GPA2.0以上で+4単位（44単位）の加算措置があります。
                   </p>
+                  </details>
                 </div>
               )}
 

@@ -1,4 +1,5 @@
 // 時間割に関する質問を実データで答える。ローカル応答とGeminiへの参照データの両方がこの結果を使う
+import { bulletLine, composeReply } from './replyFormat';
 import {
   baseCourseName,
   calculateTransitOptimization,
@@ -209,7 +210,24 @@ function describeNamedCourse(name: string, db: LectureCourse[], exact: boolean, 
     return `${head ? `${head}\n` : ''}${name}は、${asked}には開講されていません。開講されているのは次のコマです。\n\n${listRows(shown)}`;
   }
   if (bare) return listRows(shown);
-  return `${head ? `${head}お調べしました！` : `${name}についてお調べしました！`}\n\n${listRows(shown)}`;
+  // 開講が1コマだけなら、結論と「区分・単位／曜限／教室／担当／対象」の箇条書きにする
+  if (shown.length === 1 && shown[0].period > 0) {
+    const c = shown[0];
+    const curriculum = describeCurriculumEntry(name, o.department).map((line) => bulletLine('区分・単位', line.replace(/^・要覧:\s*/, '')));
+    const grade = c.grade ? `・${c.grade.includes('年') ? c.grade : `${c.grade}年`}` : '';
+    return composeReply({
+      lead: `${head}${c.name}は、${c.semester ? `${c.semester}の` : ''}${c.day}曜${c.period}限（${getCompactRoomLabel(c.room)}）です。`,
+      items: [
+        ...curriculum.slice(0, 1),
+        bulletLine('曜限', `${c.semester ? `${c.semester}の` : ''}${c.day}曜${c.period}限`),
+        bulletLine('教室', getCompactRoomLabel(c.room)),
+        bulletLine('担当', `${c.teacher}先生`),
+        bulletLine('対象', `${c.department}${grade}${c.targets?.length ? `（${c.targets.join('・')}）` : ''}`)
+      ],
+      details: curriculum.slice(1)
+    });
+  }
+  return `${head ? `${head}開講しているコマは${shown.length}件です。` : `${name}の開講コマは${shown.length}件です。`}\n${listRows(shown)}`;
 }
 
 /**

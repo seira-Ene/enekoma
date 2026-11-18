@@ -1,6 +1,7 @@
 // 日本大学文理学部 講義データベース（検索・ワンタップ登録用）
 import timetableReiwa8 from './timetableReiwa8.json';
 import timetableReiwa8Legacy from './timetableReiwa8Legacy.json';
+import { bulletLine, composeReply } from './replyFormat';
 
 export interface LectureCourse {
   day: string; // "月", "火", "水", "木", "金", "土", "集中"
@@ -275,13 +276,12 @@ export function findFreeRooms(
 
   // 曜日だけの指定は時限ごとの空き状況を返す
   if (targetDay !== undefined && targetPeriod === undefined) {
-    const lines = [`${term}の${day}曜日の空き教室を時限ごとにお調べしました！`, ''];
-    PERIOD_TIMES.forEach((slot) => {
+    const items = PERIOD_TIMES.map((slot) => {
       const rooms = freeRoomsAt(day, slot.period, term).filter((r) => !targetBuilding || buildingOf(r) === targetBuilding);
       const sample = rooms.slice(0, 5).map(getCompactRoomLabel).join('、');
-      lines.push(rooms.length > 0 ? `${slot.period}限は${rooms.length}室が空いていて、${sample}などが使えますよ。` : `${slot.period}限は空いている教室がありませんでした。`);
+      return bulletLine(`${slot.period}限`, rooms.length > 0 ? `${rooms.length}室（${sample}など）` : '空いている教室なし');
     });
-    lines.push('', DATA_NOTE);
+    const report = composeReply({ lead: `${term}の${day}曜日${targetBuilding ? `・${targetBuilding}` : ''}の空き教室を時限ごとにまとめました。`, items, details: [DATA_NOTE] });
     const firstPeriod = PERIOD_TIMES[0].period;
     const rooms = freeRoomsAt(day, firstPeriod, term);
     return {
@@ -293,7 +293,7 @@ export function findFreeRooms(
       totalFreeCount: rooms.length,
       freeRooms: rooms,
       byBuilding: groupByBuilding(rooms),
-      formattedReport: lines.join('\n')
+      formattedReport: report
     };
   }
 
@@ -303,36 +303,32 @@ export function findFreeRooms(
   const byBuilding = groupByBuilding(freeRooms);
   const timeLabel = PERIOD_TIMES.find((p) => p.period === period)?.label || '';
 
-  const lines: string[] = [];
+  // 結論（何室空いているか）と、号館ごとの箇条書き。自習スポットと注意は補足（画面では折りたたむ）
+  let report: string;
   if (isLunch) {
-    lines.push('今はお昼休み（12時10分から13時）ですね！');
-    lines.push('');
-    lines.push('お昼休みは全教室が開放されていて、休憩や昼食、自習に使えますよ。飲食した後のゴミは持ち帰るようにして、3限の受講生が入ってきたら席を譲るようにしてくださいね。');
+    report = composeReply({
+      lead: '今はお昼休み（12:10〜13:00）なので、全教室が開放されています。',
+      items: [bulletLine('使い方', '休憩・昼食・自習に使えます'), bulletLine('マナー', 'ゴミは持ち帰り、3限の受講生が来たら席を譲る')]
+    });
   } else {
-    const heading = usesCurrentTime && resolved.status !== 'class'
-      ? `次の${day}曜日${period}限（${timeLabel}）に使える空き教室をお調べしました！`
-      : `${term}の${day}曜日${period}限（${timeLabel}）に使える空き教室をお調べしました！`;
-    lines.push(heading);
+    const when = usesCurrentTime && resolved.status !== 'class' ? `次の${day}曜日${period}限（${timeLabel}）` : `${term}の${day}曜日${period}限（${timeLabel}）`;
+    let lead: string;
+    let items: string[];
+    if (targetBuilding) {
+      const rooms = byBuilding[targetBuilding] || [];
+      lead = rooms.length > 0 ? `${when}は、${targetBuilding}で${rooms.length}室が空いています。` : `${when}は、${targetBuilding}に空いている教室がありませんでした。`;
+      items = rooms.length > 0 ? [bulletLine(targetBuilding, rooms.slice(0, 12).map((r) => getCompactRoomLabel(r).replace(targetBuilding, '')).join('、'))] : [];
+    } else if (freeRooms.length === 0) {
+      lead = `${when}に空いている一般教室はありませんでした。`;
+      items = [];
+    } else {
+      lead = `${when}は、キャンパス全体で${freeRooms.length}室が空いています。`;
+      items = ['3号館', '4号館', '1号館', '2号館', '7号館']
+        .filter((b) => byBuilding[b].length > 0)
+        .map((b) => bulletLine(b, `${byBuilding[b].slice(0, 5).map((r) => getCompactRoomLabel(r).replace(b, '')).join('、')}${byBuilding[b].length > 5 ? ' など' : ''}（${byBuilding[b].length}室）`));
+    }
+    report = composeReply({ lead, items, details: [STUDY_SPOT_NOTE, DATA_NOTE] });
   }
-  lines.push('');
-
-  if (targetBuilding) {
-    const rooms = byBuilding[targetBuilding] || [];
-    lines.push(rooms.length > 0
-      ? `${targetBuilding}では ${rooms.slice(0, 12).map(getCompactRoomLabel).join('、')} が利用できますよ（全${rooms.length}室）。`
-      : `${targetBuilding}には空いている教室がありませんでした。`);
-  } else if (freeRooms.length === 0) {
-    lines.push('このコマに空いている一般教室はありませんでした。');
-  } else {
-    const summary = ['3号館', '4号館', '1号館', '2号館', '7号館']
-      .filter((b) => byBuilding[b].length > 0)
-      .map((b) => `${b}は ${byBuilding[b].slice(0, 5).map(getCompactRoomLabel).join('、')} など`)
-      .join('、');
-    lines.push(`${summary}、キャンパス全体で合計${freeRooms.length}室が空いていますよ。`);
-  }
-  lines.push('');
-  lines.push(STUDY_SPOT_NOTE);
-  lines.push(DATA_NOTE);
 
   return {
     day,
@@ -343,7 +339,7 @@ export function findFreeRooms(
     totalFreeCount: freeRooms.length,
     freeRooms,
     byBuilding,
-    formattedReport: lines.join('\n')
+    formattedReport: report
   };
 }
 
@@ -871,13 +867,13 @@ export function describeRoomSlot(roomNumber: string, day: string, period: number
   return `${term}の${day}曜${period}限の${getCompactRoomLabel(cleanRoom)}は、${h.teacher}先生の『${h.name}』が行われていますよ。対象は${h.grade ? `${h.grade}年、` : ''}${h.department}です。`;
 }
 
-// 科目や教員の検索結果を日付順に読みやすく整形する
+// 科目や教員の検索結果を、1科目1行の箇条書き（・**科目名**：学期 曜限・教室（先生、学科・学年））にする
 export function describeCourseRow(c: LectureCourse): string {
   const target = c.targets && c.targets.length > 0 ? `、対象は${c.targets.join('・')}` : '';
   const grade = c.grade ? `、${c.grade.includes('年') ? c.grade : `${c.grade}年`}` : '';
   if (c.period === 0) {
     const when = c.schedule ? `日程は${c.schedule}` : '日程は別途案内';
-    return `${c.name}（${c.teacher}先生）は${c.semester || ''}の${c.day === 'その他' ? '遠隔授業' : '集中授業'}で、${when}、場所は${c.place || c.room}です。`;
+    return bulletLine(c.name, `${c.semester || ''}の${c.day === 'その他' ? '遠隔授業' : '集中授業'}、${when}、場所は${c.place || c.room}（${c.teacher}先生）`);
   }
-  return `${c.name}（${c.teacher}先生）は${c.semester ? `${c.semester}の` : ''}${c.day}曜${c.period}限、${getCompactRoomLabel(c.room)}です（${c.department}${grade}${target}）。`;
+  return bulletLine(c.name, `${c.semester ? `${c.semester}の` : ''}${c.day}曜${c.period}限・${getCompactRoomLabel(c.room)}（${c.teacher}先生、${c.department}${grade}${target}）`);
 }

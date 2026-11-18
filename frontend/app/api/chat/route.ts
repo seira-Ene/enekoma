@@ -19,6 +19,9 @@ import { parseProfileUpdateFromText } from '@/app/data/studentAccounts';
 import { ExtractionError, ExtractionKind, extractDocument, MediaPart } from './extraction';
 import { callModelsInOrder, ModelCallError, ModelFailureKind, parseRetryDelaySec, summarizeFailure } from './modelPicker';
 import { apiKeyScope, loadSharedCooldowns } from './cooldownStore';
+import { chatOutputLimit, needsProfileUpdateRules } from './chatBudget';
+import { sanitizeConversationalReply } from './replySanitizer';
+import { bulletLine, composeReply, DEFAULT_DISPLAY_MODE, isDisplayMode, type DisplayMode } from '@/app/data/replyFormat';
 import { answerFriendStatusQuery, friendQueryIntent, isFriendStatusQuery, mayBeFriendStatusQuery, sanitizeSharedSchedule } from '@/app/data/friendStatus';
 import { get_friends_current_status } from '../friends/friendStore';
 import { authenticate } from '../friends/auth';
@@ -35,29 +38,18 @@ const EXTRACTION_KINDS: ExtractionKind[] = ['transcript', 'current_timetable', '
 const SYSTEM_PROMPT = `
 # 公式ナレッジベース：日本大学文理学部『学部要覧（令和7年度/2025年度）』完全準拠
 
-## 役割と公式行動原則（最重要：人間の自然なチャット言葉遣い）
-あなたは日本大学文理学部（CHS）の学生を親身にサポートする公式AIアシスタント「EneKoma（エネコマ）」です。
-大学の親切な先輩やスタッフがチャット（LINEなど）で丁寧に返信しているような、親しみやすく温かい言葉遣い（「〜ですよ」「〜ですね」「〜してみてくださいね！」など）で会話してください。
+## 役割
+あなたは日本大学文理学部（CHS）の学生をサポートするAIアシスタント「EneKoma（エネコマ）」です。親しみやすい丁寧語（「〜ですよ」「〜ですね」）で答えてください。
 
----
-
-## 【絶対厳守ルール：記号・装飾の完全排除】
-1. **記号や機械的な装飾を一切使わないこと**：
-   ・「【】」「《》」「［］」「■」「◆」「▲」「▼」「🔹」「★」「※」「・」「*」などの記号や箇条書きマークを文章中に付けないでください。
-   ・太字構文（**〇〇**）や見出し記号（###など）も使用せず、通常の自然な平文で回答してください。
-   ・「表示用：」「詳細案内：」「【回答】」などのシステムタグやラベルも一切出力しないでください。
-2. **全文提示の義務（最重要：文章を途中で絶対に切らないこと）**：
-   ・回答は途中で文章が切れることなく、最初から最後まで完全な文章で全文を提示してください。
-   ・文末が途切れたり省略されたりする回答は厳禁です。必ず文末（「〜ですよ」「〜してくださいね」など）まで完結させてください。
-   ・質問に対して必要な情報（教室名、時限、科目名、単位数など）は省略しないでください。
-3. **要点を絞って簡潔に**：
-   ・回答は要点だけを2〜4文程度で短く伝えてください。前置き、長い解説、同じ内容の繰り返し、聞かれていない補足は書かないでください。
-4. **必修と選択必修の明確な区別**：
-   ・「必修科目」：卒業要件として必ず単位を取らなければならない科目（自主創造の基礎、各学科の指定専門必修など）。
-   ・「選択必修科目」：指定されたグループの中から、決められた単位数以上を選んで必ず修得する科目（総合教育科目、外国語科目など）。
-   ・質問された際は両者を混同せず、的確に区別して案内してください。
-5. **曜日・時限・教室・教員・授業データの回答**：
-   ・何曜何限の何教室で誰の何という授業（必修/選択必修）が行われているかを聞かれたら、時間割データに基づき「◯曜◯限の◯◯教室は、◯◯先生の『◯◯（必修/選択必修）』が行われていますよ！」と短く返信してください。
+## 【回答の形（スマホ1画面で要点が分かるように）】
+1. 1行目は結論だけを1文で書く（場所・時限・単位数など、聞かれた答え）。
+2. 2行目から「・**ラベル**：内容」の箇条書きにする。1項目は1行・40字程度。3行を超える段落は書かない。
+   例：・**場所**：8号館2階（8B203・8B210）
+3. 補足・関連する一覧・注意点は「補足：」だけの行のあとに、同じ「・**ラベル**：内容」の形で書く（画面では折りたたんで表示される）。
+4. 太字はラベルだけ。見出し（#）、「【】」「■」「◆」「★」「※」などの記号、「表示用：」「【回答】」などのシステムタグは使わない。
+5. 文は途中で切らず、教室名・時限・科目名・単位数は省略しない。前置きや同じ内容の繰り返しは書かない。
+6. 必修（必ず修得する科目）と選択必修（指定の群から決められた単位数以上を選んで修得する科目）を混同しない。
+7. 授業を聞かれたら、時間割データの学期・曜日・時限・教室・教員・区分（必修/選択必修）を箇条書きで答える。
 
 ---
 
@@ -65,67 +57,18 @@ const SYSTEM_PROMPT = `
 0. 時間割データの厳守：授業、教員、教室、時限、空き教室についての事実は、質問と一緒に渡される「時間割の参照データ」だけを根拠にしてください。参照データにない授業名、教員名、教室番号、時限を作らないでください。データがないときは推測せず、「時間割データでは確認できませんでした」と伝えるか、曜日や時限、科目名を聞き返してください。参照データで「かもしれません」「候補」「推測」とされている内容（教員と時限の一致から挙げた対応科目など）は確定情報ではないので、断定せず「〜の可能性があります」「〜と考えられます」のように伝えてください。
 1. 要覧準拠の回答義務：履修・単位・卒業要件に関する相談は、文理学部要覧の基準に基づいて回答してください。資格コース・教職・副専攻・資格について質問と一緒に「学部要覧の参照データ」が渡されたときは、科目名・単位数・条件をその内容だけから答え、参照データにない科目を作らないでください。
 0-2. 施設の場所の厳守：計算機室・PCを使える場所などの施設は、このプロンプトのナレッジと、質問と一緒に渡される「キャンパス施設の参照データ」だけを根拠にしてください。登録されていない教室番号・施設・階を推測で補ったり作ったりしないでください（例：3号館に計算機室が並んでいるという情報はありません）。分からないときは、そのまま「登録されている情報では確認できませんでした」と伝えてください。
-2. 4桁教室番号の正確な保持：「3306」「3505」等の教室番号は省略せず「3号館3306教室」のように自然に案内してください。
+2. 4桁教室番号の正確な保持：「3306」「3505」等の教室番号は省略せず「3号館3306教室」のように書いてください。
 3. 画像や時間割表の読み込み時：
-   学生への返信本文は上記の通り人間らしいチャット言葉で書き、システム連携用JSONブロック \`\`\`profile_update ... \`\`\` のみ回答の末尾にそのまま出力してください（画面側で自動的に抽出され、ユーザーには本文のみが表示されます）。
-5. **画像（時間割表・成績通知書）のマルチモーダルOCR解析と自動プロフィール反映**
-   ユーザーが時間割表や成績表の画像をアップロードした場合、画像の種別（今期の時間割表・過去の時間割表・成績通知書）を自動判別し（またはユーザーからの指示に従い）、以下を実行してください：
-   * **【種別A：今期の時間割表】（受講中の時間割を登録する場合）**：
-     - 画像から曜日・時限・科目名・教室・担当教員・単位数をOCR読み取り。
-     - 「今期履修中」として登録し、今期履修単位数合計（各科目原則2単位、実習・演習1単位等）を算出。
-     - 出力末尾に以下の更新JSONを埋め込んでください：
-     \`\`\`profile_update
-     {
-       "action": "enroll_current_timetable",
-       "semesterCredits": 16,
-       "enrolledCourses": [
-         { "name": "科目名A", "day": "月", "period": 2, "room": "3306", "credits": 2 },
-         { "name": "科目名B", "day": "火", "period": 3, "room": "421", "credits": 2 }
-       ]
-     }
-     \`\`\`
-   * **【種別B：過去の時間割表】（前学期・過年度の履修済み科目を追加する場合）**：
-     - 過去の時間割画像またはファイル（PDF/CSV/文書等）から科目名・単位数を読み取り。
-     - ※時間割表には成績評価（S/A/B/C等）は記載されていないため、勝手に成績を推測・捏造せず、評価は「修得」または「-」として「修得済み科目」に登録してください（GPAを不当に歪めないため）。
-     - 出力末尾に以下の更新JSONを埋め込んでください：
-     \`\`\`profile_update
-     {
-       "action": "add_completed_timetable",
-       "totalEarnedCredits": 56,
-       "addCompletedCourses": [
-         { "name": "自主創造の基礎", "credits": 2, "grade": "修得" },
-         { "name": "情報リテラシー", "credits": 2, "grade": "修得" }
-       ]
-     }
-     \`\`\`
-   * **【種別C：成績通知書・成績表】（成績やGPAを反映する場合）**：
-     - 履修済み科目名、修得単位数、各科目の評価（S〜F）、現在GPA、総修得単位数を読み取り要約を出力。
-     - completedCourses の各科目には name（科目名）、credits（単位数）、grade（評価）の3つを必ずセットで入れる。評価は S/A/B/C/D/E/F（秀→S、優→A、良→B、可→C、不可→D）、履修中止は P、認定は N にそろえる。
-     - D/E/F は不合格（単位未修得）なので、不合格の科目も省かずに評価どおり出力する。同じ科目が再履修で複数回載っていれば、すべての行をそのまま出力する（どれを残すかはアプリが判定する）。
-     - 年度・学期が書かれていれば takenYear（西暦の数値）と term（前期/後期/通年/集中）も入れる。書かれていなければ省略する。
-     - totalEarnedCredits は成績表に書かれた修得単位数をそのまま入れる。書かれていなければ省略する（不合格の単位は修得単位に含めない）。
-     - 出力末尾に以下の更新JSONを埋め込んでください：
-     \`\`\`profile_update
-     {
-       "action": "transcript",
-       "totalEarnedCredits": 42,
-       "currentGpa": 2.85,
-       "completedCourses": [
-         { "name": "基礎プログラミング", "credits": 2, "grade": "S", "takenYear": 2025, "term": "前期" },
-         { "name": "線形代数1", "credits": 2, "grade": "D", "takenYear": 2025, "term": "前期" },
-         { "name": "線形代数1", "credits": 2, "grade": "A", "takenYear": 2026, "term": "前期" }
-       ]
-     }
-     \`\`\`
+   学生への返信本文は上記の回答の形で書き、システム連携用JSONブロック \`\`\`profile_update ... \`\`\` のみ回答の末尾にそのまま出力してください（画面側で自動的に抽出され、ユーザーには本文のみが表示されます）。
 4. 単位・講義不足判定の優先順位と伝え方：
-   不足講義や必要単位数の相談では、所属学科の「必修科目」を最優先で確認し、次に選択コースや副専攻、最後に卒業要件（124単位基準）の残り状況を親身に教えてあげてください。
-   記号や箇条書きは使わず、「必修科目では自主創造の基礎がまだ未修得になっています。卒業に必要な科目なので次の学期で優先して取っておくと安心ですよ。卒業までの単位はあと〇単位です。」のように自然なチャット文章で伝えてください。
+   所属学科の「必修科目」の未修得を最優先で伝え、次に選択コース・副専攻、最後に卒業要件（124単位）の残りを伝えてください。
+   例：卒業まであと86単位です。／・**未修得の必修**：自主創造の基礎／・**卒業要件**：38／124単位
 5. GPA達成シミュレーション（S〜F評価判定）：
-   目標GPA到達に必要な目安を「今期履修中の〇科目のうち、S評価を〇科目、A評価を〇科目くらい取れると目標に届きますよ！」と分かりやすい会話で伝えてください。
+   目標GPA到達に必要な目安を、結論（届くかどうか）と「・**S評価**：〇科目」「・**A評価**：〇科目」の箇条書きで伝えてください。
 6. 指定日時・時限・現在の空き教室・自習スポット検索：
-   学生が知りたい曜日・時限の空き教室を「月曜2限の空き教室ですね。3号館なら3201教室や3304教室が自習に使えますよ。4号館だと421教室も空いています。静かに集中したい時は図書館もおすすめですよ。」のように自然な会話で即答してください。昼休みの場合は全教室が開放されていることも親切に添えてください。
+   空き教室は、結論（何室空いているか）と号館ごとの箇条書き（・**3号館**：3201・3304 など）で即答してください。昼休みは全教室が開放されていることを添えてください。
 7. 教室案内・移動ナビ：
-   「表示用：」「詳細案内：」などの機械的タグは出力せず、「421教室は4号館の2階に上がってすぐ左側にありますよ。」「3号館から1号館への移動は約5分で着くので10分休みでも十分間に合いますよ！」と自然に案内してください。
+   教室の場所や移動（所要時間、階段・エレベーター）を、結論と短い箇条書きで案内してください。
 10. **入学年度・カリキュラム体系の区別（令和7年度以降 vs 令和6年度以前）**
    ユーザープロフィールの「入学年度（admissionYear）」設定（令和7年度以降／令和6年度以前）に基づき、該当する時間割データベースおよび要覧規則を参照して回答してください。
 11. **指定日時（曜日・時限・時間帯）および現在の空き教室・自習スポット検索**
@@ -297,6 +240,76 @@ const SYSTEM_PROMPT = `
 - 友達の成績・GPA・連絡先・出欠の記録などは扱わない。
 `;
 
+// 画像・成績表・時間割の登録規則（profile_update の見本つき）。ふだんの質問には渡さず、
+// 画像や、成績・時間割を文章で貼り付けたときだけ足す（needsProfileUpdateRules）。渡すプロンプトが約2割短くなる
+const PROFILE_UPDATE_RULES = `
+## 【画像（時間割表・成績通知書）のマルチモーダルOCR解析と自動プロフィール反映】
+   ユーザーが時間割表や成績表の画像をアップロードした場合、画像の種別（今期の時間割表・過去の時間割表・成績通知書）を自動判別し（またはユーザーからの指示に従い）、以下を実行してください：
+   * **【種別A：今期の時間割表】（受講中の時間割を登録する場合）**：
+     - 画像から曜日・時限・科目名・教室・担当教員・単位数をOCR読み取り。
+     - 「今期履修中」として登録し、今期履修単位数合計（各科目原則2単位、実習・演習1単位等）を算出。
+     - 出力末尾に以下の更新JSONを埋め込んでください：
+     \`\`\`profile_update
+     {
+       "action": "enroll_current_timetable",
+       "semesterCredits": 16,
+       "enrolledCourses": [
+         { "name": "科目名A", "day": "月", "period": 2, "room": "3306", "credits": 2 },
+         { "name": "科目名B", "day": "火", "period": 3, "room": "421", "credits": 2 }
+       ]
+     }
+     \`\`\`
+   * **【種別B：過去の時間割表】（前学期・過年度の履修済み科目を追加する場合）**：
+     - 過去の時間割画像またはファイル（PDF/CSV/文書等）から科目名・単位数を読み取り。
+     - ※時間割表には成績評価（S/A/B/C等）は記載されていないため、勝手に成績を推測・捏造せず、評価は「修得」または「-」として「修得済み科目」に登録してください（GPAを不当に歪めないため）。
+     - 出力末尾に以下の更新JSONを埋め込んでください：
+     \`\`\`profile_update
+     {
+       "action": "add_completed_timetable",
+       "totalEarnedCredits": 56,
+       "addCompletedCourses": [
+         { "name": "自主創造の基礎", "credits": 2, "grade": "修得" },
+         { "name": "情報リテラシー", "credits": 2, "grade": "修得" }
+       ]
+     }
+     \`\`\`
+   * **【種別C：成績通知書・成績表】（成績やGPAを反映する場合）**：
+     - 履修済み科目名、修得単位数、各科目の評価（S〜F）、現在GPA、総修得単位数を読み取り要約を出力。
+     - completedCourses の各科目には name（科目名）、credits（単位数）、grade（評価）の3つを必ずセットで入れる。評価は S/A/B/C/D/E/F（秀→S、優→A、良→B、可→C、不可→D）、履修中止は P、認定は N にそろえる。
+     - D/E/F は不合格（単位未修得）なので、不合格の科目も省かずに評価どおり出力する。同じ科目が再履修で複数回載っていれば、すべての行をそのまま出力する（どれを残すかはアプリが判定する）。
+     - 年度・学期が書かれていれば takenYear（西暦の数値）と term（前期/後期/通年/集中）も入れる。書かれていなければ省略する。
+     - totalEarnedCredits は成績表に書かれた修得単位数をそのまま入れる。書かれていなければ省略する（不合格の単位は修得単位に含めない）。
+     - 出力末尾に以下の更新JSONを埋め込んでください：
+     \`\`\`profile_update
+     {
+       "action": "transcript",
+       "totalEarnedCredits": 42,
+       "currentGpa": 2.85,
+       "completedCourses": [
+         { "name": "基礎プログラミング", "credits": 2, "grade": "S", "takenYear": 2025, "term": "前期" },
+         { "name": "線形代数1", "credits": 2, "grade": "D", "takenYear": 2025, "term": "前期" },
+         { "name": "線形代数1", "credits": 2, "grade": "A", "takenYear": 2026, "term": "前期" }
+       ]
+     }
+     \`\`\`
+`;
+
+// 表示モード（画面の「すっきり / すべて」）ごとの、回答の長さの指示
+function displayModeInstruction(mode: DisplayMode): string {
+  return mode === 'detailed'
+    ? '\n\n【表示モード：すべて】結論1文のあと、主な箇条書きを5つまで。続けて「補足：」の行のあとに、関連情報・注意点を3つまで書いてください。全体で400字程度まで。'
+    : '\n\n【表示モード：すっきり】結論1文のあと、箇条書きを3つまで。補足は書かず、全体で150字程度にしてください。';
+}
+
+/** 出力の上限で切れた回答は、最後の完全な行までにする（途中で切れた文を見せない） */
+function trimTruncatedReply(text: string): string {
+  const lines = text.trimEnd().split('\n');
+  if (lines.length <= 1) return text;
+  const last = lines[lines.length - 1];
+  if (/[。！？!?）)」]$/.test(last.trim())) return text;
+  return lines.slice(0, -1).join('\n');
+}
+
 // 速いモデルから順に試す
 const GEMINI_MODEL_ORDER = ['gemini-3-flash-preview', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-lite-latest'];
 // 思考を最小にすると応答が2〜3倍速くなる（実測）。チャットの事実は検索結果から渡すので精度への影響が小さい
@@ -314,55 +327,6 @@ const CHAT_TOTAL_TIMEOUT_MS = 12000;
 const IMAGE_REQUEST_TIMEOUT_MS = 30000;
 const IMAGE_TOTAL_TIMEOUT_MS = 50000;
 
-// 人間の自然なチャット言葉遣いにするための統一サニタイザー（記号・装飾・太字の完全排除）
-function sanitizeConversationalReply(text: string): string {
-  if (!text) return '';
-  // 一時的に ```profile_update ... ``` を退避
-  const profileMatches: string[] = [];
-  let sanitized = text.replace(/```profile_update\s*[\s\S]*?```/g, (match) => {
-    profileMatches.push(match);
-    return `__PROFILE_UPDATE_TOKEN_${profileMatches.length - 1}__`;
-  });
-
-  // 1. マークダウン太字・見出し・装飾を排除
-  sanitized = sanitized.replace(/^#{1,6}\s+/gm, '');
-  sanitized = sanitized.replace(/\*\*([^*]+)\*\*/g, '$1');
-  sanitized = sanitized.replace(/\*([^*]+)\*/g, '$1');
-  sanitized = sanitized.replace(/__([^_]+)__/g, '$1');
-
-  // 2. 機械的プレフィックスの削除
-  sanitized = sanitized.replace(/表示用[：:]\s*[^\n\r]+(\r?\n)?/g, '');
-  sanitized = sanitized.replace(/詳細案内[：:]\s*/g, '');
-  sanitized = sanitized.replace(/【回答】[：:]?\s*/g, '');
-  sanitized = sanitized.replace(/質問例[：:]?\s*/g, '');
-
-  // 3. 隅付き括弧や記号を自然な表現に置換
-  sanitized = sanitized.replace(/【([^】]+)】/g, '$1');
-  sanitized = sanitized.replace(/［([^］]+)］/g, '$1');
-  sanitized = sanitized.replace(/《([^》]+)》/g, '$1');
-  sanitized = sanitized.replace(/〔([^〕]+)〕/g, '$1');
-
-  // 4. 矢印を自然な日本語に変換
-  sanitized = sanitized.replace(/➔|->|→/g, 'から');
-
-  // 5. 行頭の箇条書き記号（・、*、-、■、◆、▲、▼、★、※、•、絵文字等）を排除
-  sanitized = sanitized.replace(/^[\s\t]*[■◆▲▼🔹★※・•*✓✕❌⭕🟢🔴📍🕒🎓🏫🍱💡⏱️🗺️📌⚠️]+\s*/gm, '');
-  sanitized = sanitized.replace(/^[\s\t]*-\s+/gm, '');
-
-  // 6. 残った箇条書き・強調用装飾記号のクリーンアップ
-  sanitized = sanitized.replace(/[■◆▲▼🔹★※•]/g, '');
-
-  // 7. 連続する空行を整理
-  sanitized = sanitized.replace(/\n{3,}/g, '\n\n').trim();
-
-  // 退避した profile_update を復元
-  profileMatches.forEach((tokenMatch, idx) => {
-    sanitized = sanitized.replace(`__PROFILE_UPDATE_TOKEN_${idx}__`, `\n\n${tokenMatch}`);
-  });
-
-  return sanitized.trim();
-}
-
 // ローカルGPAシミュレーション計算（要覧 p.38-39準拠・人間の自然なチャット言葉遣い）
 function simulateGpaLocally(currentGpa: number, targetGpa: number, earnedCredits: number, semesterCredits: number): string {
   const result = simulateGpaEngine(earnedCredits, currentGpa, targetGpa, semesterCredits);
@@ -377,28 +341,22 @@ function simulateGpaLocally(currentGpa: number, targetGpa: number, earnedCredits
 // ローカル履修・不足判定（要覧 p.31-36, 各学科ページ準拠）。要点だけを短く返す
 function checkRequirementsLocally(profile: UserProfileData): string {
   const analysis = analyzeAcademicDeficiency(profile || ({} as UserProfileData));
-  const lines: string[] = [];
-
   const missing = analysis.missingMajorReqs;
-  if (missing.length > 0) {
-    const names = missing.slice(0, 5).map((r) => r.name).join('、');
-    lines.push(`${analysis.department}の未修得の必修は${missing.length}科目（${names}${missing.length > 5 ? 'など' : ''}）です。`);
-  } else {
-    lines.push(`${analysis.department}の必修はすべて修得済みです。`);
-  }
-
-  // 条件を満たせていない進級・着手要件だけを伝える
-  for (const ms of analysis.milestonesStatus.filter((m) => m.isWarning)) {
-    lines.push(`${ms.timing}までに${ms.condition}が必要です。`);
-  }
-  for (const c of analysis.coursesAnalysis) {
-    lines.push(c.isFulfilled ? `${c.name}は要件を満たしています。` : `${c.name}は${c.earnedCredits}／${c.reqCredits}単位です。`);
-  }
-  for (const m of analysis.minorsAnalysis) {
-    lines.push(!m.isValid ? `${m.name}は所属学科の関係で修了認定を受けられません。` : `${m.name}は${m.earnedCredits}／16単位です。`);
-  }
-  lines.push(`卒業まであと${analysis.remainingCredits}単位です（${analysis.earnedCredits}／124単位）。`);
-  return lines.join('\n');
+  const items = [
+    bulletLine('卒業要件', `${analysis.earnedCredits}／124単位`),
+    bulletLine(
+      '未修得の必修',
+      missing.length > 0 ? `${missing.length}科目（${missing.slice(0, 5).map((r) => r.name).join('、')}${missing.length > 5 ? 'など' : ''}）` : 'なし（すべて修得済み）'
+    ),
+    // 条件を満たせていない進級・着手要件だけを伝える
+    ...analysis.milestonesStatus.filter((m) => m.isWarning).map((ms) => bulletLine(ms.timing, `${ms.condition}が必要`))
+  ];
+  // コース・副専攻の進み具合は補足（画面では折りたたむ）
+  const details = [
+    ...analysis.coursesAnalysis.map((c) => bulletLine(c.name, c.isFulfilled ? '要件を満たしています' : `${c.earnedCredits}／${c.reqCredits}単位`)),
+    ...analysis.minorsAnalysis.map((m) => bulletLine(m.name, !m.isValid ? '所属学科の関係で修了認定を受けられません' : `${m.earnedCredits}／16単位`))
+  ];
+  return composeReply({ lead: `卒業まであと${analysis.remainingCredits}単位です。`, items, details });
 }
 
 // ローカルエンジン（オフライン・API未設定時の高精度フォールバック・人間の自然なチャット言葉遣い）
@@ -642,6 +600,8 @@ export async function POST(req: NextRequest) {
 
     // 話し方（「織田信長みたいに話して」）。端末に保存してもらい、元に戻すまで毎回送ってもらう
     let speakingStyle = sanitizeStyle(body.speakingStyle);
+    // 画面の「すっきり / すべて」。回答の長さの指示と出力の上限を変える
+    const displayMode: DisplayMode = isDisplayMode(body.displayMode) ? body.displayMode : DEFAULT_DISPLAY_MODE;
     const styleRequest = query && !image ? parseStyleRequest(query) : null;
     if (styleRequest?.type === 'reset') {
       return NextResponse.json({ reply: 'いつもの話し方に戻しますね。', source: 'local', speakingStyle: null });
@@ -803,6 +763,10 @@ export async function POST(req: NextRequest) {
         : '';
 
       // 時間割の事実はAIに推測させず、検索した実データを渡す（画像解析では不要）
+      // 上限に達したモデルの記録（Redis）を、参照データを作っている間に読み込んでおく
+      const keyScope = apiKeyScope(apiKey);
+      const cooldownsLoaded = loadSharedCooldowns(keyScope, GEMINI_MODEL_ORDER);
+      const prepStartedAt = Date.now();
       const timetableContext = image ? '' : buildTimetableContext(query, userProfile, requestTime(req));
       // 資格コース・教職・副専攻の質問には、要覧の表から該当部分を渡す
       const curriculumContext = image ? '' : buildCurriculumContext(query, userProfile);
@@ -883,11 +847,12 @@ export async function POST(req: NextRequest) {
       }
 
       const isImageRequest = !!(image && image.data);
-      // 思考も出力上限に含まれる。科目の多い画像で回答が途中で切れないよう余裕を持たせる
-      const outputLimit = isImageRequest ? 8192 : 4096;
+      // 思考も出力上限に含まれる。ふだんの答えは短いので1024、科目の一覧（JSON）を出しうるときと画像は広くとる
+      const profileRules = needsProfileUpdateRules(query, isImageRequest);
+      const outputLimit = chatOutputLimit(isImageRequest, profileRules, displayMode);
       const geminiPayload = {
         systemInstruction: {
-          parts: [{ text: SYSTEM_PROMPT.trim() + (speakingStyle && !isImageRequest ? styleInstruction(speakingStyle) : '') }]
+          parts: [{ text: SYSTEM_PROMPT.trim() + (profileRules ? `\n${PROFILE_UPDATE_RULES}` : '') + (isImageRequest ? '' : displayModeInstruction(displayMode)) + (speakingStyle && !isImageRequest ? styleInstruction(speakingStyle) : '') }]
         },
         contents,
         generationConfig: {
@@ -897,7 +862,7 @@ export async function POST(req: NextRequest) {
         }
       };
 
-      const fetchSingleModel = async (model: string, timeoutMs: number = 7500): Promise<{ model: string; text: string }> => {
+      const fetchSingleModel = async (model: string, timeoutMs: number = 7500): Promise<{ model: string; text: string; usage?: { prompt: number; output: number; thoughts: number } }> => {
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
         const res = await fetch(geminiUrl, {
           method: 'POST',
@@ -917,16 +882,21 @@ export async function POST(req: NextRequest) {
         }
         const data = await res.json();
         const parts = data?.candidates?.[0]?.content?.parts || [];
-        const candidateText = parts.map((p: any) => p.text || '').filter(Boolean).join('\n');
+        const joined = parts.map((p: any) => p.text || '').filter(Boolean).join('\n');
+        // 出力の上限で切れたときは、最後の完全な行までにする
+        const candidateText = data?.candidates?.[0]?.finishReason === 'MAX_TOKENS' && !isImageRequest ? trimTruncatedReply(joined) : joined;
         if (!candidateText) {
           throw new Error('Empty response from model');
         }
-        return { model, text: candidateText };
+        // 使ったトークン数（入力・出力・思考）。数だけを返し、トークン設計の確認に使う
+        const meta = data?.usageMetadata;
+        const usage = meta ? { prompt: meta.promptTokenCount ?? 0, output: meta.candidatesTokenCount ?? 0, thoughts: meta.thoughtsTokenCount ?? 0 } : undefined;
+        return { model, text: candidateText, usage };
       };
 
       // 速いモデルから順に1つずつ試す（同時に呼ぶと無料枠を2倍使うため）。上限に達したモデルは待ち時間まで飛ばす
-      const keyScope = apiKeyScope(apiKey);
-      await loadSharedCooldowns(keyScope, GEMINI_MODEL_ORDER);
+      await cooldownsLoaded;
+      const geminiStartedAt = Date.now();
       const picked = await callModelsInOrder(GEMINI_MODEL_ORDER, fetchSingleModel, {
         scope: keyScope,
         perRequestMs: isImageRequest ? IMAGE_REQUEST_TIMEOUT_MS : CHAT_REQUEST_TIMEOUT_MS,
@@ -940,12 +910,17 @@ export async function POST(req: NextRequest) {
       if (successfulResponse && successfulResponse.text) {
         const candidateText = successfulResponse.text;
         const profileUpdate = parseProfileUpdateFromText(candidateText, !!image);
-        return NextResponse.json({
-          reply: sanitizeConversationalReply(candidateText),
-          source: 'gemini',
-          model: successfulResponse.model,
-          profileUpdate
-        });
+        return NextResponse.json(
+          {
+            reply: sanitizeConversationalReply(candidateText),
+            source: 'gemini',
+            model: successfulResponse.model,
+            usage: successfulResponse.usage,
+            outputLimit,
+            profileUpdate
+          },
+          { headers: { 'Server-Timing': `prep;dur=${geminiStartedAt - prepStartedAt}, gemini;dur=${Date.now() - geminiStartedAt}` } }
+        );
       }
 
       // APIキーが設定されたがGeminiがエラーになった場合のエラーメッセージ整形

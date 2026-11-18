@@ -1,6 +1,8 @@
 // キャンパスの施設（計算機室・PCを使える場所）の案内データ。
 // Geminiには質問に合うものを参照データとして渡し（buildFacilityContext）、APIキーがないときは answerFacilityLocally で答える。
 // ここにない教室・施設は推測で案内しない（以前、AIが「3号館に計算機室が並んでいる」と誤って答えた）
+import { bulletLine, composeReply } from './replyFormat';
+
 export interface CampusFacility {
   id: string;
   name: string;
@@ -78,8 +80,10 @@ export function answerFacilityLocally(query: string): string | null {
   if (!roomAsked && (!ASKS_PLACE.test(text) || OTHER_PC_TOPIC.test(text))) return null;
   const lab = hits.find((f) => f.id === 'cs-computer-room');
   const pc = hits.find((f) => f.id === 'library-pc');
+  const labItems = [bulletLine('場所', '8号館2階（8B203・8B210）'), bulletLine('用途', '情報科学科の実習・実験・演習')];
+  const pcItem = bulletLine('全学部向けのPC', '図書館（PCコーナー・ラーニング・コモンズなど）');
   if (lab) {
-    return `情報科学科の学科計算機室は、8号館2階の8B203と8B210です。情報科学科の実習・実験・演習で使います。${pc ? 'ほかの学科の人も含めて、自由にPCを使いたいときは図書館（PCコーナーやラーニング・コモンズなど）が使えますよ。' : ''}`;
+    return composeReply({ lead: '情報科学科の学科計算機室は、8号館2階の8B203と8B210です。', items: pc ? [...labItems, pcItem] : labItems });
   }
-  return 'PCを使いたいときは、図書館（PCコーナーやラーニング・コモンズなど）が使えますよ。情報科学科の実習で使う計算機室は、8号館2階の8B203と8B210です。';
+  return composeReply({ lead: 'PCを使いたいときは、図書館が使えますよ。', items: [pcItem, bulletLine('情報科学科の計算機室', '8号館2階（8B203・8B210）')] });
 }

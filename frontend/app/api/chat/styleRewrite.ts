@@ -38,7 +38,7 @@ async function callGeminiText(apiKey: string, models: readonly string[], system:
   return picked.value && picked.model ? { text: picked.value, model: picked.model } : null;
 }
 
-const BASE = 'あなたは日本大学文理学部の履修アシスタント「エネコマ」です。LINEのような自然な会話文で、記号・太字・見出しは使いません。';
+const BASE = 'あなたは日本大学文理学部の履修アシスタント「エネコマ」です。親しみやすい会話文で書きます。元の文に「・**ラベル**：内容」の箇条書きがあれば、その行の形（「・」と太字のラベル）を保ちます。見出しや飾りの記号は使いません。';
 
 /** 話し方を変えたときのあいさつ（1〜2文）。作れなければ null */
 export function styleGreeting(apiKey: string, models: readonly string[], style: string): Promise<{ text: string; model: string } | null> {

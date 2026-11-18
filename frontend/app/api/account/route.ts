@@ -26,6 +26,7 @@ import { authenticate } from '../friends/auth';
 import { GAKUBU_YORAN_DEPARTMENTS } from '@/app/data/gakubuYoran';
 import { isAdmissionYear, isValidGrade, normalizeDisplayName } from '@/app/data/profileEdit';
 import { maskEmail, maskIdentifier, recordMailLog } from './mailLog';
+import { isCurrentTermsConsent, TERMS_VERSION } from '@/app/data/terms';
 
 const RESET_TTL_SECONDS = 30 * 60;
 const VERIFY_TTL_SECONDS = 24 * 60 * 60;
@@ -43,7 +44,9 @@ function publicAccount(a: ServerAccount) {
     grade: a.grade,
     admissionYear: a.admissionYear,
     email: a.email || null,
-    pendingEmail: a.pendingEmail || null
+    pendingEmail: a.pendingEmail || null,
+    termsAcceptedAt: a.termsAcceptedAt || null,
+    termsVersion: a.termsVersion || null
   };
 }
 
@@ -93,6 +96,9 @@ async function handle(request: NextRequest, body: Body) {
       const email = normalizeEmail(str(body.email, 300));
       if (!isValidLoginId(loginId)) return fail(400, 'invalid_login_id', 'ログインIDは半角英数字（3〜32文字）で入力してください。');
       if (isDemoId(loginId)) return fail(400, 'reserved', 'このIDはデモアカウント用のため使えません。');
+      // 新規学生登録は、いまの利用規約に同意したときだけ。以前の端末内アカウントの移行（source: 'migration'）は同意の記録なしで登録する
+      const termsConsent = isCurrentTermsConsent(body.termsAccepted, body.termsVersion);
+      if (body.source !== 'migration' && !termsConsent) return fail(400, 'terms_required', '利用規約への同意が必要です。');
       if (!isValidPassword(password)) return fail(400, 'weak_password', `パスワードは${PASSWORD_MIN_LENGTH}文字以上にしてください。`);
       if (email) {
         // 形式と、大学のドメインなどの打ち間違い（.ac.jo など）を確認する
@@ -108,7 +114,8 @@ async function handle(request: NextRequest, body: Body) {
         department: str(body.department, 40) || '情報科学科',
         grade,
         admissionYear: body.admissionYear === 'reiwa6_or_earlier' ? 'reiwa6_or_earlier' : 'reiwa7_or_later',
-        ...(email ? { pendingEmail: email } : {})
+        ...(email ? { pendingEmail: email } : {}),
+        ...(termsConsent ? { termsAcceptedAt: new Date().toISOString(), termsVersion: TERMS_VERSION } : {})
       });
       if (!account) return fail(409, 'id_taken', 'このログインIDはすでに登録されています。');
       const verificationSent = email ? await sendVerification(request, account, email) : false;

@@ -22,6 +22,8 @@ import {
   UserProfileData
 } from '@/app/data/gakubuYoran';
 import { quickMenuItems } from '@/app/data/quickMenu';
+import { TERMS_VERSION } from '@/app/data/terms';
+import TermsModal from '@/app/components/TermsModal';
 import { DEFAULT_DISPLAY_MODE, plainReplyText, readDisplayMode, showsExampleChips, writeDisplayMode, type DisplayMode } from '@/app/data/replyFormat';
 import ChatReply from '@/app/components/ChatReply';
 import DisplayModeToggle from '@/app/components/DisplayModeToggle';
@@ -410,6 +412,14 @@ export default function UnifiedAssistantPage() {
   const [regTimetableFile, setRegTimetableFile] = useState<{ name: string; size: number; mimeType: string; data: string } | null>(null);
   const [regTranscriptFile, setRegTranscriptFile] = useState<{ name: string; size: number; mimeType: string; data: string } | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
+  // 新規学生登録：利用規約への同意（チェックしないと登録できない）と、規約の全文の表示
+  const [regTermsAgreed, setRegTermsAgreed] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  // 同意したら、「同意が必要です」のエラー表示を消す（ほかのエラーは残す）
+  const changeTermsAgreement = (agreed: boolean) => {
+    setRegTermsAgreed(agreed);
+    if (agreed) setAuthError((prev) => (prev?.startsWith('利用規約への同意が必要です') ? null : prev));
+  };
   const [regStatusText, setRegStatusText] = useState<string | null>(null);
   const [isAnalyzingTimetable, setIsAnalyzingTimetable] = useState(false);
   const [isAnalyzingTranscript, setIsAnalyzingTranscript] = useState(false);
@@ -823,7 +833,8 @@ export default function UnifiedAssistantPage() {
   // 旧方式（端末内だけ）のアカウントをサーバーに登録する。サーバーに届かなければ、端末内で照合済みなので今回はそのままログインする
   const migrateLegacyAccount = async (local: StudentAccount, password: string): Promise<{ account?: StudentAccount; error?: string; offline?: boolean }> => {
     const res = await callAccountApi('register', {
-      loginId: local.id, password, name: local.name, department: local.department, grade: local.grade, admissionYear: local.admissionYear
+      loginId: local.id, password, name: local.name, department: local.department, grade: local.grade, admissionYear: local.admissionYear,
+      source: 'migration'
     });
     if (res.ok && res.account) {
       if (res.sessionToken) saveSessionToken(res.account.loginId, res.sessionToken, keepLoggedIn);
@@ -1273,6 +1284,12 @@ export default function UnifiedAssistantPage() {
     e.preventDefault();
     setAuthError(null);
 
+    // 利用規約に同意していなければ登録しない（ボタンも押せないが、念のため）
+    if (!regTermsAgreed) {
+      setAuthError('利用規約への同意が必要です。「利用規約」を確認して、「利用規約に同意する」にチェックを入れてください。');
+      return;
+    }
+
     // 0. APIキーの検証と保存（新規ログイン・登録に必須）
     const effectiveKey = regApiKey.trim() || apiKey.trim();
     if (!effectiveKey && !hasServerKey) {
@@ -1318,7 +1335,9 @@ export default function UnifiedAssistantPage() {
         department: regDept,
         grade: regGrade,
         admissionYear: regAdmissionYear,
-        email: regEmail.trim() || undefined
+        email: regEmail.trim() || undefined,
+        termsAccepted: true,
+        termsVersion: TERMS_VERSION
       });
       if (!serverRes.ok || !serverRes.account) {
         setAuthError(serverRes.message || 'アカウントを登録できませんでした。');
@@ -1439,7 +1458,9 @@ export default function UnifiedAssistantPage() {
         admissionYear: regAdmissionYear,
         selectedCourses: regCourses,
         selectedMinors: regMinors,
-        initialProfile
+        initialProfile,
+        termsAcceptedAt: registeredAccount.termsAcceptedAt || new Date().toISOString(),
+        termsVersion: registeredAccount.termsVersion || TERMS_VERSION
       });
 
       handleSwitchToStudent({ ...newAcc, ...linkServerAccount(registeredAccount) });
@@ -1448,6 +1469,7 @@ export default function UnifiedAssistantPage() {
       }
       setRegId('');
       setRegName('');
+      setRegTermsAgreed(false);
       setRegPassword('');
       setRegEmail('');
       setRegCourses([]);
@@ -5365,6 +5387,52 @@ export default function UnifiedAssistantPage() {
 
                   <PcUploadHint />
 
+                  {/* 利用規約への同意（必須） */}
+                  <div className={`p-3 rounded-lg border ${regTermsAgreed ? 'border-emerald-300 bg-emerald-50/60' : 'border-slate-300 bg-slate-50'}`} data-terms-consent>
+                    <div className="flex items-start gap-2">
+                      <input
+                        id="reg-terms-agree"
+                        type="checkbox"
+                        checked={regTermsAgreed}
+                        onChange={(e) => changeTermsAgreement(e.target.checked)}
+                        disabled={isRegistering}
+                        aria-describedby="reg-terms-note"
+                        className="mt-0.5 h-5 w-5 shrink-0 accent-slate-900 cursor-pointer"
+                      />
+                      <div className="text-xs text-slate-800 leading-relaxed">
+                        <label htmlFor="reg-terms-agree" className="font-semibold cursor-pointer">
+                          利用規約に同意する
+                        </label>
+                        <span className="ml-1 text-[10px] font-bold text-rose-600">（必須）</span>
+                        <p id="reg-terms-note" className="text-[11px] text-slate-600">
+                          <button
+                            type="button"
+                            onClick={() => setShowTermsModal(true)}
+                            data-terms-open
+                            className="font-semibold text-slate-900 underline underline-offset-2 hover:text-slate-700"
+                          >
+                            利用規約
+                          </button>
+                          （非公式のツールであること、回答の正確さ、データの扱い、禁止事項）を読んでからチェックしてください。
+                        </p>
+                      </div>
+                    </div>
+                    {!regTermsAgreed && (
+                      <p className="mt-1.5 text-[11px] text-rose-700" role="status" data-terms-required>
+                        利用規約への同意が必要です。
+                      </p>
+                    )}
+                  </div>
+                  {showTermsModal && (
+                    <TermsModal
+                      onClose={() => setShowTermsModal(false)}
+                      onAgree={() => {
+                        changeTermsAgreement(true);
+                        setShowTermsModal(false);
+                      }}
+                    />
+                  )}
+
                   {/* 登録ボタン & AI解析インジケーター */}
                   <div className="pt-2">
                     {isRegistering && regStatusText && (
@@ -5378,9 +5446,10 @@ export default function UnifiedAssistantPage() {
                     )}
                     <button
                       type="submit"
-                      disabled={isRegistering}
+                      disabled={isRegistering || !regTermsAgreed}
+                      data-register-submit
                       className={`w-full py-2.5 rounded-lg text-xs font-semibold transition flex items-center justify-center space-x-2 ${
-                        isRegistering
+                        isRegistering || !regTermsAgreed
                           ? 'bg-slate-400 text-white cursor-not-allowed'
                           : 'bg-slate-900 text-white hover:bg-slate-800 shadow-sm'
                       }`}

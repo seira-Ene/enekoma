@@ -1,21 +1,37 @@
 'use client';
 
-// 「💡 いつもの質問」：よく送る質問のチップ。タップで送信、右端の✕で履歴から消す。1件もなければ何も出さない
+// 「💡 いつもの質問」：よく送る質問のチップ。タップで送信、右端の✕で履歴から消す。1件もなければ何も出さない。
+// 見出しを押すと開閉できる（初めは表示モードに合わせる：すっきり＝閉じる、すべて＝開く）
 import type { FrequentQuestion } from '@/app/data/frequentQuestions';
 
 interface Props {
   items: FrequentQuestion[];
   disabled?: boolean;
+  open: boolean;
+  onToggle: () => void;
   onSelect: (text: string) => void;
   onRemove: (text: string) => void;
 }
 
-export default function FrequentQuestions({ items, disabled, onSelect, onRemove }: Props) {
+export default function FrequentQuestions({ items, disabled, open, onToggle, onSelect, onRemove }: Props) {
   if (items.length === 0) return null;
   return (
     <section aria-label="いつもの質問" data-frequent-questions className="flex items-center gap-1.5 pb-1.5 min-w-0">
-      <span className="text-[11px] font-medium text-indigo-700 whitespace-nowrap shrink-0">💡 いつもの質問</span>
-      <ul className="flex items-center gap-1.5 overflow-x-auto no-scrollbar overscroll-x-contain min-w-0">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls="frequent-question-list"
+        data-section-toggle="frequent"
+        className="flex items-center gap-1 min-h-8 px-1.5 rounded-lg text-[11px] font-medium text-indigo-700 whitespace-nowrap shrink-0 hover:bg-indigo-50 transition"
+      >
+        <span aria-hidden="true" className="text-[10px] w-3">
+          {open ? '▼' : '▶'}
+        </span>
+        💡 いつもの質問{open ? '' : `（${items.length}）`}
+      </button>
+      {open && (
+      <ul id="frequent-question-list" className="flex items-center gap-1.5 overflow-x-auto no-scrollbar overscroll-x-contain min-w-0">
         {items.map((q) => (
           <li
             key={q.text}
@@ -43,6 +59,7 @@ export default function FrequentQuestions({ items, disabled, onSelect, onRemove 
           </li>
         ))}
       </ul>
+      )}
     </section>
   );
 }

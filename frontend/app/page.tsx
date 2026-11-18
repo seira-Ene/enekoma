@@ -22,9 +22,10 @@ import {
   UserProfileData
 } from '@/app/data/gakubuYoran';
 import { quickMenuItems } from '@/app/data/quickMenu';
-import { DEFAULT_DISPLAY_MODE, plainReplyText, readDisplayMode, writeDisplayMode, type DisplayMode } from '@/app/data/replyFormat';
+import { DEFAULT_DISPLAY_MODE, plainReplyText, readDisplayMode, showsExampleChips, writeDisplayMode, type DisplayMode } from '@/app/data/replyFormat';
 import ChatReply from '@/app/components/ChatReply';
 import DisplayModeToggle from '@/app/components/DisplayModeToggle';
+import SectionToggle, { useSectionOpen } from '@/app/components/SectionToggle';
 import { clearGuestChat, loadGuestChat, removeLegacySharedChat, saveGuestChat } from '@/app/data/chatHistoryStore';
 import {
   findFreeRooms,
@@ -307,6 +308,10 @@ export default function UnifiedAssistantPage() {
     setDisplayMode(mode);
     writeDisplayMode(mode);
   };
+  // 画面上部のブロックの開閉（すっきり＝閉じる、すべて＝開くから始まり、手で開閉できる）
+  const [menuOpen, toggleMenu] = useSectionOpen(displayMode);
+  const [roomSearchOpen, toggleRoomSearch] = useSectionOpen(displayMode);
+  const [frequentOpen, toggleFrequent] = useSectionOpen(displayMode);
   // デザインテーマ（端末ごとに localStorage に保存。初回の描画前に layout.tsx のスクリプトが適用済み）
   const [theme, setTheme] = useState<ThemeId>(() => readStoredTheme());
   // メインの色（null ならテーマの色のまま）
@@ -2321,10 +2326,9 @@ export default function UnifiedAssistantPage() {
     userProfile.semesterCredits
   );
 
-  // すっきり表示では質問例を4つだけにする（カテゴリの絞り込みも隠す）
   const filteredChips = QUICK_CHIPS.filter(
-    (chip) => displayMode === 'simple' || activeChipCategory === 'all' || chip.category === activeChipCategory
-  ).slice(0, displayMode === 'simple' ? 4 : undefined);
+    (chip) => activeChipCategory === 'all' || chip.category === activeChipCategory
+  );
 
   return (
     <div className="flex flex-col h-[100dvh] min-h-[100dvh] bg-slate-50 text-slate-800 font-sans antialiased overflow-hidden">
@@ -2571,18 +2575,22 @@ export default function UnifiedAssistantPage() {
           スマホ：ログイン・Gemini連携と6項目を横スクロール。PC：6項目を折り返して全部見せる（ログイン・Gemini連携はヘッダー）
       ======================================================== */}
       <div className="bg-slate-100/95 border-b border-slate-200 shrink-0 shadow-2xs">
-        {/* スクロール案内表示（スマホだけ） */}
-        <div className="sm:hidden flex items-center justify-between px-2.5 pt-1.5 pb-0.5 text-[10px] text-slate-500 font-medium">
-          <span className="text-slate-700 font-bold flex items-center space-x-1">
-            <span>⚡</span>
-            <span>クイックメニュー</span>
-          </span>
+        {/* スクロール案内表示（スマホで開いているときだけ） */}
+        {menuOpen && (
+        <div className="sm:hidden flex items-center justify-end px-2.5 pt-1.5 pb-0.5 text-[10px] text-slate-500 font-medium">
           <span className="text-slate-500 flex items-center space-x-1 bg-white/80 border border-slate-200/80 px-1.5 py-0.5 rounded-full text-[10px]">
             <span>⇄ 左右にスクロールしてね</span>
             <span className="animate-pulse">👉</span>
           </span>
         </div>
-        <nav aria-label="メニュー" data-quick-menu-bar className="px-2.5 py-1.5 sm:px-4 sm:py-2 overflow-x-auto sm:overflow-visible no-scrollbar flex items-center gap-1.5 sm:flex-wrap sm:justify-center overscroll-x-contain">
+        )}
+        <div className="flex items-center pl-2.5 sm:pl-4">
+        {/* メニューの開閉（横にスクロールしても隠れないよう、スクロールする列の外に置く） */}
+        <SectionToggle open={menuOpen} onToggle={toggleMenu} controls="quick-menu-items" section="menu">
+          <span aria-hidden="true">⚡</span>
+          <span>メニュー{menuOpen ? '' : '（6）'}</span>
+        </SectionToggle>
+        <nav id="quick-menu-items" aria-label="メニュー" data-quick-menu-bar className={`flex-1 min-w-0 pl-1.5 pr-2.5 py-1 sm:pr-4 sm:py-1.5 overflow-x-auto sm:overflow-visible no-scrollbar flex items-center gap-1.5 sm:flex-wrap overscroll-x-contain ${menuOpen ? 'sm:justify-center' : ''}`}>
         {/* 1. ログイン */}
         {currentStudent ? (
           <button
@@ -2622,7 +2630,7 @@ export default function UnifiedAssistantPage() {
         </button>
 
         {/* 取得済み単位数・学生履修プロフィール・『学部要覧』早見表・よくある質問・お問い合わせ・システムメンテナンス管理設定 */}
-        {quickMenuItems(userProfile.currentCredits, userProfile.department).map((item) => {
+        {menuOpen && quickMenuItems(userProfile.currentCredits, userProfile.department).map((item) => {
           const adminActive = item.id === 'admin' && isAdmin;
           const className = `flex items-center gap-1.5 min-h-11 sm:min-h-9 px-3 rounded-lg text-xs whitespace-nowrap shrink-0 border shadow-2xs transition active:scale-95 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 ${
             adminActive ? 'bg-amber-400 text-slate-900 border-amber-500 font-bold' : 'bg-white text-slate-800 border-slate-200 font-medium hover:bg-slate-50 hover:border-slate-300'
@@ -2663,19 +2671,22 @@ export default function UnifiedAssistantPage() {
           );
         })}
         </nav>
+        </div>
       </div>
 
       {/* ========================================================
           空き教室クイック検索ツールバー（人間が使うための直感UI）
       ======================================================== */}
-      <section className="bg-white border-b border-slate-200 px-2.5 sm:px-4 py-2 shrink-0">
+      <section className={`bg-white border-b border-slate-200 px-2.5 sm:px-4 shrink-0 ${roomSearchOpen ? 'py-2' : 'py-0.5'}`} data-room-search>
         <div className="max-w-4xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap min-w-0">
-            <span className="font-semibold text-slate-900 flex items-center space-x-1 whitespace-nowrap shrink-0">
-              <span>🏫</span>
-              <span className="whitespace-nowrap font-bold">空き教室検索:</span>
-            </span>
+            <SectionToggle open={roomSearchOpen} onToggle={toggleRoomSearch} controls="room-search-controls" section="room-search" className="-ml-2">
+              <span aria-hidden="true">🏫</span>
+              <span>空き教室検索{roomSearchOpen ? ':' : ''}</span>
+            </SectionToggle>
 
+            {roomSearchOpen && (
+            <span id="room-search-controls" className="contents">
             {/* 曜日選択 */}
             <div className="flex items-center space-x-0.5 sm:space-x-1 bg-slate-100 p-0.5 rounded-md border border-slate-200 shrink-0">
               {['月', '火', '水', '木', '金', '土'].map((d) => (
@@ -2726,6 +2737,8 @@ export default function UnifiedAssistantPage() {
               <span>🔍</span>
               <span>表示</span>
             </button>
+            </span>
+            )}
           </div>
         </div>
       </section>
@@ -2850,17 +2863,17 @@ export default function UnifiedAssistantPage() {
         <FrequentQuestions
           items={topFrequentQuestions(frequentStore)}
           disabled={isLoading}
+          open={frequentOpen}
+          onToggle={toggleFrequent}
           onSelect={(text) => handleSend(text)}
           onRemove={(text) => updateFrequent((store) => removeQuestion(store, text))}
         />
 
-        {/* 表示する情報量の切り替えと、カテゴリフィルターチップ（すっきりでは隠す） */}
+        {/* 質問例（カテゴリの絞り込みとチップ）。「すべて」表示のときだけ出す。表示モードは基本設定で切り替える */}
+        {showsExampleChips(displayMode) && (
+        <div data-example-chips>
         <div className="flex items-center space-x-1.5 pb-1.5 overflow-x-auto no-scrollbar overscroll-x-contain">
-          <span className="text-[11px] font-medium text-slate-400 whitespace-nowrap shrink-0">表示:</span>
-          <DisplayModeToggle mode={displayMode} onChange={changeDisplayMode} id="footer" />
-          {displayMode === 'detailed' && (
-          <>
-          <span className="text-[11px] font-medium text-slate-400 mr-1 pl-1 whitespace-nowrap shrink-0">質問例:</span>
+          <span className="text-[11px] font-medium text-slate-400 mr-1 whitespace-nowrap shrink-0">質問例:</span>
           <button
             onClick={() => setActiveChipCategory('all')}
             className={`text-xs px-2.5 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0 transition ${
@@ -2901,8 +2914,6 @@ export default function UnifiedAssistantPage() {
           >
             🏢 施設・自販機
           </button>
-          </>
-          )}
         </div>
 
         {/* チップボタン一覧 */}
@@ -2918,6 +2929,8 @@ export default function UnifiedAssistantPage() {
             </button>
           ))}
         </div>
+        </div>
+        )}
 
         {/* 添付ファイルプレビュー＆読み取り種別セレクター */}
         {attachedFile && (
@@ -3738,7 +3751,7 @@ export default function UnifiedAssistantPage() {
                       <span className="text-[10px] text-slate-500">この端末に保存されます</span>
                     </div>
                     <DisplayModeToggle mode={displayMode} onChange={changeDisplayMode} showDescription id="settings" />
-                    <p className="mt-1.5 text-[10px] text-slate-500 leading-snug">すっきりでは、AIの回答も要点だけの短い形になります（使うトークンも少なくなります）。</p>
+                    <p className="mt-1.5 text-[10px] text-slate-500 leading-snug">すっきりでは、メニュー・空き教室検索・いつもの質問を閉じた状態で始め、質問例を出さず、AIの回答も要点だけの短い形になります（使うトークンも少なくなります）。すべてでは、どれも開いた状態で始まります。</p>
                   </div>
 
                   {/* デザインテーマ */}
